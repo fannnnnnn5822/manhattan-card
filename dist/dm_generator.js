@@ -130,6 +130,8 @@ function mergeDupeNpcs() {
   });
 }
 function isPersistent(name) { return PERSISTENT_CANONICAL.indexOf(normalizeName(name)) !== -1; }
+// 游戏起始日期（UWU 的日期体系：epoch + game.day 推算真实日期，设置页可改）——默认 4/15 是报税日的玩笑
+var GAME_EPOCH_STR = '2026-04-15';
 // 优先用剧情时间（正文 [TIME:] 标记写进 sb.game.time）→ 手机时钟和正文同步；没有才退回真实时钟
 function nowTime() {
   try {
@@ -168,13 +170,14 @@ function advanceDays(sb, d) {
 function defaultState() {
   return {
     profile: {},
-    wallet: { balance: 0, bills: [], transactions: [] },
+    wallet: { balance: 0, bills: [], transactions: [], allTransactions: [] },   // allTransactions=总账（UWU 的流水页数据源，留 500 笔）
     npcs: {},
     beauty: { charm: 50, treatments: [] },
     lifestyle: { apartment: 'studio', monthly_burn: 0 },
     schedule: [],
     sugarelite: { subscribed: false, tier: 'none' },
-    game: { day: 1, time: '', date: '', nsfw: true },
+    game: { day: 1, time: '', date: '', nsfw: true, epoch: GAME_EPOCH_STR },   // epoch=剧情第1天对应的真实日期（UWU 日历/日期标签靠它换算）
+    taxQuestions: null,   // 报税小测验的题目缓存（UWU 税务功能）
     akumaRank: 0,   // Akuma 的 SugarRank 影子身家（和 User 余额同货币可比）——榜单暗战靠它成立
   };
 }
@@ -242,7 +245,7 @@ function pushThem(sb, name, type, content, zh) {
       ? name + ' 替你付清了「' + String(content).trim() + '」——下期账单 30 天后再来'
       : name + ' 说替你付了「' + String(content).trim() + '」——但钱包里没找到这张账单（名字对不上，去钱包核对）';
   }
-  npc.dm_history.push({ sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '' });   // ts=真时间戳（HH:MM跨天没法排序，以后按它排）
+  npc.dm_history.push({ sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '', gameDay: (sb.game && sb.game.day) || 1 });   // ts=真时间戳；gameDay=剧情第几天（UWU 日期标签/分割线靠它）
   if (npc.dm_history.length > 400) npc.dm_history = npc.dm_history.slice(-400);   // 存档上限：长线关系记得住整段（玩家要300条记忆，档得比它大）
   npc.last_contact = t;
   npc.last_ts = Date.now();   // 真时间戳，列表排序用（HH:MM字符串跨天必错）
@@ -296,6 +299,15 @@ function creditWallet(sb, dir, amount, counterparty, channel) {
   if (!w.transactions) w.transactions = [];
   w.transactions.push({ direction: dir, amount: amount, counterparty: counterparty || '', channel: channel || '', note: '', time: nowTime() });
   if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+  // 总账（UWU 流水页）：transactions 是钱包卡片上的"最近几笔"，这本才是全部——带 gameDay 能按日期显示
+  if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
+  w.allTransactions.push({
+    id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    direction: dir, amount: amount,
+    counterparty: counterparty || '', channel: channel || '', note: '',
+    time: nowTime(), gameDay: (sb.game && sb.game.day) || 1,
+  });
+  if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
   if (dir === '-') payBillIfMatch(w, counterparty);   // 正文里付了房租/还了卡 → 账单倒计时重置下期，不然永远催缴
   // 大额到账 = 最想花钱的瞬间 → 通知手机面板（灵动岛提示 + 犒赏自己按到账数字选价位）
   if (dir === '+' && amount >= 1000) { try { eventEmit('sb_windfall', { amount: amount }); } catch (e) {} }
@@ -870,7 +882,7 @@ async function runOnce(req) {
       var stxt = scheds[si];
       var dup = false;
       for (var dj = 0; dj < v.sb.schedule.length; dj++) { if (v.sb.schedule[dj].txt === stxt) { dup = true; break; } }
-      if (!dup && stxt) v.sb.schedule.push({ txt: stxt, ts: Date.now() });
+      if (!dup && stxt) v.sb.schedule.push({ txt: stxt, ts: Date.now(), gameDay: (v.sb.game && v.sb.game.day) || 1 });   // gameDay=记下这条的剧情日（UWU 日历按它落格子）
     }
     if (v.sb.schedule.length > 20) v.sb.schedule = v.sb.schedule.slice(-20);
     pruneContacts(v.sb);   // 超15人 → 自动清（置顶的免疫；固定NPC没被回话也一样挤出去）
@@ -1113,7 +1125,8 @@ function buildDigest(sb) {
   }
   out += '（铁律：正文只写散文，绝不复述、排版或重写这些内容。上面私信里出现过的转账都**已经自动入账**，正文绝不再写 [WALLET] 标记重复记这些钱。信息隔离：每个人只记得自己和 User 的那段私信；' +
     '任何角色都看不到 User 的手机——不知道她的余额、购物记录、论坛、以及她和别人的聊天，绝不提及、绝不影射。' +
-    '唯一例外是 SugarElite™ 的管家 S.。人物只能对看得见的东西做反应：她穿戴出来的、她亲口说的、当面发生的。）';
+    '唯一例外是 SugarElite™ 的管家 S.。人物只能对看得见的东西做反应：她穿戴出来的、她亲口说的、当面发生的。）\n' +
+    '【重要】你必须在每次回复的最末尾输出当前剧情时间，格式为 [TIME:HH:MM|周X]，例如 [TIME:14:30|周四]。这是强制要求，不可遗漏。';   // UWU 的时间修复：注入层每轮都盯着，比世界书更贴脸
   return out;
 }
 
@@ -1231,7 +1244,7 @@ async function onMainMessage(message_id) {
       if (hit2) itq.price = hit2.amount;
     }
     // ③ 剧情时间标记 [TIME:HH:MM]（可带日期 [TIME:HH:MM|周四]）→ 手机时钟跟着正文走
-    var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})(?:\s*\|\s*([^\]]+))?\]/);
+    var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // UWU 加固：时间和 | 和 ] 之间的手抖空格全容（LLM 写 [TIME: 14:30 |周四 ] 也认）
     var newTime = timeM ? timeM[1] : null;
     var newDate = (timeM && timeM[2]) ? timeM[2].trim() : null;
     if (!found.length && !items.length && !newTime) return;
@@ -1633,7 +1646,7 @@ function seedDMs() {
       for (var m = 0; m < th.msgs.length; m++) {
         var mm = th.msgs[m];
         var sender = mm.who === 'ME' ? 'USER' : 'THEM';
-        npc.dm_history.push({ sender: sender, time: nowTime(), type: mm.type || 'text', content: mm.content, note: '', zh: mm.zh || '' });
+        npc.dm_history.push({ sender: sender, time: nowTime(), type: mm.type || 'text', content: mm.content, note: '', zh: mm.zh || '', gameDay: (v.sb.game && v.sb.game.day) || 1 });
         if (sender === 'USER') { unread = 0; npc.engaged = true; } else unread++;
       }
       var lastM = th.msgs[th.msgs.length - 1];
@@ -1652,6 +1665,113 @@ function seedDMs() {
     console.log('[SB-NYC v4] seeded ' + SEED_THREADS.length + ' opening threads (0 API calls)');
   });
 }
+// ── 📚 学业日程生成（UWU 的功能：日历页手动触发，给 NYU 学生 User 排下周的课业）──
+// 上限 3 条学业日程：日历不是课表软件，有两三条"论文deadline逼近"的味道就够了
+eventOn('sb_request_academic', async function () {
+  try {
+    var vars = getVariables({ type: 'chat' });
+    var sb = vars && vars.sb;
+    if (!sb) return;
+    var currentAcademic = (sb.schedule || []).filter(function (s) { return s.academic; });
+    if (currentAcademic.length >= 3) {
+      try { eventEmit('sb_status', '📚 学业日程已达上限'); } catch (e) {}
+      return;
+    }
+    var instr = '请为纽约大学的学生生成2-3条下周的学业日程（如作业截止、考试、小组讨论），每条格式严格为：📚|sched|+天数 / 时间 / 地点 / 内容描述\n' +
+      '例如：📚|sched|+2 / 14:00 / 图书馆 / 论文初稿提交\n注意：天数必须是 1 到 7 之间的整数，内容用中文。只输出这些行，不要其他文字。';
+    var sys = '你是一个游戏日程生成器。只输出指定格式，不要解释。';
+    var raw = null;
+    var cfg = getApiCfg();
+    if (cfg) { try { raw = await callIndependent(cfg, [{ role: 'system', content: sys }], instr); } catch (e) { raw = null; } }
+    if (raw == null) {
+      await waitForSlot();
+      raw = await generateRaw({ user_input: instr, should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'system', content: sys }] });
+    }
+    var text = typeof raw === 'string' ? raw : (raw && raw.content) || '';
+    var lines = text.split('\n');
+    var added = [];
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (!line || line.charAt(0) === '<') continue;
+      var parts = line.split('|');
+      if (parts.length < 3 || parts[1] !== 'sched') continue;
+      var content = parts.slice(2).join('|').trim();
+      var meta = content.split('/');
+      var dayOffset = parseInt((meta[0] || '').replace(/[^0-9]/g, ''), 10) || 0;
+      var time = (meta[1] || '').trim();
+      var location = (meta[2] || '').trim();
+      var desc = (meta.slice(3).join('/') || '').trim();
+      if (!dayOffset || dayOffset < 1 || dayOffset > 7) continue;
+      var gameDay = (sb.game.day || 1) + dayOffset;   // gameDay=事件发生的剧情日（日历按它落格子）
+      var schedTxt = '学业 / ' + (time || '全天') + ' / ' + location + ' / ' + desc;
+      var dup = (sb.schedule || []).some(function (s) { return s.txt === schedTxt; });
+      if (dup) continue;
+      added.push({ txt: schedTxt, ts: Date.now(), gameDay: gameDay, academic: true });
+    }
+    if (added.length > 0) {
+      var newTotal = currentAcademic.length + added.length;
+      if (newTotal > 3) added = added.slice(0, 3 - currentAcademic.length);
+      await updateVariablesWith(function (v) {
+        if (!v.sb.schedule) v.sb.schedule = [];
+        v.sb.schedule = v.sb.schedule.concat(added);
+        return v;
+      }, { type: 'chat' });
+      try { eventEmit('sb_updated'); } catch (e) {}
+      try { if (typeof toastr !== 'undefined') toastr.success('📚 新增 ' + added.length + ' 条学业日程', 'SugarOS'); } catch (e) {}
+      console.log('[SB-NYC v4] generated ' + added.length + ' academic schedules');
+    } else {
+      try { eventEmit('sb_status', '📚 这次没生成出合规日程——再点一次试试'); } catch (e) {}
+    }
+  } catch (e) {
+    console.warn('[SB-NYC v4] academic schedule gen failed', e);
+    try { eventEmit('sb_dm_failed', '学业日程生成失败'); } catch (e2) {}
+  }
+});
+
+// ── 🧾 报税选择题生成（UWU 的税务功能：答对3题自助报税免罚款，答错加收20%）──
+eventOn('sb_request_tax_questions', async function () {
+  try {
+    var vars = getVariables({ type: 'chat' });
+    var sb = vars && vars.sb;
+    if (!sb) return;
+    var instr = '请生成3道美国个人所得税基础知识的选择题，用于游戏内的税务小测验。每题包含题目、4个选项（A/B/C/D）、正确答案的字母（A/B/C/D）。格式严格为：\n' +
+      '题目|A选项|B选项|C选项|D选项|正确答案(A/B/C/D)\n例如：在美国，个人所得税的联邦申报截止日期是哪一天？|1月1日|4月15日|6月30日|12月31日|B\n只输出3行，不要编号，不要其他文字。';
+    var sys = '你是美国税务知识问答生成器。只输出指定格式。';
+    var raw = null;
+    var cfg = getApiCfg();
+    if (cfg) { try { raw = await callIndependent(cfg, [{ role: 'system', content: sys }], instr); } catch (e) { raw = null; } }
+    if (raw == null) {
+      await waitForSlot();
+      raw = await generateRaw({ user_input: instr, should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'system', content: sys }] });
+    }
+    var text = typeof raw === 'string' ? raw : (raw && raw.content) || '';
+    var lines = text.split('\n');
+    var questions = [];
+    for (var i = 0; i < lines.length && questions.length < 3; i++) {
+      var line = lines[i].trim();
+      if (!line || line.charAt(0) === '<') continue;
+      var parts = line.split('|');
+      if (parts.length < 6) continue;
+      var q = parts[0].trim();
+      var opts = [parts[1].trim(), parts[2].trim(), parts[3].trim(), parts[4].trim()];
+      var ansLetter = parts[5].trim().toUpperCase();
+      var ansIdx = ansLetter === 'A' ? 0 : ansLetter === 'B' ? 1 : ansLetter === 'C' ? 2 : ansLetter === 'D' ? 3 : -1;
+      if (!q || ansIdx < 0) continue;
+      questions.push({ q: q, opts: opts, ans: ansIdx });
+    }
+    if (questions.length > 0) {
+      await updateVariablesWith(function (v) { v.sb.taxQuestions = questions; return v; }, { type: 'chat' });
+      try { eventEmit('sb_tax_questions_ready'); } catch (e) {}
+      try { if (typeof toastr !== 'undefined') toastr.success('📝 税务题目已就绪', 'SugarOS'); } catch (e) {}
+    } else {
+      try { eventEmit('sb_dm_failed', '税务题目生成失败——再点一次税务中心重试'); } catch (e) {}
+    }
+  } catch (e) {
+    console.warn('[SB-NYC v4] tax questions gen failed', e);
+    try { eventEmit('sb_dm_failed', '税务题目生成失败'); } catch (e2) {}
+  }
+});
+
 eventOn('sb_seed_dm', seedDMs);
 eventOn('sb_request_translate', handleTranslate);
 eventOn('sb_request_ad_comments', handleAdComments);
@@ -1664,4 +1784,4 @@ try { eventOn(tavern_events.GENERATION_AFTER_COMMANDS, syncInject); } catch (e) 
 try { eventOn(tavern_events.MESSAGE_RECEIVED, onMainMessage); } catch (e) {}        // 正文钱包标记入账
 syncInject();
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
-console.log('[SB-NYC v4] dm_generator ready (generateRaw/独立API + digest inject + wallet autoledger)');
+console.log('[SB-NYC v4] dm_generator ready (generateRaw/独立API + digest inject + wallet autoledger + UWU: gameDay/academic/tax/time-guard)');
