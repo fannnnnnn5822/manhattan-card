@@ -331,6 +331,33 @@
     try { var v = SBgetVars(); var gt = v && v.sb && v.sb.game && v.sb.game.time; if (gt && /^\d{1,2}:\d{2}$/.test(String(gt).trim())) return String(gt).trim(); } catch (e) {}
     var d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
   }
+  // ── 剧情日期换算（UWU 的日期体系）：epoch=剧情第1天的真实日期，gameDay 从 1 起算 ──
+  // epoch 必须按本地时区手动拆解——new Date('2026-04-15') 是 UTC 午夜，直接用会让东西半球玩家日历各错一天
+  var GAME_EPOCH_STR = '2026-04-15';   // 默认起始日=报税日（设置页可改）
+  function epochDate() {
+    var s = String((state && state.game && state.game.epoch) || GAME_EPOCH_STR);
+    var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/) || ['', '2026', '4', '15'];
+    return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+  }
+  function gameDateOf(gd) { var d = epochDate(); d.setDate(d.getDate() + (gd || 1) - 1); return d; }
+  function fmtMD(d) { return (d.getMonth() + 1) + '/' + d.getDate(); }
+  // 消息时间戳带日期（UWU）："4/15 14:30"——老消息没有 gameDay 就只显示时分，不硬编
+  function formatMsgTime(m) {
+    var t = m.time || '';
+    if (m.gameDay) t = fmtMD(gameDateOf(m.gameDay)) + ' ' + t;
+    return t;
+  }
+  // 两条消息之间该不该插分割线（UWU 时间分割线）：跨天=显示日期，同天隔≥60分钟=显示时间；返回 null=不用插
+  // 跨天直接比 gameDay，不做毫秒数学——时区在这里没有发言权
+  function hhmmMin(t) { var p = String(t || '').split(':'); return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0); }
+  function dividerBetween(prevMsg, currMsg) {
+    if (!prevMsg) return null;
+    var pd = prevMsg.gameDay || 1, cd = currMsg.gameDay || 1;
+    if (cd > pd) return '——— ' + fmtMD(gameDateOf(cd)) + ' ———';
+    if (cd === pd && prevMsg.time && currMsg.time && hhmmMin(currMsg.time) - hhmmMin(prevMsg.time) >= 60) return '——— ' + currMsg.time + ' ———';
+    return null;
+  }
+  function dividerHtml(txt) { return '<div class="sb-msg system" style="font-weight:500;color:var(--gold);">' + esc(txt) + '</div>'; }
 
   // ── 样式（全部锚在 #sbnyc-panel / #sbnyc-fab 下，不污染酒馆页面） ──
   var CSS = [
@@ -340,6 +367,12 @@
     '#sbnyc-fab:hover{transform:scale(1.06);}',
     '#sbnyc-fab .fab-badge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;border-radius:10px;background:#9a1b29;color:#fff;',
     '  font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 5px;font-family:Georgia,serif;}',
+    // 📳 悬浮球发光动画（UWU：新消息时金圈扩散三下）
+    '#sbnyc-fab.glow{animation:sbfabglow 0.6s ease-out 3;}',
+    '@keyframes sbfabglow{0%{box-shadow:0 6px 20px rgba(26,42,58,.35),0 0 0 0 rgba(184,153,104,.6);}50%{box-shadow:0 6px 20px rgba(26,42,58,.35),0 0 0 12px rgba(184,153,104,0);}100%{box-shadow:0 6px 20px rgba(26,42,58,.35),0 0 0 0 rgba(184,153,104,0);}}',
+    // 📳 面板抖动（UWU：纯 CSS 动画，手机电脑都有"震感"）
+    '@keyframes sbShake{0%{transform:translateX(0);}15%{transform:translateX(-3px);}30%{transform:translateX(3px);}45%{transform:translateX(-3px);}60%{transform:translateX(3px);}75%{transform:translateX(-2px);}100%{transform:translateX(0);}}',
+    '#sbnyc-panel.sb-shake{animation:sbShake 0.2s ease-in-out;}',
     '#sbnyc-panel{position:fixed;right:10px;bottom:182px;width:min(380px,calc(100vw - 20px));height:min(660px,calc(100vh - 220px));z-index:2147483599;display:none;}',
     '#sbnyc-panel.open{display:block;}',
     '#sbnyc-panel{--ink:#1f2937;--ink-sub:#6b7280;--ink-faint:#a8acb3;--paper:#f5f3ee;--paper-2:#fbf9f4;--paper-3:#ece8dd;',
@@ -357,7 +390,9 @@
     '#sbnyc-panel *,#sbnyc-panel *::before,#sbnyc-panel *::after{margin:0;padding:0;box-sizing:border-box;}',
     '#sbnyc-panel .sb-phone{height:100%;background:linear-gradient(180deg,#e8dfcf,#cdb99a 45%,#b89968);border-radius:44px;padding:8px;',
     '  box-shadow:0 22px 60px rgba(26,42,58,.35),inset 0 0 0 1px rgba(255,255,255,.25);}',
-    '#sbnyc-panel .sb-screen{height:100%;background:var(--paper);border-radius:38px;overflow:hidden;position:relative;display:flex;flex-direction:column;}',
+    '#sbnyc-panel .sb-screen{height:100%;background:var(--paper);border-radius:38px;overflow:hidden;position:relative;display:flex;flex-direction:column;',
+    '  background-size:cover;background-position:center;background-repeat:no-repeat;background-blend-mode:overlay;}',   // 🖼️ 壁纸铺法（UWU）：blend-mode 让纸色透出来，字还读得清
+    '#sbnyc-panel .sb-screen.has-wallpaper{background-image:var(--sb-wallpaper);opacity:0.85;}',
     '#sbnyc-panel .sb-island{min-width:96px;max-width:240px;height:24px;background:#0d0d0f;border-radius:14px;margin:6px auto 0;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 11px;cursor:grab;box-shadow:inset 0 0 0 .5px rgba(255,255,255,.07);}',
     '#sbnyc-panel .sb-island .cam{width:9px;height:9px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#2c3e50,#000 72%);flex-shrink:0;box-shadow:0 0 3px rgba(90,150,255,.3);}',
     '#sbnyc-panel .sb-island .itxt{font-size:9px;color:#d8cfba;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-en);min-width:0;}',
@@ -564,6 +599,17 @@
     '#sbnyc-panel .sb-mselbar button{flex:1;border:none;border-radius:999px;padding:9px;font-size:12.5px;cursor:pointer;font-family:var(--font-cn);}',
     '#sbnyc-panel .sb-mselbar .mdel{background:var(--red);color:#fff;}',
     '#sbnyc-panel .sb-mselbar .mcancel{background:var(--paper-3);color:var(--ink-sub);}',
+    // 📅 日历格子（UWU）
+    '#sbnyc-panel .sb-cal-day{aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;font-size:13px;position:relative;overflow:hidden;min-height:0;}',
+    '#sbnyc-panel .sb-cal-day span{flex-shrink:0;line-height:1.2;}',
+    '#sbnyc-panel .sb-cal-day:hover{filter:brightness(0.95);}',
+    '#sbnyc-panel .sb-cal-day:active{transform:scale(0.95);}',
+    // 🖼️ 壁纸上传/清除按钮（UWU）
+    '#sbnyc-panel .sb-wp-upload{display:inline-block;cursor:pointer;color:var(--gold);border:.5px dashed var(--gold);border-radius:999px;padding:3px 10px;font-size:11px;margin-left:6px;opacity:.85;}',
+    '#sbnyc-panel .sb-wp-upload:hover{opacity:1;background:var(--gold);color:#fff;}',
+    '#sbnyc-panel .sb-wp-upload input{display:none;}',
+    '#sbnyc-panel .sb-wp-clear{cursor:pointer;color:var(--red);border:.5px solid var(--red);border-radius:999px;padding:3px 10px;font-size:11px;margin-left:4px;opacity:.7;}',
+    '#sbnyc-panel .sb-wp-clear:hover{opacity:1;}',
   ].join('\n');
 
   // ── 挂载（先拆旧的，脚本重载/换聊天时不留双份） ──
@@ -637,6 +683,58 @@
   // ── 状态读取与渲染 ──
   function loadState() {
     try { var v = SBgetVars(); state = (v && v.sb) ? v.sb : null; } catch (e) { state = null; }
+    if (state) {
+      // UWU 日期体系补档：老存档的日程没有 gameDay → 按当前剧情日补上（只补一次，写回变量）
+      if (state.schedule && state.game) {
+        var needFix = false;
+        for (var si = 0; si < state.schedule.length; si++) {
+          if (state.schedule[si].gameDay == null) { state.schedule[si].gameDay = state.game.day || 1; needFix = true; }
+        }
+        if (needFix) { var fixed = state.schedule; SBupdate(function (v2) { if (v2.sb) v2.sb.schedule = fixed; return v2; }); }
+      }
+      if (state.game && !state.game.epoch) state.game.epoch = GAME_EPOCH_STR;
+      if (state.wallet && !Array.isArray(state.wallet.allTransactions)) state.wallet.allTransactions = [];
+    }
+  }
+  // 📳 震动+发光开关（UWU）：默认开，localStorage 记偏好（这里不能用 VIEW——它在文件更靠后才赋值）
+  var vibrateEnabled = true;
+  try { vibrateEnabled = (DOC.defaultView || window).localStorage.getItem('sbnyc_vibrate') !== '0'; } catch (e) {}
+  function triggerVibration() {
+    if (!vibrateEnabled) return;
+    fab.classList.add('glow');
+    setTimeout(function () { fab.classList.remove('glow'); }, 1800);
+    panel.classList.add('sb-shake');
+    setTimeout(function () { panel.classList.remove('sb-shake'); }, 200);
+  }
+  // ⏱ 时间校准（UWU）：AI 把时钟写歪时玩家点顶栏时间自己拨回来，不用等下一轮 [TIME] 标记
+  function calibrateTime() {
+    var currentTime = (state && state.game && state.game.time) || nowT();
+    panelPrompt('校准游戏时间（格式 HH:MM，如 14:30）', currentTime).then(function (val) {
+      if (!val || !/^\d{1,2}:\d{2}$/.test(val.trim())) { if (val != null && val.trim()) toast('warning', '格式不对——要 HH:MM，比如 14:30'); return; }
+      var parts = val.trim().split(':');
+      var hh = Math.min(23, Math.max(0, parseInt(parts[0], 10) || 0));
+      var mm = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
+      var newTime = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+      SBupdate(function (v) { if (v.sb && v.sb.game) v.sb.game.time = newTime; return v; });
+      if (state && state.game) state.game.time = newTime;
+      toast('success', '🕒 时间已校准为 ' + newTime);
+      render();
+    });
+  }
+  // 🖼️ 壁纸（UWU）：Base64 存本地，跟浏览器不跟聊天文件
+  function applyWallpaper() {
+    try {
+      var wp = VIEW.localStorage.getItem('sbnyc_wallpaper');
+      var scr = panel.querySelector('.sb-screen');
+      if (!scr) return;
+      if (wp) {
+        scr.style.setProperty('--sb-wallpaper', 'url(' + wp + ')');
+        scr.classList.add('has-wallpaper');
+      } else {
+        scr.classList.remove('has-wallpaper');
+        scr.style.removeProperty('--sb-wallpaper');
+      }
+    } catch (e) {}
   }
   function totalUnread() {
     if (!state || !state.npcs) return 0;
@@ -651,6 +749,7 @@
   function refreshView() {
     loadState();
     updateBadge();
+    applyWallpaper();
     // AI 歌单：变量里有就用，没有就请求生成一次（垫场歌单先顶着）
     if (state && Array.isArray(state.playlist) && state.playlist.length >= 4) {
       PLAYLIST = state.playlist;
@@ -677,7 +776,7 @@
   function render() {
     if (!state) return;
     var game = state.game || {}; var wallet = state.wallet || {}; var npcs = state.npcs || {};
-    barEl.innerHTML = '<span>5G</span><span class="sb-bar-time">' + esc(game.time || nowT()) + '</span><span>76% <span class="sb-gear" id="sbnyc-night" title="夜间/白天">' + (panel.classList.contains('night') ? '☀️' : '🌙') + '</span> <span class="sb-gear" id="sbnyc-gear" title="手机设置">⚙</span></span>';
+    barEl.innerHTML = '<span>5G</span><span class="sb-bar-time" id="sb-bar-time-click" style="cursor:pointer;" title="点击校准游戏时间">' + esc(game.time || nowT()) + '</span><span>76% <span class="sb-gear" id="sbnyc-night" title="夜间/白天">' + (panel.classList.contains('night') ? '☀️' : '🌙') + '</span> <span class="sb-gear" id="sbnyc-gear" title="手机设置">⚙</span></span>';   // ⏱ 时间可点校准（UWU）
     var h = '';
     h += renderWallet(wallet);
     h += renderActions();
@@ -709,7 +808,8 @@
     h += '</div>'; return h;
   }
   function renderActions() {
-    return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">🔄 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button><button class="sb-abtn" data-act="closet">👗 衣橱</button></div>';
+    return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">🔄 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button><button class="sb-abtn" data-act="closet">👗 衣橱</button></div>' +
+      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button></div>';   // 第二行（UWU 的两个新页面）
   }
   function renderDMList(npcs) {
     var entries = []; for (var n in npcs) { if (!npcs.hasOwnProperty(n)) continue; var npc = npcs[n]; if (!npc.unlocked && !npc.persistent && (npc.unread || 0) <= 0 && !npc.engaged) continue; entries.push(npc); }
@@ -747,7 +847,7 @@
         var it = sch[i];
         h += '<div class="sb-bill sb-sched' + (it.done ? ' done' : '') + '">' +
           '<span class="sb-schk" data-si="' + i + '" title="' + (it.done ? '取消打勾' : '完成打勾') + '">' + (it.done ? '✅' : '⭕') + '</span>' +
-          '<span class="sb-stxt" data-si="' + i + '" title="点击编辑">📅 ' + esc(it.txt) + '</span>' +
+          '<span class="sb-stxt" data-si="' + i + '" title="点击编辑">' + (it.academic ? '📚 ' + fmtMD(gameDateOf(it.gameDay || 1)) : '📅') + ' ' + esc(it.txt) + '</span>' +
           '<span class="sb-sdel" data-si="' + i + '" title="删除">✕</span></div>';
       }
       if (sch.length > 6) h += '<div class="sb-empty" style="padding:2px;">还有 ' + (sch.length - 6) + ' 条…</div>';
@@ -810,6 +910,8 @@
       else if (a === 'forum') openForum();
       else if (a === 'elite') openElite();
       else if (a === 'closet') openCloset();
+      else if (a === 'calendar') openCalendar();
+      else if (a === 'trans') openTransactions();
     }); })(btns[j]); }
     // 行程 todolist：⭕/✅打勾切换、点文字编辑、✕直接删（都不弹确认，误删了让TA重加——手机上确认框比误删烦）
     var chks = root.querySelectorAll('.sb-schk');
@@ -854,12 +956,12 @@
         SBupdate(function (v) {
           if (!v.sb) return v;
           if (!Array.isArray(v.sb.schedule)) v.sb.schedule = [];
-          v.sb.schedule.push({ txt: txt, ts: Date.now() });
+          v.sb.schedule.push({ txt: txt, ts: Date.now(), gameDay: (v.sb.game && v.sb.game.day) || 1 });
           if (v.sb.schedule.length > 20) v.sb.schedule = v.sb.schedule.slice(-20);
           return v;
         });
         if (!Array.isArray(state.schedule)) state.schedule = [];
-        state.schedule.push({ txt: txt, ts: Date.now() });
+        state.schedule.push({ txt: txt, ts: Date.now(), gameDay: (state.game && state.game.day) || 1 });
         render();
       });
     });
@@ -980,7 +1082,7 @@
     if (!force && _gposts && Date.now() - _gpostsAt < 5 * 60 * 1000) return;
     _gpostsAt = Date.now();
     try {
-      var rows = await srvFetch('sb_posts?order=created_at.desc&limit=60');
+      var rows = await srvFetch('sb_posts?order=created_at.desc&limit=200');   // 楼太热，60条只够顶楼10个瓜（Akuma的帖被顶没了群众有意见）
       if (Array.isArray(rows)) {
         _gposts = rows;
         if (currentPage === 'board:gossip') openBoard('gossip');   // 姐妹楼开着 → 真人帖到了就重画
@@ -991,7 +1093,7 @@
     if (onlineCfg().off) return '';
     var h = '<div class="sb-sec" style="margin:16px 20px 6px;">🌍 全服姐妹楼 · 真人</div>';
     if (!_gposts) return h + '<div class="sb-empty">📡 拉取中…（一直空着=全服楼还没开张）</div>';
-    var tops = _gposts.filter(function (x) { return !x.parent_id; }).slice(0, 10);
+    var tops = _gposts.filter(function (x) { return !x.parent_id; }).slice(0, 30);   // 顶楼 10 → 30
     if (!tops.length) return h + '<div class="sb-empty">全服楼还空着——第一个吃螃蟹的可以是你（发帖时选「全服」）</div>';
     var meTok = onlineCfg().token;
     for (var i = 0; i < tops.length; i++) {
@@ -1059,6 +1161,8 @@
     if (currentPage === 'forum') openForum();
     else if (currentPage === 'elite') openElite();
     else if (currentPage === 'closet') openCloset();
+    else if (currentPage === 'calendar') openCalendar();
+    else if (currentPage === 'transactions') openTransactions();
     else if (currentPage && currentPage.indexOf('board:') === 0) openBoard(currentPage.slice(6));
   }
   // 系统权威扣款（买东西/订阅走这里，不靠主线 LLM 记账；主线消息里注明"已付款"防止它再补记）
@@ -1073,6 +1177,14 @@
       if (!w.transactions) w.transactions = [];
       w.transactions.push({ direction: '-', amount: amount, counterparty: what, channel: channel || '', note: '', time: nowT() });
       if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+      // 总账（UWU 流水页）：手机侧扣款也要进全量账本，不然流水页只有生成器那头的钱
+      if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
+      w.allTransactions.push({
+        id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        direction: '-', amount: amount, counterparty: what, channel: channel || '', note: '',
+        time: nowT(), gameDay: (v.sb.game && v.sb.game.day) || 1,
+      });
+      if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
       return v;
     });
     // updateVariablesWith 是异步的，本地镜像同步改（openChat 清未读同款手法）
@@ -1145,7 +1257,7 @@
       if (!v.sb || !v.sb.npcs || !v.sb.npcs[who]) return v;
       var n = v.sb.npcs[who];
       if (!n.dm_history) n.dm_history = [];
-      n.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: 'text', content: text, note: '' });
+      n.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: 'text', content: text, note: '', gameDay: (v.sb.game && v.sb.game.day) || 1 });
       if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400);
       n.engaged = true; n.muted = false; n.last_ts = Date.now(); n.last_contact = t;
       n.last_message = lastPreview({ sender: 'USER', type: 'text', content: text });
@@ -1154,7 +1266,7 @@
     var m0 = state && state.npcs && state.npcs[who];
     if (m0) {
       if (!m0.dm_history) m0.dm_history = [];
-      m0.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: 'text', content: text, note: '' });
+      m0.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: 'text', content: text, note: '', gameDay: (state && state.game && state.game.day) || 1 });
       m0.engaged = true; m0.muted = false; m0.last_ts = Date.now(); m0.last_contact = t;
       m0.last_message = lastPreview({ sender: 'USER', type: 'text', content: text });
     }
@@ -1865,7 +1977,7 @@
       if (!v.sb.npcs) v.sb.npcs = {};
       if (!v.sb.npcs['SugarElite™']) v.sb.npcs['SugarElite™'] = { name: 'SugarElite™', archetype: '管家', persistent: true, engaged: true, total_transfers: 0, relationship: 0, unlocked: true, last_contact: nowT(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [] };
       var n = v.sb.npcs['SugarElite™'];
-      n.dm_history.push({ sender: 'THEM', time: nowT(), ts: Date.now(), type: 'text', content: 'Welcome to SugarElite. — S.', note: '', zh: '欢迎加入 SugarElite。— S.' });
+      n.dm_history.push({ sender: 'THEM', time: nowT(), ts: Date.now(), type: 'text', content: 'Welcome to SugarElite. — S.', note: '', zh: '欢迎加入 SugarElite。— S.', gameDay: (v.sb.game && v.sb.game.day) || 1 });
       n.unread = (n.unread || 0) + 1; n.last_message = 'Welcome to SugarElite…'; n.last_contact = nowT(); n.last_ts = Date.now();
       return v;
     });
@@ -1881,6 +1993,180 @@
   }
 
   // ── 手机设置（独立 API：手机私信走自己的小模型，不占主 API 限额） ──
+  // ── 📅 日历（UWU 的功能）：日程落格子 + 点日期看当天安排 + 📚手动生成学业日程 ──
+  // 日期数学全走 epochDate/gameDateOf（本地时区解析），格子号=剧情第几天（gameDay，1起算）
+  var _calMonthOffset = 0;   // 翻月偏移只是浏览状态，不进 sb 变量
+  function openCalendar() {
+    currentPage = 'calendar';
+    currentChatName = null;
+    if (!state) return;
+    if (!state.game) state.game = {};
+    var epoch = epochDate();
+    var todayDate = gameDateOf(state.game.day || 1);
+    var displayDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + _calMonthOffset, 1);
+    var viewYear = displayDate.getFullYear(), viewMonth = displayDate.getMonth();
+    var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b>日历</b><small>' + viewYear + '年 ' + (viewMonth + 1) + '月</small></div>' +
+      '<button class="sb-ch-del" id="sb-cal-academic" title="生成学业日程（NYU 的 deadline 不会放过你）" style="opacity:.8;">📚</button></div>';
+    h += '<div class="sb-msgs" id="sb-cal-wrap" style="display:block;padding:10px;">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
+      '<button class="sb-abtn cal-prev" style="flex:0 0 auto;">◀</button>' +
+      '<span style="font-weight:600;color:var(--ink);">' + viewYear + '年 ' + (viewMonth + 1) + '月</span>' +
+      '<button class="sb-abtn cal-next" style="flex:0 0 auto;">▶</button></div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(7,1fr);text-align:center;font-size:11px;color:var(--ink-sub);margin-bottom:6px;">';
+    ['日', '一', '二', '三', '四', '五', '六'].forEach(function (d) { h += '<div>' + d + '</div>'; });
+    h += '</div>';
+    h += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;background:var(--paper-2);border-radius:12px;padding:4px;">';
+    var firstDay = new Date(viewYear, viewMonth, 1).getDay();
+    var daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    var cells = [];
+    for (var e0 = 0; e0 < firstDay; e0++) cells.push(null);
+    for (var d0 = 1; d0 <= daysInMonth; d0++) {
+      var date0 = new Date(viewYear, viewMonth, d0);
+      var cellGd = Math.round((date0.getTime() - epoch.getTime()) / 86400000) + 1;   // 本地午夜相减，round 吃掉夏令时的±1小时
+      var evs = (state.schedule || []).filter(function (s) { return (s.gameDay || 1) === cellGd; });
+      var emoji = evs.length ? (evs.some(function (s) { return s.academic; }) ? '📚' : '🗓️') : '';
+      cells.push({ day: d0, emoji: emoji, gameDay: cellGd });
+    }
+    while (cells.length % 7 !== 0) cells.push(null);
+    for (var ci = 0; ci < cells.length; ci++) {
+      var c0 = cells[ci];
+      if (!c0) { h += '<div style="aspect-ratio:1;background:var(--paper-3);border-radius:6px;"></div>'; continue; }
+      var isToday = c0.gameDay === (state.game.day || 1);
+      h += '<div class="sb-cal-day" data-gd="' + c0.gameDay + '" style="background:' + (isToday ? 'var(--gold-soft)' : 'var(--paper)') + ';border-radius:6px;">' +
+        '<span style="font-weight:500;">' + c0.day + '</span>' +
+        (c0.emoji ? '<span style="font-size:14px;">' + c0.emoji + '</span>' : '') + '</div>';
+    }
+    h += '</div>';
+    h += '<div id="sb-cal-detail" style="margin-top:10px;padding:10px;background:var(--paper-3);border-radius:12px;display:none;max-height:120px;overflow-y:auto;font-size:12px;color:var(--ink);"></div>';
+    h += '<div class="sb-empty" style="font-style:normal;padding:10px 4px 2px;">今天=金色格子（剧情第 ' + (state.game.day || 1) + ' 天）。点 📚 给自己排点课业——毕竟你名义上还是个学生。</div>';
+    h += '</div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
+    chatEl.querySelector('.cal-prev').addEventListener('click', function () { _calMonthOffset--; openCalendar(); });
+    chatEl.querySelector('.cal-next').addEventListener('click', function () { _calMonthOffset++; openCalendar(); });
+    var acadBtn = chatEl.querySelector('#sb-cal-academic');
+    if (acadBtn) acadBtn.addEventListener('click', function () {
+      var academicCount = ((state && state.schedule) || []).filter(function (s) { return s.academic; }).length;
+      if (academicCount >= 3) { toast('info', '📚 学业日程已经排满了（最多3条）——先把手头的deadline熬过去'); return; }
+      SBemit('sb_request_academic');
+      toast('info', '📚 正在生成学业日程…（一次AI调用）');
+      acadBtn.textContent = '⏳';
+      setTimeout(function () { acadBtn.textContent = '📚'; }, 3000);
+    });
+    var wrap = chatEl.querySelector('#sb-cal-wrap');
+    var detailDiv = chatEl.querySelector('#sb-cal-detail');
+    var selectedDay = null;
+    // 点日期开详情，点同一天/点空白处收起——监听挂在本页的 wrap 上，换页即销毁不积攒
+    wrap.addEventListener('click', function (ev) {
+      var dayEl = ev.target && ev.target.closest && ev.target.closest('.sb-cal-day');
+      if (!dayEl) {
+        if (!(ev.target.closest && ev.target.closest('#sb-cal-detail'))) { detailDiv.style.display = 'none'; selectedDay = null; }
+        return;
+      }
+      ev.stopPropagation();
+      var gd = parseInt(dayEl.getAttribute('data-gd'), 10);
+      if (selectedDay === gd) { detailDiv.style.display = 'none'; selectedDay = null; return; }
+      selectedDay = gd;
+      var events = ((state && state.schedule) || []).filter(function (s) { return (s.gameDay || 1) === gd; });
+      var html = '';
+      if (!events.length) html = '<div style="color:var(--ink-faint);text-align:center;">当天无安排</div>';
+      else events.forEach(function (ev2) {
+        html += '<div style="margin-bottom:6px;border-bottom:1px dashed var(--line);padding-bottom:4px;">' + (ev2.academic ? '📚' : '🗓️') + ' ' + esc(ev2.txt) + '</div>';
+      });
+      detailDiv.innerHTML = html; detailDiv.style.display = 'block';
+    });
+  }
+
+  // ── 💳 流水（UWU 的功能）：全部交易带日期，🧾税务中心藏在右上角（设置里开了才出现）──
+  var _onTaxReady = null;   // 税务题目生成完的回调钩子（全局只注册一次监听，见文件尾 SBon）
+  function openTransactions() {
+    currentPage = 'transactions';
+    currentChatName = null;
+    if (!state) return;
+    var allTx = ((state.wallet && state.wallet.allTransactions) || []).slice().reverse();
+    var taxEnabled = false;
+    try { taxEnabled = VIEW.localStorage.getItem('sbnyc_tax_enabled') === '1'; } catch (e) {}
+    var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b>全部流水</b><small>Statement</small></div>' +
+      (taxEnabled ? '<button class="sb-ch-del" id="sb-tax-btn" title="税务中心" style="opacity:.8;">🧾</button>' : '') + '</div>';
+    h += '<div class="sb-msgs" id="sb-tx-list" style="display:block;padding-top:8px;">';
+    if (!allTx.length) h += '<div class="sb-empty">还没有流水——先去挣，或者先去花</div>';
+    else allTx.forEach(function (tx) {
+      var minus = tx.direction === '-';
+      var dateStr = tx.gameDay ? fmtMD(gameDateOf(tx.gameDay)) : '';
+      h += '<div style="padding:9px 14px;border-bottom:.5px dashed var(--line-faint);display:flex;justify-content:space-between;align-items:baseline;gap:8px;">' +
+        '<div style="min-width:0;"><b class="sb-tx-a ' + (minus ? 'minus' : 'plus') + '">' + tx.direction + fmtUSD(tx.amount) + '</b> ' +
+        '<span style="font-size:11px;color:var(--ink-sub);">' + esc(tx.counterparty || '') + '</span></div>' +
+        '<div style="font-size:10px;color:var(--ink-faint);flex-shrink:0;">' + dateStr + (tx.time ? ' ' + esc(tx.time) : '') + (tx.channel ? ' · ' + esc(tx.channel) : '') + '</div></div>';
+    });
+    h += '</div>';
+    h += '<div id="sb-tax-panel" style="display:none;flex:1;overflow-y:auto;padding:12px;"></div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
+    var taxPanel = chatEl.querySelector('#sb-tax-panel');
+    var txList = chatEl.querySelector('#sb-tx-list');
+    var taxBtn = chatEl.querySelector('#sb-tax-btn');
+    if (taxBtn) taxBtn.addEventListener('click', function (ev) { ev.stopPropagation(); openTaxPanel(); });
+    function openTaxPanel() {
+      if (taxPanel.style.display === 'block') { taxPanel.style.display = 'none'; txList.style.display = 'block'; _onTaxReady = null; return; }
+      txList.style.display = 'none'; taxPanel.style.display = 'block';
+      if (!state.taxQuestions || !state.taxQuestions.length) {
+        taxPanel.innerHTML = '<div class="sb-empty">⏳ 正在生成税务题目…（一次AI调用）</div>';
+        _onTaxReady = function () { if (currentPage === 'transactions' && taxPanel.style.display === 'block') renderTaxPanel(); };
+        SBemit('sb_request_tax_questions');
+        return;
+      }
+      renderTaxPanel();
+    }
+    function renderTaxPanel() {
+      var taxData = (state && state.taxQuestions) || [];
+      if (!taxData.length) { taxPanel.innerHTML = '<div class="sb-empty">题目还没到——稍等或重开本页</div>'; return; }
+      var totalIncome = 0;
+      var all2 = (state.wallet && state.wallet.allTransactions) || [];
+      for (var i = 0; i < all2.length; i++) { if (all2[i].direction === '+') totalIncome += all2[i].amount || 0; }
+      var taxOwed = Math.round(totalIncome * 0.15);
+      var h2 = '<div style="padding:10px;background:var(--paper-2);border-radius:12px;margin-bottom:10px;">';
+      h2 += '<b style="color:var(--gold);">🧾 IRS 税务中心</b>';
+      h2 += '<div style="font-size:12px;color:var(--ink-sub);margin-top:6px;line-height:1.7;">在美国，所有收入（包括 Sugar Baby 收到的赠与、转账、礼物折算）都可能需要申报并缴纳联邦所得税和州税。<br>' +
+        '本年度截至目前，你的总收入约为：<b>' + fmtUSD(totalIncome) + '</b><br>' +
+        '预估应缴税额（15%）：<b style="color:var(--red);">' + fmtUSD(taxOwed) + '</b><br>' +
+        '申报截止日期：<b>4月15日</b>（逾期将产生罚款）</div></div>';
+      h2 += '<div style="padding:10px;background:var(--paper-2);border-radius:12px;margin-bottom:10px;">';
+      h2 += '<b style="color:var(--ink);font-size:12px;">📝 税务知识测试（自助报税需答对 3 题，答不对也能报，但加收 20% 罚款）</b>';
+      for (var qi = 0; qi < taxData.length; qi++) {
+        var q = taxData[qi];
+        h2 += '<div style="margin-top:10px;font-size:12px;color:var(--ink);">' + (qi + 1) + '. ' + esc(q.q) + '</div>';
+        for (var oj = 0; oj < q.opts.length; oj++) h2 += '<label style="display:block;margin-left:10px;font-size:11px;cursor:pointer;color:var(--ink-sub);"><input type="radio" name="taxq' + qi + '" value="' + oj + '"> ' + esc(q.opts[oj]) + '</label>';
+      }
+      h2 += '</div>';
+      h2 += '<div style="display:flex;gap:8px;margin-bottom:10px;"><button class="sb-abtn" id="sb-tax-self" style="flex:1;">📝 自助报税（答对3题免罚款）</button><button class="sb-abtn" id="sb-tax-agent" style="flex:1;">💼 请人报税（额外 $100）</button></div>';
+      taxPanel.innerHTML = h2;
+      function processPayment(amount, method) {
+        if (amount <= 0) { toast('info', '无需缴税——IRS 今天对你没兴趣'); return; }
+        var ok = true;
+        try { ok = (DOC.defaultView || window).confirm(method + '，需要支付 ' + fmtUSD(amount) + '（余额 ' + fmtUSD((state && state.wallet && state.wallet.balance) || 0) + '），确认？'); } catch (e) {}
+        if (!ok) return;
+        if (!debit(amount, method, '税务')) return;
+        toast('success', '🧾 已支付 ' + fmtUSD(amount) + '（' + method + '）——一个守法的甜心宝贝');
+        state.taxQuestions = null;
+        SBupdate(function (v) { if (v.sb) v.sb.taxQuestions = null; return v; });
+        SBemit('sb_updated');
+        openTransactions();
+      }
+      taxPanel.querySelector('#sb-tax-self').addEventListener('click', function () {
+        var correct = 0;
+        for (var i2 = 0; i2 < taxData.length; i2++) {
+          var sel = taxPanel.querySelector('input[name="taxq' + i2 + '"]:checked');
+          if (sel && parseInt(sel.value, 10) === taxData[i2].ans) correct++;
+        }
+        var finalTax = taxOwed;
+        if (correct < 3) { finalTax = Math.round(taxOwed * 1.2); toast('warning', '只答对 ' + correct + ' 题——IRS 加收 20% 罚款'); }
+        else toast('success', '答对全部 3 题，无罚款——比一半美国人强');
+        processPayment(finalTax, '自助报税');
+      });
+      taxPanel.querySelector('#sb-tax-agent').addEventListener('click', function () { processPayment(taxOwed + 100, '请人报税'); });
+    }
+  }
+
   function openSettings() {
     currentPage = 'settings';
     currentChatName = null;
@@ -1918,6 +2204,27 @@
     var plotN = 8; try { plotN = parseInt(VIEW.localStorage.getItem('sbnyc_plot_n'), 10) || 8; } catch (e) {}
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-plot-toggle" style="flex:1;">📖 手机读正文的楼层数：' + plotN + ' 层（点我换挡）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">生成私信时，手机能"看见"的最近正文层数——决定线上的人知不知道你线下干了什么（比如你已经在 T. 家过夜了，S. 的推送该不该心里有数）。调大=私信更贴剧情但更费 token。默认 8 层。</div>';
+    // 剧情起始日期（UWU 日期体系：日历/消息日期/流水日期都从这天起算）
+    h += '<div class="sb-sec" style="margin-top:16px;">剧情 · Story</div>';
+    var currentEpoch = (state && state.game && state.game.epoch) || GAME_EPOCH_STR;
+    h += '<div class="sb-frow"><label>游戏起始日期（YYYY-MM-DD，影响日历和消息日期 · 来自UWU）</label><input id="sbnyc-epoch-input" type="text" placeholder="' + GAME_EPOCH_STR + '" value="' + esc(currentEpoch) + '"></div>';
+    h += '<div style="display:flex;margin:4px 14px 10px;"><button class="sb-abtn" id="sbnyc-epoch-save" style="flex:1;">💾 保存起始日期</button></div>';
+    // 功能开关（UWU）
+    h += '<div class="sb-sec" style="margin-top:16px;">功能 · Features</div>';
+    var taxOn = false;
+    try { taxOn = VIEW.localStorage.getItem('sbnyc_tax_enabled') === '1'; } catch (e) {}
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-tax-toggle" style="flex:1;">🧾 税务功能（来自UWU）：' + (taxOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">开启后「💳 流水」页右上角出现 🧾 税务中心——阿美莉卡的钱不是白挣的，IRS 会来找你聊聊。默认关闭。</div>';
+    // 感官反馈（UWU：震动发光 + 壁纸）
+    h += '<div class="sb-sec" style="margin-top:16px;">感官 · Sensory</div>';
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-vibrate-toggle" style="flex:1;">📳 消息震动+发光（来自UWU）：' + (vibrateEnabled ? '开（点我关）' : '关（点我开）') + '</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">有新消息时悬浮球闪金光 + 手机面板轻抖一下（纯CSS动画，手机电脑都有效）。</div>';
+    var hasWp = false;
+    try { hasWp = !!VIEW.localStorage.getItem('sbnyc_wallpaper'); } catch (e) {}
+    h += '<div style="margin:8px 14px 4px;display:flex;align-items:center;gap:8px;"><span style="font-size:12px;color:var(--ink);">🖼️ 手机壁纸：</span>' +
+      '<label class="sb-wp-upload"><span id="sbnyc-wp-label">' + (hasWp ? '更换图片' : '上传图片') + '</span><input type="file" id="sbnyc-wp-input" accept="image/*"></label>' +
+      (hasWp ? '<span class="sb-wp-clear" id="sbnyc-wp-clear">清除壁纸</span>' : '') + '</div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 6px;">支持 JPG/PNG/GIF。图片转成 Base64 存本地，不跟随聊天文件。</div>';
     // 联机区块（SugarRank 排行榜 + 全服橱窗）
     var oc = onlineCfg();
     h += '<div class="sb-sec" style="margin-top:16px;">Online · 联机</div>';
@@ -1929,6 +2236,8 @@
     h += '<div class="sb-frow"><label>服务器 Key（用官方服留空）</label><input id="sbnyc-on-key" autocomplete="off" readonly data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="sb_publishable_..." value="' + esc(oc.key) + '"></div></details>';
     h += '<div style="display:flex;margin:4px 14px 10px;"><button class="sb-abtn" id="sbnyc-on-toggle" style="flex:1;">' + (oc.off ? '🔌 联机已全关（点我打开）' : '🌐 联机已开（点我全关）') + '</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">起个排行榜名字，点「更新我的排名」就能上全服榜。联机只做两件事：拉全服橱窗上新、你主动点更新时上传 名字+余额数字。私信、剧情、人设永远不上传。全关后本卡零网络请求。</div>';
+    // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 —— 来自 UWU 老师的二创贡献</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -2000,6 +2309,56 @@
       toast('info', '📖 手机现在读最近 ' + next4 + ' 层正文');
       openSettings();
     });
+    // 起始日期保存（UWU）
+    var epochInput = chatEl.querySelector('#sbnyc-epoch-input');
+    var epochSave = chatEl.querySelector('#sbnyc-epoch-save');
+    if (epochInput && epochSave) epochSave.addEventListener('click', function () {
+      var val = (epochInput.value || '').trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('warning', '格式错误——要 YYYY-MM-DD，比如 ' + GAME_EPOCH_STR); return; }
+      SBupdate(function (v) { if (v.sb && v.sb.game) v.sb.game.epoch = val; return v; });
+      if (state && state.game) state.game.epoch = val;
+      toast('success', '📅 起始日期已更新为 ' + val);
+    });
+    // 税务开关（UWU）
+    var taxToggle = chatEl.querySelector('#sbnyc-tax-toggle');
+    if (taxToggle) taxToggle.addEventListener('click', function () {
+      var curT = false;
+      try { curT = VIEW.localStorage.getItem('sbnyc_tax_enabled') === '1'; } catch (e) {}
+      try { VIEW.localStorage.setItem('sbnyc_tax_enabled', curT ? '0' : '1'); } catch (e) {}
+      toast('info', curT ? '🧾 税务功能已关闭——IRS 假装没看见你' : '🧾 税务功能已开启——去「💳 流水」页右上角报税');
+      openSettings();
+    });
+    // 震动开关（UWU）
+    var vibBtn = chatEl.querySelector('#sbnyc-vibrate-toggle');
+    if (vibBtn) vibBtn.addEventListener('click', function () {
+      vibrateEnabled = !vibrateEnabled;
+      try { VIEW.localStorage.setItem('sbnyc_vibrate', vibrateEnabled ? '1' : '0'); } catch (e) {}
+      toast('info', vibrateEnabled ? '📳 震动+发光已开启' : '🔇 震动+发光已关闭');
+      openSettings();
+    });
+    // 壁纸上传/清除（UWU）
+    var wpInput = chatEl.querySelector('#sbnyc-wp-input');
+    if (wpInput) wpInput.addEventListener('change', function () {
+      var file = wpInput.files && wpInput.files[0];
+      if (!file) return;
+      if (file.size > 8 * 1024 * 1024) { toast('warning', '图片太大——请用 8MB 以下的文件'); return; }
+      var reader = new FileReader();
+      reader.onload = function (e2) {
+        try { VIEW.localStorage.setItem('sbnyc_wallpaper', e2.target.result); } catch (e3) { toast('error', '存储失败，可能空间不足——换张小点的图'); return; }
+        applyWallpaper();
+        toast('success', '🖼️ 壁纸已更新');
+        openSettings();
+      };
+      reader.onerror = function () { toast('error', '图片读取失败——换一张试试'); };
+      reader.readAsDataURL(file);
+    });
+    var wpClear = chatEl.querySelector('#sbnyc-wp-clear');
+    if (wpClear) wpClear.addEventListener('click', function () {
+      try { VIEW.localStorage.removeItem('sbnyc_wallpaper'); } catch (e) {}
+      applyWallpaper();
+      toast('info', '壁纸已清除');
+      openSettings();
+    });
     chatEl.querySelector('#sbnyc-on-toggle').addEventListener('click', function () {
       var c2 = onlineCfg(); c2.off = !c2.off; saveOnlineCfg(c2);
       toast('info', c2.off ? '🔌 联机已全关，零网络请求' : '🌐 联机已打开');
@@ -2047,10 +2406,14 @@
     else {
       var lastThemIdx = -1;
       for (var li = hist.length - 1; li >= 0; li--) { if (hist[li].sender === 'THEM') { lastThemIdx = li; break; } }
+      var prevMsg = null;   // 时间分割线（UWU）：跨天插日期条，同天隔1小时+插时间条
       for (var i = 0; i < hist.length; i++) {
+        var dv = dividerBetween(prevMsg, hist[i]);
+        if (dv) h += dividerHtml(dv);
         var autoTr = !!(_pendingTrs[name + '|' + i] && hist[i].zh);
         if (autoTr) delete _pendingTrs[name + '|' + i];   // 刚才点了兜底翻译的那条：翻好自动展开（字典各销各的账）
         h += renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx, i === hist.length - 1);   // 对方最后一条挂 reroll；自己的最后一条挂撤回
+        prevMsg = hist[i];
       }
     }
     h += '</div>';
@@ -2094,15 +2457,17 @@
     function queueMsg(txt, mtype) {
       var text = txt || input.value.trim(); if (!text) return;
       var t = nowT(); var ty = mtype || 'text';
+      var gDay = (state && state.game && state.game.day) || 1;
       npc.engaged = true;
       if (!npc.dm_history) npc.dm_history = [];
-      npc.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '' });
+      var prevQ = npc.dm_history.length ? npc.dm_history[npc.dm_history.length - 1] : null;   // 分割线要看上一条
+      npc.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay });
       if (npc.dm_history.length > 400) npc.dm_history = npc.dm_history.slice(-400);
       SBupdate(function (v) {
         if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
         var n = v.sb.npcs[name]; if (!n) return v;
         if (!n.dm_history) n.dm_history = [];
-        n.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '' });
+        n.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay });
         if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400);
         n.engaged = true; n.unread = 0; n.last_ts = Date.now(); n.last_contact = t; n.muted = false;
         n.last_message = lastPreview({ sender: 'USER', type: ty, content: text });   // 列表显示"你：xxx"——一眼知道回过没
@@ -2117,7 +2482,13 @@
       queueOutbox(name, obLine);
       input.value = '';
       var box = chatEl.querySelector('.sb-msgs');
-      if (box) { box.insertAdjacentHTML('beforeend', renderOneMsg({ sender: 'USER', time: t, type: ty, content: text }, name, npc.dm_history.length - 1, false, false, true)); box.scrollTop = box.scrollHeight; }
+      if (box) {
+        var currQ = { sender: 'USER', time: t, type: ty, content: text, gameDay: gDay };
+        var dvq = dividerBetween(prevQ, currQ);   // 局部插入也补分割线（UWU）——不然重开聊天才出现
+        if (dvq) box.insertAdjacentHTML('beforeend', dividerHtml(dvq));
+        box.insertAdjacentHTML('beforeend', renderOneMsg(currQ, name, npc.dm_history.length - 1, false, false, true));
+        box.scrollTop = box.scrollHeight;
+      }
     }
     // 「发送」键：先把输入框里没发的也攒进去，再让这个人一次性回复攒的全部
     function sendReply() {
@@ -2272,7 +2643,7 @@
 
   function renderOneMsg(m, trName, trIdx, autoShow, canReroll, isLast) {
     var isU = m.sender === 'USER'; var cls = isU ? 'me' : 'them'; var type = (m.type || 'text').toLowerCase();
-    var c = m.content || ''; var t = m.time || ''; var n = m.note || '';
+    var c = m.content || ''; var t = formatMsgTime(m); var n = m.note || '';   // 时间戳带日期（UWU）："4/16 09:20"，AI 和玩家都不再犯日期糊涂
     if (m.edited) t = (t ? t + ' · ' : '') + '已编辑';
     var tH = t ? '<span class="mt">' + esc(t) + '</span>' : '';
     // 群聊气泡：内容开头的「S.：」/「Akuma：」拆成气泡上方的小名字
@@ -2522,6 +2893,7 @@
     var t = e.target;
     if (t && t.id === 'sbnyc-gear') openSettings();
     else if (t && t.id === 'sbnyc-night') applyNight(!panel.classList.contains('night'));
+    else if (t && t.id === 'sb-bar-time-click') calibrateTime();   // ⏱ 时间校准（UWU）——顶栏是委托绑定，别在 render 里找它
   });
   try { if (VIEW.localStorage.getItem('sbnyc_night') === '1') applyNight(true); } catch (e) {}   // 记住上次选择
   try { if (VIEW.localStorage.getItem('sbnyc_blindbox') === '1') applyBlind(true); } catch (e) {}
@@ -2693,8 +3065,15 @@
     if (b && b.getAttribute('data-nm')) { e.preventDefault(); showMsgMenu(b); }
   });
   SBon('sb_updated', function () {
+    var prevUn = totalUnread();   // 震动只在未读涨了才触发（UWU 功能 + 守门：自己发消息/改设置不抖）
     setStatus('✓ 新消息 ' + nowT());
     refreshView();
+    if (totalUnread() > prevUn) triggerVibration();
+  });
+  // 🧾 税务题目就绪（UWU）：流水页税务中心开着就地刷新
+  SBon('sb_tax_questions_ready', function () {
+    loadState();
+    if (_onTaxReady) { var cb = _onTaxReady; _onTaxReady = null; cb(); }
   });
   SBon('sb_dm_failed', function (msg) {
     setStatus('⚠️ ' + (msg || '私信生成失败'));
@@ -2730,5 +3109,5 @@
 
   // 初始读一次（填表前 sb 不存在 → 面板显示等待提示，FAB 照样可见 = 脚本活着的证据）
   refreshView();
-  console.log('[SB-NYC v4] phone panel mounted (floating, no regex, no markdown)');
+  console.log('[SB-NYC v4] phone panel mounted (floating, no regex, no markdown + UWU: vibrate/wallpaper/calendar/statement-tax/date-labels/time-adjust)');
 })();
