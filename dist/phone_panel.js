@@ -1079,7 +1079,9 @@
   var _gposts = null, _gpostsAt = 0;
   async function fetchGlobalPosts(force) {
     if (onlineCfg().off) return;
-    if (!force && _gposts && Date.now() - _gpostsAt < 5 * 60 * 1000) return;
+    // 节流 20s：够短=每次开楼基本都拉到最新（原本 5min，别人发的新帖要等五分钟才看得见）；
+    // 又必须 >0=拉完会回调 openBoard('gossip')，而 openBoard 又调本函数，节流就是这条回环唯一的刹车。别改成 force。
+    if (!force && _gposts && Date.now() - _gpostsAt < 20 * 1000) return;
     _gpostsAt = Date.now();
     try {
       var rows = await srvFetch('sb_posts?order=created_at.desc&limit=200');   // 楼太热，60条只够顶楼10个瓜（Akuma的帖被顶没了群众有意见）
