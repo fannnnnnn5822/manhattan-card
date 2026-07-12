@@ -513,10 +513,10 @@
     '#sbnyc-panel .sb-rank.you{border-color:var(--gold);background:linear-gradient(135deg,var(--paper-2),#f0e8d6);}',
     '#sbnyc-panel .sb-post{margin:0 12px 10px;padding:12px 14px;background:var(--paper-2);border:.5px solid var(--line);border-radius:14px;}',
     '#sbnyc-panel .sb-post b{font-family:var(--font-cn);font-size:13px;color:var(--ink);display:block;margin-bottom:3px;font-weight:500;}',
-    '#sbnyc-panel .sb-post .pb{font-size:12px;color:var(--ink-sub);line-height:1.7;}',
+    '#sbnyc-panel .sb-post .pb{font-size:12px;color:var(--ink-sub);line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;}',
     '#sbnyc-panel .sb-post .pm{font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:var(--font-en);letter-spacing:1px;}',
     // 💬 我的自荐帖评论区：一楼一条，@昵称 金色
-    '#sbnyc-panel .sb-cmt{margin-top:7px;padding:7px 10px;background:var(--paper-3);border-radius:10px;font-size:11.5px;color:var(--ink-sub);line-height:1.6;}',
+    '#sbnyc-panel .sb-cmt{margin-top:7px;padding:7px 10px;background:var(--paper-3);border-radius:10px;font-size:11.5px;color:var(--ink-sub);line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}',
     '#sbnyc-panel .sb-cmt b{color:var(--gold);font-weight:600;margin-right:6px;font-family:var(--font-en);}',
     '#sbnyc-panel .sb-cmt-pull{margin-top:8px;text-align:center;font-size:10px;color:var(--gold);cursor:pointer;letter-spacing:1px;border:.5px dashed var(--gold);border-radius:999px;padding:4px 10px;opacity:.8;user-select:none;}',
     '#sbnyc-panel .sb-cmt-pull:hover{opacity:1;}',
