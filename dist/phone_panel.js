@@ -1124,6 +1124,11 @@
     var c = await ensureIdentity();
     if (!c) { toast('info', '没起马甲，先不上榜'); return; }
     var bal = Math.round((state && state.wallet && state.wallet.balance) || 0);
+    // 🏝️ 开曼制度（Fan 拍板）：榜单只统计"在岸资产"，超过 10 亿的部分自动转入离岸账户——
+    // 不拒绝上传、不指控任何人，用世界观完成治理。想上传多少都行，榜上封顶 10 亿。
+    var ONSHORE_CAP = 1000000000;
+    var offshore = 0;
+    if (bal > ONSHORE_CAP) { offshore = bal - ONSHORE_CAP; bal = ONSHORE_CAP; }
     // 上榜宣言：让真人也有自己的一句话（默认沿用上次；不填就用上次的或留空）
     var blurb = c.blurb || '';
     var b = await panelPrompt('给自己写一句上榜宣言（榜上显示，可炫可自嘲，留空则沿用上次）：', blurb);
@@ -1131,6 +1136,7 @@
     c.blurb = blurb; saveOnlineCfg(c);
     try {
       await srvFetch('sb_rank', { method: 'POST', prefer: 'resolution=merge-duplicates', body: { token: c.token, handle: c.handle, amount: bal, blurb: blurb } });
+      if (offshore > 0) toast('info', '🏝️ 应您的税务顾问建议，超出 $1B 的 ' + fmtUSD(offshore) + ' 已自动转入您的开曼群岛离岸账户。榜单仅展示在岸资产——低调，是顶级富豪最后的奢侈品。');
       toast('success', '⬆ 已上榜：' + c.handle + ' ' + fmtUSD(bal));
       await fetchRank(true);
     } catch (e) { toast('error', '上榜失败: ' + ((e && e.message) || e)); }
