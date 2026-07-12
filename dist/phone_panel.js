@@ -2196,7 +2196,7 @@
     var blindOn = panel.classList.contains('blindbox');
     h += '<div class="sb-sec" style="margin-top:16px;">显示 · Display</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-blind-toggle" style="flex:1;">' + (blindOn ? '🎁 盲盒模式已开（点我显示身份标签）' : '🏷️ 身份标签已显示（点我开盲盒）') + '</button></div>';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">盲盒模式：藏起所有人的身份标签（「巨鲸·阔绰」这种），只留名字，谁是谁、什么来路自己从聊天里猜。喜欢开盲盒的开，看不懂英文认不出人的关着就好。</div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">盲盒模式：藏起所有人的身份标签（「巨鲸·阔绰」这种），只留名字，谁是谁、什么来路自己从聊天里猜。</div>';
     // 手机对话写进正文：两个独立开关（可同时开），都默认关
     var tailOn = false, layerOn = false;
     try { tailOn = VIEW.localStorage.getItem('sbnyc_floorlog') === '1'; } catch (e) {}
