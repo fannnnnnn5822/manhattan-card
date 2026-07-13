@@ -1,3 +1,8 @@
+// ═══════════════════════════════════════════════════════════════════
+// 纸醉金迷 · 鎏金曼哈顿（Sugar Baby Simulator：NYC）© 2026 fannnnnnn（作者）
+// 含 UWU 老师授权贡献（震动/壁纸/日历/流水税务/日期系统）。可读可学，
+// 禁止直接搬运、改名、重新打包后公开发布；保留本署名。详见仓库 LICENSE。
+// ═══════════════════════════════════════════════════════════════════
 // SugarOS NYC v4 — 私信生成器（核心）
 // 主线 LLM 只写散文。手机要私信时，本脚本用 generateRaw 开一个独立小窗口生成，
 // 格式由本脚本 100% 控制、可重试、玩家看不到失败。彻底不依赖主线 LLM 吐格式。
@@ -143,8 +148,60 @@ function nowTime() {
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
 
-// ── 剧情过天检测：正文 [TIME:] 的星期变了（周四→周六=+2天），或时钟明显倒回（23:15→09:30=睡了一觉）就是过天 ──
-// 过天要干的活在 advanceDays：game.day 前进 + 所有账单倒计时同步减（不减=倒计时是幅静态画，玩家已投诉）
+// ── 剧情过天检测：正文 [TIME:HH:MM|M/D] 里的日期推进 → game.day 同步前进 ──
+// v5 改造（UWU）：取消星期计算，改用实际日期。不用 AI 编的星期几来推天数了——部分用户预设不带星期只带日期，
+// AI 会虚构星期导致日期不正常推进。现在直接根据 [TIME:HH:MM|4/16] 里的日期算出 gameDay。
+// epoch 必须按本地时区手动拆解——new Date('2026-04-15') 是 UTC 午夜，直接用会让东西半球玩家日历各错一天。
+function parseDate(s) {
+  s = String(s || '').trim();
+  // 支持：4/16, 04/16, 2026-04-16, 2026/04/16, 4月16日, 4月16, April 16
+  var m;
+  // M/D 或 MM/DD
+  m = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (m) return { month: parseInt(m[1], 10), day: parseInt(m[2], 10) };
+  // YYYY-MM-DD 或 YYYY/MM/DD
+  m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (m) return { month: parseInt(m[2], 10), day: parseInt(m[3], 10) };
+  // M月D日 或 M月D
+  m = s.match(/^(\d{1,2})月(\d{1,2})[日]?$/);
+  if (m) return { month: parseInt(m[1], 10), day: parseInt(m[2], 10) };
+  // 英文月名
+  var EN = { january:1,february:2,march:3,april:4,may:5,june:6,july:7,august:8,september:9,october:10,november:11,december:12,
+    jan:1,feb:2,mar:3,apr:4,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+  m = s.match(/^([a-zA-Z]+)\s+(\d{1,2})$/);
+  if (m && EN[m[1].toLowerCase()]) return { month: EN[m[1].toLowerCase()], day: parseInt(m[2], 10) };
+  return null;
+}
+// epoch 日期：剧情第1天对应的真实日期（老存档没设 epoch 就退回 GAME_EPOCH_STR）
+function epochDate(sb) {
+  var s = String(((sb && sb.game && sb.game.epoch) || GAME_EPOCH_STR));
+  var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/) || ['', '2026', '4', '15'];
+  return new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+}
+// 把 (month, day) 换算成 gameDay：从 epoch 那天起算第几天（1起算）
+function dateToGameDay(sb, month, day) {
+  var ep = epochDate(sb);
+  // 假设年份 ＝ epoch 同一年（剧情通常不会跨年）；如果月份比 epoch 月份小很多（比如 epoch=4月，date=1月），
+  // 就推断是下一年——NYC 的 sugar 季从春天开始，不太可能倒回1月
+  var year = ep.getFullYear();
+  if (month < ep.getMonth() - 2) year++;   // 跨年：当前月比epoch月小2个月以上=次年
+  var d = new Date(year, month - 1, day);
+  return Math.round((d.getTime() - ep.getTime()) / 86400000) + 1;
+}
+// 把 gameDay 转成显示用的 M/D 和 周X
+function gameDayToMD(gd, sb) {
+  var ep = epochDate(sb);
+  var d = new Date(ep.getTime());
+  d.setDate(d.getDate() + (gd || 1) - 1);
+  return (d.getMonth() + 1) + '/' + d.getDate();
+}
+function gameDayToWeekday(gd, sb) {
+  var ep = epochDate(sb);
+  var d = new Date(ep.getTime());
+  d.setDate(d.getDate() + (gd || 1) - 1);
+  return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
+}
+// 保留旧的 parseWeekday 用于兼容——但只作兜底：date 优先，weekday 次之
 var WEEKDAY_MAP = { '日': 0, '天': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6 };
 function parseWeekday(s) {
   var m = String(s || '').match(/(?:周|星期|礼拜)([日天一二三四五六])/);
@@ -388,7 +445,11 @@ function describeState(sb) {
   if (cl.length) lines.push('【衣橱·她拥有并会穿戴使用的】' + cl.slice(-8).map(function (c) { return c.name; }).join('、'));
 
   var sch = (sb.schedule || []).filter(function (s) { return !s.done; });   // 打过勾的=办完了，不再占上下文
-  if (sch.length) lines.push('【已排行程（别重复生成）】' + sch.slice(-10).map(function (s) { return s.txt; }).join('；'));
+  if (sch.length) lines.push('【已排行程（别重复生成）】' + sch.slice(-10).map(function (s) {
+    var label = s.academic ? '📚' : '📅';
+    var dateStr = s.gameDay ? (' ' + gameDayToMD(s.gameDay, sb) + ' ' + gameDayToWeekday(s.gameDay, sb)) : '';
+    return label + dateStr + ' ' + s.txt;
+  }).join('；'));
 
   // User 在论坛发过的吐槽帖（马甲匿名）：圈内人可能刷到过——私信里可以隐约呼应，但没人能确定是她发的
   var myPostsD = (sb.myPosts || []).slice(-2);
@@ -1106,7 +1167,11 @@ function buildDigest(sb) {
   if (closet.length) {
     out += '【User 的衣橱（她真实拥有的，出场/赴约时会自然穿戴使用，别人看得见的是"东西在她身上"，不是价格和来路）】' + closet.join('、') + '\n';
   }
-  var schD = (sb.schedule || []).filter(function (s) { return !s.done; }).slice(-8).map(function (s) { return s.txt; });
+  var schD = (sb.schedule || []).filter(function (s) { return !s.done; }).slice(-8).map(function (s) {
+    var label = s.academic ? '📚' : '📅';
+    var dateStr = s.gameDay ? (' ' + gameDayToMD(s.gameDay, sb) + ' ' + gameDayToWeekday(s.gameDay, sb)) : '';
+    return label + dateStr + ' ' + s.txt;
+  });
   if (schD.length) {
     out += '【User 的行程备忘（已敲定的安排，正文时间线要尊重，别写出撞期）】' + schD.join('；') + '\n';
   }
@@ -1126,7 +1191,15 @@ function buildDigest(sb) {
   out += '（铁律：正文只写散文，绝不复述、排版或重写这些内容。上面私信里出现过的转账都**已经自动入账**，正文绝不再写 [WALLET] 标记重复记这些钱。信息隔离：每个人只记得自己和 User 的那段私信；' +
     '任何角色都看不到 User 的手机——不知道她的余额、购物记录、论坛、以及她和别人的聊天，绝不提及、绝不影射。' +
     '唯一例外是 SugarElite™ 的管家 S.。人物只能对看得见的东西做反应：她穿戴出来的、她亲口说的、当面发生的。）\n' +
-    '【重要】你必须在每次回复的最末尾输出当前剧情时间，格式为 [TIME:HH:MM|周X]，例如 [TIME:14:30|周四]。这是强制要求，不可遗漏。';   // UWU 的时间修复：注入层每轮都盯着，比世界书更贴脸
+    '【WALLET 与 CLOSET 标记规则】User 获得实物（买/收礼/被人塞东西），你必须在回复末尾同时写 [WALLET] 和 [CLOSET] 两行。\n' +
+    '- WALLET 表示 **User 本人为此花了多少钱**，不是物品的市价。她自己掏钱买的 → [WALLET:-金额:备注]；别人送/替她买单的 → [WALLET:0:谁送的什么]，因为她一分钱没出。\n' +
+    '- CLOSET 表示物品入橱，价格永远是**实价**（市价/标签价），不管谁付的钱：[CLOSET:+品名|价格]。别人送她一个 $2000 的包 → [WALLET:0:T.送的包] + [CLOSET:+Birkin|2000]。\n' +
+    '- WALLET=0 时系统自动跳过扣款——不会从她余额里扣钱。两个标记缺一不可：有 CLOSET 就必有对应的 WALLET。\n' +
+    '【重要】你必须在每次回复的最末尾输出当前剧情时间，格式为 [TIME:HH:MM|YYYY-MM-DD]，时间用24小时制。\n' +
+    '- 例如 [TIME:14:30|2026-04-16]——必须带完整年月日，绝不用简写。\n' +
+    '- TIME 标记只在正文末尾输出**一次**——放在所有叙事文字、WALLET、CLOSET 之后，作为全文最后一行。正文中间绝不出现 TIME 标记。\n' +
+    '- 时间以**正文结尾的时刻**为准（不是开头、不是中间）：如果一段剧情从中午写到傍晚，TIME 就写傍晚的时间。日期同理——跨天了就写新一天的日期。\n' +
+    '日期是当前游戏内日期，从 ' + (sb.game && sb.game.epoch ? sb.game.epoch : GAME_EPOCH_STR) + ' 起算（剧情第1天=' + (sb.game && sb.game.epoch ? sb.game.epoch : GAME_EPOCH_STR) + '，今天是第 ' + (sb.game ? (sb.game.day || 1) : 1) + ' 天=' + gameDayToMD((sb.game ? (sb.game.day || 1) : 1), sb) + '）。这是强制要求，不可遗漏——日期和时间都必须基于已有的时间推进逻辑，绝不凭空编造。';   // UWU 的时间修复：注入层每轮都盯着，比世界书更贴脸
   return out;
 }
 
@@ -1149,9 +1222,11 @@ function syncInject() {
 // 世界书"钱包自动记账"条目让主线 LLM 在金钱变动时追加这行标记；
 // 这里入账后把标记从消息里删掉（防重复计 + 玩家看不到格式）。LLM 忘了写 = 不入账，啥也不坏。
 // 容错版（外部审计立功）：LLM 降智爱在冒号旁加空格、金额里塞逗号/带$——[WALLET: +$3,000 : T.] 也要认得
+// v5（UWU）：WALLET 金额可以为 0——别人买单时 User 花了 $0，但 CLOSET 照常入橱（价格记为实价）
 var WALLET_RE_SRC = '\\[WALLET:\\s*([+-]?)\\s*\\$?\\s*([\\d,]+(?:\\.\\d+)?)\\s*:\\s*([^\\]]*)\\]';
 // 衣橱标记：正文里 User 买到/收到实物 → [CLOSET:+品名] 入橱；卖掉/失去 → [CLOSET:-品名] 出橱
-var CLOSET_RE_SRC = '\\[CLOSET:\\s*([+-]?)\\s*:?\\s*([^\\]|]+?)(?:\\s*\\|\\s*\\$?\\s*([\\d,]+))?\\s*\\]';   // 可选 |市价：不带价的0元购要靠同条WALLET对账（玩家被$1回收价气笑过）
+// 价格用 | 分隔（和备注区分）：[CLOSET:+品名|$价格] 或 [CLOSET:+品名|价格]；不带价=0元购，靠同条WALLET对账
+var CLOSET_RE_SRC = '\\[CLOSET:\\s*([+-]?)\\s*:?\\s*([^\\]|]+?)(?:\\s*\\|\\s*\\$?\\s*([\\d,]+))?\\s*\\]';
 function closetAdd(sb, name, price) {
   if (!Array.isArray(sb.closet)) sb.closet = [];
   sb.closet.push({ name: String(name).slice(0, 40), price: price || 0, from: '正文', img: '', time: nowTime() });
@@ -1214,7 +1289,7 @@ async function onMainMessage(message_id) {
     var found = [], match;
     while ((match = re.exec(text)) !== null) {
       var amt = parseFloat(String(match[2]).replace(/,/g, '')) || 0;   // "3,000" 直接 parseFloat 会变成 3
-      if (amt > 0) found.push({ dir: match[1] === '-' ? '-' : '+', amount: amt, note: match[3].trim() });
+      found.push({ dir: match[1] === '-' ? '-' : '+', amount: amt, note: match[3].trim() });   // amt 可以为 0（他人买单）
     }
     // ② 衣橱标记
     var cre = new RegExp(CLOSET_RE_SRC, 'g');
@@ -1243,8 +1318,8 @@ async function onMainMessage(message_id) {
       if (!hit2 && spends.length === 1 && items.filter(function (x) { return x.dir !== '-'; }).length === 1) hit2 = spends[0];
       if (hit2) itq.price = hit2.amount;
     }
-    // ③ 剧情时间标记 [TIME:HH:MM]（可带日期 [TIME:HH:MM|周四]）→ 手机时钟跟着正文走
-    var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // UWU 加固：时间和 | 和 ] 之间的手抖空格全容（LLM 写 [TIME: 14:30 |周四 ] 也认）
+    // ③ 剧情时间标记 [TIME:HH:MM|M/D] → 手机时钟跟着正文走（v5 UWU改造：用实际日期算gameDay，不再靠AI编的星期几）
+    var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // [TIME:14:30|4/16] 或 [TIME:14:30]
     var newTime = timeM ? timeM[1] : null;
     var newDate = (timeM && timeM[2]) ? timeM[2].trim() : null;
     if (!found.length && !items.length && !newTime) return;
@@ -1252,20 +1327,48 @@ async function onMainMessage(message_id) {
     await updateVariablesWith(function (v) {
       if (!v.sb) return v;
       credited.length = 0;
-      for (var i = 0; i < found.length; i++) { if (creditWallet(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', '正文')) credited.push(found[i]); }
+      for (var i = 0; i < found.length; i++) {
+        if (found[i].amount === 0) continue;   // WALLET=0=他人买单，User 没花钱，跳过入账
+        if (creditWallet(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', '正文')) credited.push(found[i]);
+      }
       for (var j = 0; j < items.length; j++) { if (items[j].dir === '-') closetRemove(v.sb, items[j].name); else closetAdd(v.sb, items[j].name, items[j].price || 0); }
       if (newTime) {
         if (!v.sb.game) v.sb.game = {};
         var g = v.sb.game;
-        // 过天判定：星期变了按星期差走；星期没给/没变就看时钟是否大幅倒回（>4小时=睡过一夜）
+        // 过天判定（v5 UWU）：优先用实际日期算 gameDay，其次用星期兜底，最后用时钟倒回兜底
         var passed = 0;
-        var wdN = parseWeekday(newDate), wdO = parseWeekday(g.date);
-        if (wdN >= 0 && wdO >= 0 && wdN !== wdO) passed = (wdN - wdO + 7) % 7;
-        else {
-          var tN = toMinutes(newTime), tO = toMinutes(g.time);
-          if (tN >= 0 && tO >= 0 && tN < tO - 240) passed = 1;
+        var pd = parseDate(newDate);
+        if (pd) {
+          // 首次 TIME 捕捉（UWU）：从正文第一次输出 TIME 时自动推导 epoch，有且只这一次，后续 TIME 无法再改
+          if (!g.epochLocked) {
+            var capturedYear = (new Date()).getFullYear();   // 年份从现实年推断（剧情不跨年太长）
+            var ep = epochDate(v.sb);
+            if (pd.month < ep.getMonth() - 2) capturedYear++;
+            var timeDate = new Date(capturedYear, pd.month - 1, pd.day);
+            var epochMs = timeDate.getTime() - (g.day - 1) * 86400000;
+            var epochD = new Date(epochMs);
+            var yyyy = epochD.getFullYear();
+            var mm = String(epochD.getMonth() + 1).padStart(2, '0');
+            var dd = String(epochD.getDate()).padStart(2, '0');
+            g.epoch = yyyy + '-' + mm + '-' + dd;
+            g.epochLocked = true;
+            try { if (typeof toastr !== 'undefined') toastr.info('📅 起始日期已从正文自动捕获：' + g.epoch + '（已锁定，后续 TIME 不再修改）', 'SugarOS'); } catch (e) {}
+            console.log('[SB-NYC v4] epoch auto-captured from TIME: ' + g.epoch + ' (locked)');
+          }
+          // 有实际日期 → 直接算出 gameDay 并和当前 gameDay 做差
+          var newGameDay = dateToGameDay(v.sb, pd.month, pd.day);
+          if (newGameDay > (g.day || 1)) passed = newGameDay - (g.day || 1);
+        } else {
+          // 兜底1：星期解析（兼容旧格式 [TIME:14:30|周四]）
+          var wdN = parseWeekday(newDate), wdO = parseWeekday(g.date);
+          if (wdN >= 0 && wdO >= 0 && wdN !== wdO) passed = (wdN - wdO + 7) % 7;
+          else {
+            // 兜底2：时钟大幅倒回（>4小时=睡过一夜）
+            var tN = toMinutes(newTime), tO = toMinutes(g.time);
+            if (tN >= 0 && tO >= 0 && tN < tO - 240) passed = 1;
+          }
         }
-        if (passed > 0) advanceDays(v.sb, passed);
+        if (passed > 0 && passed <= 30) advanceDays(v.sb, passed);   // 30天上限：防日期解析出错一次性跳过几年
         g.time = newTime;
         if (newDate) g.date = newDate;
       }
@@ -1678,7 +1781,7 @@ eventOn('sb_request_academic', async function () {
       return;
     }
     var instr = '请为纽约大学的学生生成2-3条下周的学业日程（如作业截止、考试、小组讨论），每条格式严格为：📚|sched|+天数 / 时间 / 地点 / 内容描述\n' +
-      '例如：📚|sched|+2 / 14:00 / 图书馆 / 论文初稿提交\n注意：天数必须是 1 到 7 之间的整数，内容用中文。只输出这些行，不要其他文字。';
+      '例如：📚|sched|+2 / 14:00 / 图书馆 / 论文初稿提交\n注意：天数必须是 1 到 7 之间的整数，内容用中文（日期和星期由系统自动附加，你不用写）。只输出这些行，不要其他文字。';
     var sys = '你是一个游戏日程生成器。只输出指定格式，不要解释。';
     var raw = null;
     var cfg = getApiCfg();
@@ -1703,7 +1806,8 @@ eventOn('sb_request_academic', async function () {
       var desc = (meta.slice(3).join('/') || '').trim();
       if (!dayOffset || dayOffset < 1 || dayOffset > 7) continue;
       var gameDay = (sb.game.day || 1) + dayOffset;   // gameDay=事件发生的剧情日（日历按它落格子）
-      var schedTxt = '学业 / ' + (time || '全天') + ' / ' + location + ' / ' + desc;
+      var dateLabel = gameDayToMD(gameDay, sb) + ' ' + gameDayToWeekday(gameDay, sb);   // "4/18 周五"
+      var schedTxt = '学业 / ' + dateLabel + (time ? ' ' + time : '') + ' / ' + location + ' / ' + desc;
       var dup = (sb.schedule || []).some(function (s) { return s.txt === schedTxt; });
       if (dup) continue;
       added.push({ txt: schedTxt, ts: Date.now(), gameDay: gameDay, academic: true });

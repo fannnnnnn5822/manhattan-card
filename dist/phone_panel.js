@@ -1,3 +1,8 @@
+// ═══════════════════════════════════════════════════════════════════
+// 纸醉金迷 · 鎏金曼哈顿（Sugar Baby Simulator：NYC）© 2026 fannnnnnn（作者）
+// 含 UWU 老师授权贡献（震动/壁纸/日历/流水税务/日期系统）。可读可学，
+// 禁止直接搬运、改名、重新打包后公开发布；保留本署名。详见仓库 LICENSE。
+// ═══════════════════════════════════════════════════════════════════
 // SugarOS NYC v4 — 悬浮手机面板（脚本直挂版）
 // 旧方案（正则把 ```html 手机塞进 AI 消息）已废弃：手机围栏和正文 markdown 同处一条消息，
 // 渲染时被正文冲破，srcdoc 畸形、DOM 建不起来 → 永远空壳。
@@ -341,6 +346,8 @@
   }
   function gameDateOf(gd) { var d = epochDate(); d.setDate(d.getDate() + (gd || 1) - 1); return d; }
   function fmtMD(d) { return (d.getMonth() + 1) + '/' + d.getDate(); }
+  // gameDay → "4/16 周三"（UWU v5：日程卡片上同时显示日期+星期，不再模糊）
+  function fmtMDWeekdayCN(gd) { var d = gameDateOf(gd); var WD = ['周日','周一','周二','周三','周四','周五','周六']; return fmtMD(d) + ' ' + WD[d.getDay()]; }
   // 消息时间戳带日期（UWU）："4/15 14:30"——老消息没有 gameDay 就只显示时分，不硬编
   function formatMsgTime(m) {
     var t = m.time || '';
@@ -392,7 +399,7 @@
     '  box-shadow:0 22px 60px rgba(26,42,58,.35),inset 0 0 0 1px rgba(255,255,255,.25);}',
     '#sbnyc-panel .sb-screen{height:100%;background:var(--paper);border-radius:38px;overflow:hidden;position:relative;display:flex;flex-direction:column;',
     '  background-size:cover;background-position:center;background-repeat:no-repeat;background-blend-mode:overlay;}',   // 🖼️ 壁纸铺法（UWU）：blend-mode 让纸色透出来，字还读得清
-    '#sbnyc-panel .sb-screen.has-wallpaper{background-image:var(--sb-wallpaper);opacity:0.85;}',
+    '#sbnyc-panel .sb-screen.has-wallpaper{background-image:var(--sb-wallpaper);opacity:var(--sb-wp-opacity,0.85);}',
     '#sbnyc-panel .sb-island{min-width:96px;max-width:240px;height:24px;background:#0d0d0f;border-radius:14px;margin:6px auto 0;flex-shrink:0;display:flex;align-items:center;gap:7px;padding:0 11px;cursor:grab;box-shadow:inset 0 0 0 .5px rgba(255,255,255,.07);}',
     '#sbnyc-panel .sb-island .cam{width:9px;height:9px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#2c3e50,#000 72%);flex-shrink:0;box-shadow:0 0 3px rgba(90,150,255,.3);}',
     '#sbnyc-panel .sb-island .itxt{font-size:9px;color:#d8cfba;letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-en);min-width:0;}',
@@ -707,32 +714,78 @@
     setTimeout(function () { panel.classList.remove('sb-shake'); }, 200);
   }
   // ⏱ 时间校准（UWU）：AI 把时钟写歪时玩家点顶栏时间自己拨回来，不用等下一轮 [TIME] 标记
+  // 日期字符串（月,日）→ gameDay：按 epoch 本地时区算（和 dm_generator.dateToGameDay 同逻辑，两端一致）
+  function dateStrToGameDay(month, day) {
+    var ep = epochDate();
+    var year = ep.getFullYear();
+    if (month < ep.getMonth() - 2) year++;   // 月份比 epoch 小很多=推断次年
+    var d = new Date(year, month - 1, day);
+    return Math.round((d.getTime() - ep.getTime()) / 86400000) + 1;
+  }
+  // ⏱ 校准剧情时间/日期（点顶栏时间触发）。UWU 只能调时分；这里补上"跳到任意日期"：
+  // 走 MVU 变量——sb.game 本来就注入 prompt，LLM 下一轮自然读到新日期，不需要额外发 system 消息。前进时账单同步倒计时。
   function calibrateTime() {
-    var currentTime = (state && state.game && state.game.time) || nowT();
-    panelPrompt('校准游戏时间（格式 HH:MM，如 14:30）', currentTime).then(function (val) {
-      if (!val || !/^\d{1,2}:\d{2}$/.test(val.trim())) { if (val != null && val.trim()) toast('warning', '格式不对——要 HH:MM，比如 14:30'); return; }
-      var parts = val.trim().split(':');
-      var hh = Math.min(23, Math.max(0, parseInt(parts[0], 10) || 0));
-      var mm = Math.min(59, Math.max(0, parseInt(parts[1], 10) || 0));
-      var newTime = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
-      SBupdate(function (v) { if (v.sb && v.sb.game) v.sb.game.time = newTime; return v; });
-      if (state && state.game) state.game.time = newTime;
-      toast('success', '🕒 时间已校准为 ' + newTime);
+    var g = (state && state.game) || {};
+    var curStr = (g.day ? fmtMD(gameDateOf(g.day)) + ' ' : '') + (g.time || nowT());
+    panelPrompt('校准时间/日期。填 14:30（改时间）｜4/16（跳到某天）｜4/16 14:30（都改）', curStr).then(function (val) {
+      val = (val || '').trim();
+      if (!val) return;
+      var timeM = val.match(/(\d{1,2}):(\d{2})/);
+      var dateM = val.match(/(\d{4})-(\d{1,2})-(\d{1,2})/) || val.match(/(?:^|\s)(\d{1,2})\/(\d{1,2})(?:\s|$)/) || val.match(/(\d{1,2})月(\d{1,2})日?/);
+      var newTime = null, targetDay = null;
+      if (timeM) {
+        var hh = Math.min(23, Math.max(0, parseInt(timeM[1], 10) || 0));
+        var mm = Math.min(59, Math.max(0, parseInt(timeM[2], 10) || 0));
+        newTime = String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
+      }
+      if (dateM) {
+        var mo, dy;
+        if (String(dateM[1]).length === 4) { mo = parseInt(dateM[2], 10); dy = parseInt(dateM[3], 10); }   // YYYY-MM-DD
+        else { mo = parseInt(dateM[1], 10); dy = parseInt(dateM[2], 10); }                                  // M/D 或 M月D日
+        targetDay = dateStrToGameDay(mo, dy);
+        if (targetDay < 1) targetDay = 1;
+        if (targetDay > 3650) { toast('warning', '这日期离剧情起始太远了（超过10年），确认下起始日期对不对'); return; }
+      }
+      if (newTime == null && targetDay == null) { toast('warning', '没认出时间或日期——例：14:30 或 4/16 或 4/16 14:30'); return; }
+      SBupdate(function (v) {
+        if (!v.sb || !v.sb.game) return v;
+        if (newTime != null) v.sb.game.time = newTime;
+        if (targetDay != null) {
+          var diff = targetDay - (v.sb.game.day || 1);
+          v.sb.game.day = targetDay;
+          if (diff > 0 && v.sb.wallet && Array.isArray(v.sb.wallet.bills)) {   // 前进→账单倒计时同步减（和 advanceDays 一致）
+            v.sb.wallet.bills.forEach(function (b) { b.days_left = (b.days_left != null ? b.days_left : 30) - diff; if (b.days_left <= 5) b.urgent = true; });
+          }
+        }
+        return v;
+      });
+      if (state && state.game) { if (newTime != null) state.game.time = newTime; if (targetDay != null) state.game.day = targetDay; }
+      var parts = [];
+      if (targetDay != null) parts.push('📅 ' + fmtMDWeekdayCN(targetDay));
+      if (newTime != null) parts.push('🕒 ' + newTime);
+      toast('success', '已校准到 ' + parts.join(' ') + '（下一轮正文会读到）');
       render();
     });
   }
   // 🖼️ 壁纸（UWU）：Base64 存本地，跟浏览器不跟聊天文件
+  // 清晰度通过 CSS 变量 --sb-wp-opacity 控制（默认 0.85=柔和，1.0=完全清晰）
+  // 清晰档(1.00)同时去掉 background-blend-mode overlay —— 壁纸原图直出，不叠纸色
   function applyWallpaper() {
     try {
       var wp = VIEW.localStorage.getItem('sbnyc_wallpaper');
       var scr = panel.querySelector('.sb-screen');
       if (!scr) return;
+      var opacity = VIEW.localStorage.getItem('sbnyc_wallpaper_opacity') || '0.85';
+      scr.style.setProperty('--sb-wp-opacity', opacity);
+      // 清晰档=去掉 overlay 混合，原图直出
+      scr.style.backgroundBlendMode = (opacity === '1.00') ? 'normal' : 'overlay';
       if (wp) {
         scr.style.setProperty('--sb-wallpaper', 'url(' + wp + ')');
         scr.classList.add('has-wallpaper');
       } else {
         scr.classList.remove('has-wallpaper');
         scr.style.removeProperty('--sb-wallpaper');
+        scr.style.backgroundBlendMode = '';   // 没壁纸时恢复 CSS 默认
       }
     } catch (e) {}
   }
@@ -847,7 +900,7 @@
         var it = sch[i];
         h += '<div class="sb-bill sb-sched' + (it.done ? ' done' : '') + '">' +
           '<span class="sb-schk" data-si="' + i + '" title="' + (it.done ? '取消打勾' : '完成打勾') + '">' + (it.done ? '✅' : '⭕') + '</span>' +
-          '<span class="sb-stxt" data-si="' + i + '" title="点击编辑">' + (it.academic ? '📚 ' + fmtMD(gameDateOf(it.gameDay || 1)) : '📅') + ' ' + esc(it.txt) + '</span>' +
+          '<span class="sb-stxt" data-si="' + i + '" title="点击编辑">' + (it.academic ? '📚 ' + fmtMDWeekdayCN(it.gameDay || 1) : '📅 ' + fmtMDWeekdayCN(it.gameDay || 1)) + ' ' + esc(it.txt) + '</span>' +
           '<span class="sb-sdel" data-si="' + i + '" title="删除">✕</span></div>';
       }
       if (sch.length > 6) h += '<div class="sb-empty" style="padding:2px;">还有 ' + (sch.length - 6) + ' 条…</div>';
@@ -2216,6 +2269,10 @@
     h += '<div class="sb-sec" style="margin-top:16px;">剧情 · Story</div>';
     var currentEpoch = (state && state.game && state.game.epoch) || GAME_EPOCH_STR;
     h += '<div class="sb-frow"><label>游戏起始日期（YYYY-MM-DD，影响日历和消息日期 · 来自UWU）</label><input id="sbnyc-epoch-input" type="text" placeholder="' + GAME_EPOCH_STR + '" value="' + esc(currentEpoch) + '"></div>';
+    // 当前剧情日期（UWU v5：一目了然，不用心算）
+    var gdNow = (state && state.game && state.game.day) || 1;
+    h += '<div style="margin:2px 14px;font-size:12px;color:var(--ink);">📅 当前剧情日期：<b>' + esc(fmtMDWeekdayCN(gdNow)) + '</b> · 第 <b>' + gdNow + '</b> 天' +
+      ((state && state.game && state.game.epochLocked) ? ' · <span style="color:var(--gold);">🔒 已从正文自动捕获</span>' : ' · <span style="color:var(--ink-faint);">等待正文首次输出 TIME 后自动设定</span>') + '</div>';
     h += '<div style="display:flex;margin:4px 14px 10px;"><button class="sb-abtn" id="sbnyc-epoch-save" style="flex:1;">💾 保存起始日期</button></div>';
     // 功能开关（UWU）
     h += '<div class="sb-sec" style="margin-top:16px;">功能 · Features</div>';
@@ -2232,7 +2289,17 @@
     h += '<div style="margin:8px 14px 4px;display:flex;align-items:center;gap:8px;"><span style="font-size:12px;color:var(--ink);">🖼️ 手机壁纸：</span>' +
       '<label class="sb-wp-upload"><span id="sbnyc-wp-label">' + (hasWp ? '更换图片' : '上传图片') + '</span><input type="file" id="sbnyc-wp-input" accept="image/*"></label>' +
       (hasWp ? '<span class="sb-wp-clear" id="sbnyc-wp-clear">清除壁纸</span>' : '') + '</div>';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 6px;">支持 JPG/PNG/GIF。图片转成 Base64 存本地，不跟随聊天文件。</div>';
+    // 壁纸清晰度（UWU：用户反馈不清晰→自定义透明度）
+    var wpOp = '0.85';
+    try { wpOp = VIEW.localStorage.getItem('sbnyc_wallpaper_opacity') || '0.85'; } catch (e) {}
+    var wpopLabel = { '0.60': '极柔和', '0.85': '标准', '1.00': '完全清晰' };
+    h += '<div style="margin:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+      '<span style="font-size:11px;color:var(--ink-sub);">清晰度：</span>' +
+      '<button class="sb-abtn sb-wpop-btn" data-op="0.60" style="flex:0 0 auto;' + (wpOp === '0.60' ? 'background:var(--gold);color:#fff;' : '') + '">柔和</button>' +
+      '<button class="sb-abtn sb-wpop-btn" data-op="0.85" style="flex:0 0 auto;' + (wpOp === '0.85' ? 'background:var(--gold);color:#fff;' : '') + '">标准</button>' +
+      '<button class="sb-abtn sb-wpop-btn" data-op="1.00" style="flex:0 0 auto;' + (wpOp === '1.00' ? 'background:var(--gold);color:#fff;' : '') + '">清晰</button>' +
+      '<span style="font-size:10px;color:var(--ink-faint);margin-left:4px;">当前：' + (wpopLabel[wpOp] || '自定义') + '</span></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 6px;">支持 JPG/PNG/GIF。清晰度越高壁纸越鲜明，但可能影响文字阅读——按自己舒服来。</div>';
     // 联机区块（SugarRank 排行榜 + 全服橱窗）
     var oc = onlineCfg();
     h += '<div class="sb-sec" style="margin-top:16px;">Online · 联机</div>';
@@ -2323,9 +2390,9 @@
     if (epochInput && epochSave) epochSave.addEventListener('click', function () {
       var val = (epochInput.value || '').trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) { toast('warning', '格式错误——要 YYYY-MM-DD，比如 ' + GAME_EPOCH_STR); return; }
-      SBupdate(function (v) { if (v.sb && v.sb.game) v.sb.game.epoch = val; return v; });
-      if (state && state.game) state.game.epoch = val;
-      toast('success', '📅 起始日期已更新为 ' + val);
+      SBupdate(function (v) { if (v.sb && v.sb.game) { v.sb.game.epoch = val; v.sb.game.epochLocked = true; } return v; });
+      if (state && state.game) { state.game.epoch = val; state.game.epochLocked = true; }
+      toast('success', '📅 起始日期已更新为 ' + val + '（已锁定）');
     });
     // 税务开关（UWU）
     var taxToggle = chatEl.querySelector('#sbnyc-tax-toggle');
@@ -2367,6 +2434,17 @@
       toast('info', '壁纸已清除');
       openSettings();
     });
+    // 壁纸清晰度按钮
+    var wpopBtns = chatEl.querySelectorAll('.sb-wpop-btn');
+    for (var wpi = 0; wpi < wpopBtns.length; wpi++) {
+      (function (b) {
+        b.addEventListener('click', function () {
+          try { VIEW.localStorage.setItem('sbnyc_wallpaper_opacity', b.getAttribute('data-op')); } catch (e) {}
+          applyWallpaper();
+          openSettings();
+        });
+      })(wpopBtns[wpi]);
+    }
     chatEl.querySelector('#sbnyc-on-toggle').addEventListener('click', function () {
       var c2 = onlineCfg(); c2.off = !c2.off; saveOnlineCfg(c2);
       toast('info', c2.off ? '🔌 联机已全关，零网络请求' : '🌐 联机已打开');
