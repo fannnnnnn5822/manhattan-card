@@ -715,7 +715,7 @@ async function generateOnce(sb, plot, n, reason, strict) {
         '- 固定联系人只有在历史记录或剧情里已经和 User 有过接触才可以发消息；User 还不认识的固定NPC**绝不主动出现**（开场白或剧情声明"本局只玩随机/没认识固定NPC"时，这条按最严格执行——那一局的世界里只有陌生人和 User 自己撩的人）\n') +
     '- 新陌生人**第一次出现**时，先单独输出一行中文属性标签：名字|tag|标签(2-6字，原型·性格，如 巨鲸·阔绰 / 假富·抠门 / 学生·纯情 / 已婚·高危)，紧接着再输出他的私信行\n' +
     '- 一条私信永远只占一行——长私信（比如谢书砚的长文本）也绝不换行，用句号和空格连着写\n' +
-    '- 行程：私信或最近剧情里**新敲定**了约会/预约/安排时，额外补一行 📅|sched|内容，内容格式**严格统一**为：周X / HH:MM / 地点 / 和谁·干嘛（斜杠隔断，如 周四 / 20:00 / Le Bernardin / 和T.晚餐）。' +
+    '- 行程：私信或最近剧情里**新敲定**了约会/预约/安排时，额外补一行 📅|sched|内容，内容格式**严格统一**为：M/D / HH:MM / 地点 / 和谁·干嘛（斜杠隔断，日期必须带月/日，如 4/18 / 20:00 / Le Bernardin / 和T.晚餐）。日期是强制项，绝不省略——没有 M/D 的日程系统无法识别，会排错日子。' +
     '时间一律24小时制**绝不写早/晚/下午**；对方只说了"晚上见"没给钟点，按场合补常识时间（晚餐20:00/午餐13:00/brunch 11:00/夜局23:00）；对方故意卖关子不给地点，地点位写"待TA通知"。【已排行程】里已有的绝不重复生成\n' +
     '- 撤回（稀用，一个月两三次）：某人发出消息又立刻后悔时，可发 名字|recall|他没说出口的那句话——手机上只显示"撤回了一条消息"，User看不到内容（但他自己记得说了什么）。' + (RANDOM_ONLY ? '' : '最适合"上夜班的人"这种人') + '\n' +
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
@@ -1242,8 +1242,24 @@ var WALLET_RE_SRC = '\\[WALLET:\\s*([+-]?)\\s*\\$?\\s*([\\d,]+(?:\\.\\d+)?)\\s*:
 // 衣橱标记：正文里 User 买到/收到实物 → [CLOSET:+品名] 入橱；卖掉/失去 → [CLOSET:-品名] 出橱
 // 价格用 | 分隔（和备注区分）：[CLOSET:+品名|$价格] 或 [CLOSET:+品名|价格]；不带价=0元购，靠同条WALLET对账
 var CLOSET_RE_SRC = '\\[CLOSET:\\s*([+-]?)\\s*:?\\s*([^\\]|]+?)(?:\\s*\\|\\s*\\$?\\s*([\\d,]+))?\\s*\\]';
+// CLOSET 去重：正文 AI 不知道上一楼的 [CLOSET] 标记已被脚本捕获并删除，下一楼可能重复生成同一个入橱标记。
+// 规则：同名物品 10 分钟内第二次入橱 → 判复读拦下（和 WALLET 的去重逻辑一致）
+var CLOSET_DEDUP_MS = 10 * 60 * 1000;
 function closetAdd(sb, name, price) {
   if (!Array.isArray(sb.closet)) sb.closet = [];
+  // 去重检查
+  var now = Date.now();
+  if (!Array.isArray(sb._closetDedup)) sb._closetDedup = [];
+  sb._closetDedup = sb._closetDedup.filter(function (d) { return now - (d.ts || 0) < CLOSET_DEDUP_MS; });
+  var key = String(name).toLowerCase().trim().slice(0, 30);
+  for (var di = 0; di < sb._closetDedup.length; di++) {
+    if (sb._closetDedup[di].k === key) {
+      try { if (typeof toastr !== 'undefined') toastr.warning('⛔ 拦下重复入橱：' + name + '——10分钟内已入橱过同名物品', 'SugarOS 衣橱'); } catch (e) {}
+      console.warn('[SB-NYC v4] closet dedup blocked: ' + name);
+      return;
+    }
+  }
+  sb._closetDedup.push({ k: key, ts: now });
   sb.closet.push({ name: String(name).slice(0, 40), price: price || 0, from: '正文', img: '', time: nowTime() });
   if (sb.closet.length > 60) sb.closet = sb.closet.slice(-60);
 }

@@ -104,10 +104,16 @@
     var lastUser = -1;
     for (var i = hist0.length - 1; i >= 0; i--) { if (hist0[i].sender === 'USER') { lastUser = i; break; } }
     var userLine = lastUser >= 0 ? hist0[lastUser] : null;
+    // 回退：先收集要删的消息里的财务影响，SBupdate里一起处理
+    var delMsgs = hist0.slice(lastUser + 1);   // 从最后一句User之后的所有THEM消息
+    // 本地镜像先回退（变量持久化在SBupdate里另做）
+    rollbackMsgEffects(name, delMsgs, (state && state.wallet) || {}, (state && state.closet) || []);
     SBupdate(function (v) {
       var n = v.sb && v.sb.npcs && v.sb.npcs[name]; if (!n || !n.dm_history) return v;
       var h = n.dm_history; var cut = h.length;
       for (var j = h.length - 1; j >= 0; j--) { if (h[j].sender === 'THEM') cut = j; else break; }
+      // 变量持久化端回退（带流水记录，silent=true 避免重复 toast）
+      rollbackMsgEffects(name, h.slice(cut), v.sb.wallet || {}, v.sb.closet || [], true);
       n.dm_history = h.slice(0, cut);
       var last = n.dm_history[n.dm_history.length - 1];
       n.last_message = lastPreview(last);
@@ -120,9 +126,12 @@
     var hint = userLine
       ? '玩家刚对 ' + name + ' 说的是："' + userLine.content + '"。请 ' + name + ' 换一种方式重新回应（和刚才不一样）。只让 ' + name + ' 回应，别人不要出现。'
       : '请 ' + name + ' 主动再发一条消息（换个内容）。只让 ' + name + ' 回应，别人不要出现。';
-    SBemit('sb_request_dm', { reason: hint, n: '1-2' });
-    setStatus('⏳ ' + name + ' 重新回复中…');
-    showTyping(name);
+    // 链式等 SBupdate 落账后再触发重新生成（防竞态：生成器读到旧数据）
+    SBupdate(function (v2) { return v2; }).then(function () {
+      SBemit('sb_request_dm', { reason: hint, n: '1-2' });
+      setStatus('⏳ ' + name + ' 重新回复中…');
+      showTyping(name);
+    });
   }
   // ── 面板内输入小窗（替代 window.prompt）──
   // 原生 prompt 在安卓会弹键盘：视口缩水的 resize 事件被模态对话框阻塞排队，对话框一关才执行，
@@ -188,9 +197,13 @@
     var h0 = (npc0 && npc0.dm_history) || [];
     var m0 = h0[idx];
     if (!m0) { toast('warning', '这条消息对不上号了，重开聊天再试'); return; }
+    // 回退这一条消息的财务影响（本地镜像 + 变量持久化双写）
+    rollbackMsgEffects(name, [m0], (state && state.wallet) || {}, (state && state.closet) || []);
     SBupdate(function (v) {
       var n = v.sb && v.sb.npcs && v.sb.npcs[name];
       if (!n || !n.dm_history || !n.dm_history[idx]) return v;
+      // 变量持久化端回退（带流水记录）
+      rollbackMsgEffects(name, [n.dm_history[idx]], v.sb.wallet || {}, v.sb.closet || [], true);
       n.dm_history.splice(idx, 1);
       var last = n.dm_history[n.dm_history.length - 1];
       n.last_message = lastPreview(last);
@@ -206,8 +219,10 @@
       }
     }
     toast('info', '🗑 已删除');
-    SBemit('sb_updated');   // 注入摘要同步遗忘 + 聊天页重渲染
+    SBemit('sb_updated');   // 注入摘要同步遗忘
     SBemit('sb_scrub_floor', { name: name });   // 楼层誊抄本同步擦掉这个人的段落（下次回复重誊修正版）
+    // 直接刷新聊天页：不等 sb_updated → refreshView → loadState（SBupdate 异步，loadState 可能读到旧数据）
+    if (state && state.npcs && state.npcs[name]) openChat(name, state.npcs[name]);
   }
 
   // ↩️ 撤回自己刚发的最后一条：TA那边只看得到"撤回了一条消息"，永远看不到内容（但TA知道你撤回了，会好奇）
@@ -235,6 +250,64 @@
     toast('success', '↩️ 已撤回——TA只看得到"撤回了一条消息"');
     SBemit('sb_updated');
     SBemit('sb_scrub_floor', { name: name });   // 撤回的原文如果已进楼层 → 擦掉重誊
+  }
+
+  // ── 财务回退（来自UWU）：重roll/删除消息时，消息里的转账/礼物跟着回退 ──
+  // 开关存 localStorage sbnyc_rollback_enabled，默认开（"1"）
+  function rollbackEnabled() {
+    try { return VIEW.localStorage.getItem('sbnyc_rollback_enabled') !== '0'; } catch (e) { return true; }
+  }
+  // 回退一批消息的财务影响（THEM的入账转账/礼物 + USER的转出转账）
+  // msgs: [{sender, type, content}] 从 dm_history 里取出的消息片段；npcName: 联系人名字
+  // 只在本地 state 镜像上操作；SBupdate 回调里另调一次（变量持久化 + 本地同步双写）
+  // silent=true 跳过 toast（SBupdate 内部调用时避免重复弹出）
+  function rollbackMsgEffects(npcName, msgs, walletObj, closetArr, silent) {
+    if (!rollbackEnabled() || !walletObj) return;
+    var reversedAmt = 0;   // 正数=从余额扣回（NPC转来的钱退回去），负数=退回余额（User转出的钱还回来）
+    var giftRemoved = false;
+    for (var i = 0; i < msgs.length; i++) {
+      var m = msgs[i];
+      if (m.sender === 'THEM') {
+        if (m.type === 'transfer') {
+          var amt = parseFloat(String(m.content).replace(/[^0-9.]/g, '')) || 0;
+          if (amt > 0) { walletObj.balance = Math.max(0, (walletObj.balance || 0) - amt); reversedAmt += amt; }
+        } else if (m.type === 'gift') {
+          var gm = String(m.content).match(/^(.*?)(?:—+|--)\s*\$?([\d,.]+)\s*$/);
+          var gName = (gm ? gm[1] : String(m.content)).trim().slice(0, 40);
+          if (closetArr) {
+            for (var ci = closetArr.length - 1; ci >= 0; ci--) {
+              if (closetArr[ci].name === gName && closetArr[ci].from && closetArr[ci].from.indexOf(npcName) !== -1) {
+                closetArr.splice(ci, 1); giftRemoved = true; break;
+              }
+            }
+          }
+        }
+      } else if (m.sender === 'USER' && m.type === 'transfer') {
+        var amt2 = parseFloat(String(m.content).replace(/[^0-9.]/g, '')) || 0;
+        if (amt2 > 0) { walletObj.balance = (walletObj.balance || 0) + amt2; reversedAmt -= amt2; }
+      }
+    }
+    // 记一笔回退流水（总额，不每条刷屏）
+    if (reversedAmt !== 0) {
+      if (!walletObj.transactions) walletObj.transactions = [];
+      walletObj.transactions.push({ direction: reversedAmt > 0 ? '-' : '+', amount: Math.abs(reversedAmt), counterparty: '消息回退 · ' + npcName, channel: '回退', note: '', time: nowT() });
+      if (walletObj.transactions.length > 20) walletObj.transactions = walletObj.transactions.slice(-20);
+      if (!Array.isArray(walletObj.allTransactions)) walletObj.allTransactions = [];
+      walletObj.allTransactions.push({
+        id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        direction: reversedAmt > 0 ? '-' : '+', amount: Math.abs(reversedAmt),
+        counterparty: '消息回退 · ' + npcName, channel: '回退', note: '',
+        time: nowT(), gameDay: (state && state.game && state.game.day) || 1,
+      });
+      if (walletObj.allTransactions.length > 500) walletObj.allTransactions = walletObj.allTransactions.slice(-500);
+    }
+    if (giftRemoved && !silent) {
+      try { if (typeof toastr !== 'undefined') toastr.info('🎁 已从衣橱移除回退的礼物', 'SugarOS'); } catch (e) {}
+    }
+    if (reversedAmt !== 0 && !silent) {
+      var dirLabel = reversedAmt > 0 ? '退回' : '返还';
+      try { if (typeof toastr !== 'undefined') toastr.info('💰 消息回退：' + dirLabel + ' ' + fmtUSD(Math.abs(reversedAmt)) + '（' + npcName + '）', 'SugarOS'); } catch (e) {}
+    }
   }
 
   function flushOutbox() {
@@ -439,7 +512,7 @@
     '#sbnyc-panel .sb-dmlast{font-size:12px;color:var(--ink-sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
     '#sbnyc-panel .sb-dmrow.unread .sb-dmlast{color:var(--ink);font-weight:500;}',
     '#sbnyc-panel .sb-badge{background:var(--red);color:#fff;min-width:18px;height:18px;border-radius:9px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0;}',
-    '#sbnyc-panel .sb-chat{position:absolute;top:0;left:0;right:0;bottom:0;background:var(--paper);display:flex;flex-direction:column;z-index:10;border-radius:38px;overflow:hidden;}',
+    '#sbnyc-panel .sb-chat{position:absolute;top:0;left:0;right:0;bottom:0;background:transparent !important;display:flex;flex-direction:column;z-index:10;border-radius:38px;overflow:hidden;}',
     '#sbnyc-panel .sb-ch{display:flex;align-items:center;gap:10px;padding:14px 16px 10px;border-bottom:.5px solid var(--line);background:linear-gradient(180deg,var(--paper-2),var(--paper-3));flex-shrink:0;}',
     '#sbnyc-panel .sb-ch-back{background:none;border:none;color:var(--gold);font-size:22px;cursor:pointer;padding:0 4px;line-height:1;}',
     '#sbnyc-panel .sb-ch-del{background:none;border:none;font-size:15px;cursor:pointer;opacity:.45;padding:0 4px;}',
@@ -447,7 +520,10 @@
     '#sbnyc-panel .sb-ch-name{flex:1;}',
     '#sbnyc-panel .sb-ch-name b{display:block;font-family:var(--font-cn);font-size:15px;color:var(--ink);}',
     '#sbnyc-panel .sb-ch-name small{font-family:var(--font-en);font-size:9px;color:var(--gold);letter-spacing:2px;text-transform:uppercase;font-weight:600;}',
-    '#sbnyc-panel .sb-msgs{flex:1;overflow-y:auto;padding:12px 10px;display:flex;flex-direction:column;gap:5px;background:var(--paper-2);}',
+    '#sbnyc-panel .sb-msgs{flex:1;overflow-y:auto;padding:12px 10px;display:flex;flex-direction:column;gap:5px;background:transparent !important;}',
+    // 藐姑射仙老师的透明背景回退：关掉透明模式时恢复纸色
+    '#sbnyc-panel.wp-solid .sb-msgs{background:var(--paper-2)!important;}',
+    '#sbnyc-panel.wp-solid .sb-chat{background:var(--paper)!important;}',
     '#sbnyc-panel .sb-msg{max-width:78%;padding:8px 13px;border-radius:16px;font-size:13.5px;line-height:1.55;word-break:break-word;}',
     '#sbnyc-panel .sb-msg.them{align-self:flex-start;background:var(--paper-3);color:var(--ink);border-bottom-left-radius:4px;}',
     '#sbnyc-panel .sb-msg.me{align-self:flex-end;background:linear-gradient(135deg,var(--gold-soft),var(--gold));color:#fff;border-bottom-right-radius:4px;font-weight:500;}',
@@ -915,7 +991,7 @@
         var it = sch[i];
         h += '<div class="sb-bill sb-sched' + (it.done ? ' done' : '') + '">' +
           '<span class="sb-schk" data-si="' + i + '" title="' + (it.done ? '取消打勾' : '完成打勾') + '">' + (it.done ? '✅' : '⭕') + '</span>' +
-          '<span class="sb-stxt" data-si="' + i + '" title="点击编辑">' + (it.academic ? '📚 ' + fmtMDWeekdayCN(it.gameDay || 1) : '📅 ' + fmtMDWeekdayCN(it.gameDay || 1)) + ' ' + esc(it.txt) + '</span>' +
+          '<span class="sb-stxt" data-si="' + i + '" title="点击编辑">' + (it.academic ? '📚 ' : '📅 ') + esc(it.txt) + '</span>' +
           '<span class="sb-sdel" data-si="' + i + '" title="删除">✕</span></div>';
       }
       if (sch.length > 6) h += '<div class="sb-empty" style="padding:2px;">还有 ' + (sch.length - 6) + ' 条…</div>';
@@ -2300,6 +2376,10 @@
     try { taxOn = VIEW.localStorage.getItem('sbnyc_tax_enabled') === '1'; } catch (e) {}
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-tax-toggle" style="flex:1;">🧾 税务功能（来自UWU）：' + (taxOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">开启后「💳 流水」页右上角出现 🧾 税务中心——阿美莉卡的钱不是白挣的，IRS 会来找你聊聊。默认关闭。</div>';
+    // 消息回退开关（来自UWU：重roll/删除消息时转账和礼物自动回退）
+    var rbOn = rollbackEnabled();
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-rollback-toggle" style="flex:1;">💰 消息回退（来自UWU）：' + (rbOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重roll或删除消息时，消息里的转账自动退钱、礼物从衣橱回收。适合想要财务记录保持严谨的玩家。默认开启。</div>';
     // 感官反馈（UWU：震动发光 + 壁纸）
     h += '<div class="sb-sec" style="margin-top:16px;">感官 · Sensory</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-vibrate-toggle" style="flex:1;">📳 消息震动+发光（来自UWU）：' + (vibrateEnabled ? '开（点我关）' : '关（点我开）') + '</button></div>';
@@ -2320,6 +2400,12 @@
       '<button class="sb-abtn sb-wpop-btn" data-op="1.00" style="flex:0 0 auto;' + (wpOp === '1.00' ? 'background:var(--gold);color:#fff;' : '') + '">清晰</button>' +
       '<span style="font-size:10px;color:var(--ink-faint);margin-left:4px;">当前：' + (wpopLabel[wpOp] || '自定义') + '</span></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 6px;">支持 JPG/PNG/GIF。清晰度越高壁纸越鲜明，但可能影响文字阅读——按自己舒服来。</div>';
+    // 藐姑射仙老师的透明背景模式（UWU：壁纸全透，聊天和消息区底色透明让壁纸整个露出来）
+    var wpSolid = false;
+    try { wpSolid = VIEW.localStorage.getItem('sbnyc_wp_solid') === '1'; } catch (e) {}
+    if (wpSolid) panel.classList.add('wp-solid');
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-wp-solid-toggle" style="flex:1;">❤️ 爱来自藐姑射仙老师：' + (wpSolid ? '透明已关（点我开）' : '透明已开（点我关）') + '</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 6px;">透明背景模式：聊天页和消息列表的底色变为透明，壁纸完整可见。默认开启——这是藐姑射仙老师的心意。</div>';
     // 联机区块（SugarRank 排行榜 + 全服橱窗）
     var oc = onlineCfg();
     h += '<div class="sb-sec" style="margin-top:16px;">Online · 联机</div>';
@@ -2339,7 +2425,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">🔄 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 —— 来自 UWU 老师的二创贡献</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -2430,6 +2516,14 @@
       toast('info', curT ? '🧾 税务功能已关闭——IRS 假装没看见你' : '🧾 税务功能已开启——去「💳 流水」页右上角报税');
       openSettings();
     });
+    // 消息回退开关（来自UWU）
+    var rollbackToggle = chatEl.querySelector('#sbnyc-rollback-toggle');
+    if (rollbackToggle) rollbackToggle.addEventListener('click', function () {
+      var curR = rollbackEnabled();
+      try { VIEW.localStorage.setItem('sbnyc_rollback_enabled', curR ? '0' : '1'); } catch (e) {}
+      toast('info', curR ? '💰 消息回退已关闭——删消息不退款，收两次钱也很开心' : '💰 消息回退已开启——重roll和删除消息时转账/礼物自动回退');
+      openSettings();
+    });
     // 震动开关（UWU）
     var vibBtn = chatEl.querySelector('#sbnyc-vibrate-toggle');
     if (vibBtn) vibBtn.addEventListener('click', function () {
@@ -2472,6 +2566,14 @@
         });
       })(wpopBtns[wpi]);
     }
+    // 藐姑射仙老师的透明背景切换
+    var wpSolidBtn = chatEl.querySelector('#sbnyc-wp-solid-toggle');
+    if (wpSolidBtn) wpSolidBtn.addEventListener('click', function () {
+      var cur = panel.classList.contains('wp-solid');
+      if (cur) { panel.classList.remove('wp-solid'); try { VIEW.localStorage.setItem('sbnyc_wp_solid', '0'); } catch (e) {} }
+      else { panel.classList.add('wp-solid'); try { VIEW.localStorage.setItem('sbnyc_wp_solid', '1'); } catch (e) {} }
+      openSettings();
+    });
     // 📤 导出全部 sb 数据
     var exportBtn = chatEl.querySelector('#sbnyc-export');
     if (exportBtn) exportBtn.addEventListener('click', function () {
@@ -2640,8 +2742,12 @@
       var ok = true;
       try { ok = (DOC.defaultView || window).confirm('删除与 ' + name + ' 的全部聊天记录' + (npc.persistent ? '？（固定联系人：清空记录并让TA安静——直到你主动再发消息给TA）' : '？（联系人也会一起移除）')); } catch (e) {}
       if (!ok) return;
+      // 回退全部消息的财务影响（删整段聊天 = 这段关系在账面上归档）
+      rollbackMsgEffects(name, hist, (state && state.wallet) || {}, (state && state.closet) || []);
       SBupdate(function (v) {
         if (!v.sb || !v.sb.npcs || !v.sb.npcs[name]) return v;
+        // 变量持久化端回退（带流水记录）
+        rollbackMsgEffects(name, v.sb.npcs[name].dm_history || [], v.sb.wallet || {}, v.sb.closet || [], true);
         // 固定NPC删记录=冷处理：muted 后生成器和硬闸都禁止TA再发（L. 也不例外），User 主动发消息才解除
         if (npc.persistent) { var n = v.sb.npcs[name]; n.dm_history = []; n.last_message = ''; n.unread = 0; n.engaged = false; n.muted = true; }
         else delete v.sb.npcs[name];
@@ -3212,8 +3318,12 @@
       var nm2 = _msel && _msel.name;
       var idxs = _msel ? Object.keys(_msel.set).map(Number).sort(function (a, b2) { return b2 - a; }) : [];   // 从大往小删，索引不漂移
       if (!nm2 || !idxs.length) { toast('info', '先点选要删的消息'); return; }
-      // 删的是自己攒着没发的话时，待发队列同步撤（单删一直有这逻辑，多删曾漏 → 首页冒发送按钮、一发送删掉的话还魂）
+      // 回退：收集被删消息里的财务影响（本地镜像 + 变量持久化双写）
       var v0 = SBgetVars(); var h0 = (v0 && v0.sb && v0.sb.npcs && v0.sb.npcs[nm2] && v0.sb.npcs[nm2].dm_history) || [];
+      var delBatch = [];
+      for (var d2 = 0; d2 < idxs.length; d2++) { if (h0[idxs[d2]]) delBatch.push(h0[idxs[d2]]); }
+      rollbackMsgEffects(nm2, delBatch, (state && state.wallet) || {}, (state && state.closet) || []);
+      // 删的是自己攒着没发的话时，待发队列同步撤（单删一直有这逻辑，多删曾漏 → 首页冒发送按钮、一发送删掉的话还魂）
       var ob = loadOutbox(); var q = ob[nm2]; var obChanged = false;
       if (q && q.length) {
         for (var d = 0; d < idxs.length; d++) {
@@ -3228,6 +3338,10 @@
       SBupdate(function (v) {
         var n = v.sb && v.sb.npcs && v.sb.npcs[nm2];
         if (!n || !n.dm_history) return v;
+        // 变量持久化端回退（带流水记录）
+        var vBatch = [];
+        for (var vb = 0; vb < idxs.length; vb++) { if (n.dm_history[idxs[vb]]) vBatch.push(n.dm_history[idxs[vb]]); }
+        rollbackMsgEffects(nm2, vBatch, v.sb.wallet || {}, v.sb.closet || [], true);
         for (var i = 0; i < idxs.length; i++) { if (idxs[i] >= 0 && idxs[i] < n.dm_history.length) n.dm_history.splice(idxs[i], 1); }
         n.last_message = lastPreview(n.dm_history[n.dm_history.length - 1]);
         return v;
