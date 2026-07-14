@@ -207,6 +207,21 @@ function parseWeekday(s) {
   var m = String(s || '').match(/(?:周|星期|礼拜)([日天一二三四五六])/);
   return m ? WEEKDAY_MAP[m[1]] : -1;
 }
+// 行程文本 → 事件发生的 gameDay：认日期(4/18)或星期(周五=接下来最近的周五)，都没有=今天。
+// 修"串时间"bug：NPC 约的"周五晚"以前被记成添加日，日历落错格、显示两个日子打架
+function schedTextGameDay(sb, txt) {
+  var s = String(txt || '');
+  var today = (sb && sb.game && sb.game.day) || 1;
+  var m = s.match(/(\d{1,2})\/(\d{1,2})/) || s.match(/(\d{1,2})月(\d{1,2})日?/);
+  if (m) { var gd = dateToGameDay(sb, parseInt(m[1], 10), parseInt(m[2], 10)); return gd >= 1 ? gd : today; }
+  var wd = parseWeekday(s);
+  if (wd >= 0) {
+    var ep = epochDate(sb);
+    var d0 = new Date(ep.getTime()); d0.setDate(d0.getDate() + today - 1);
+    return today + ((wd - d0.getDay() + 7) % 7);   // 今天周三约周五=+2；约周三=就是今天
+  }
+  return today;
+}
 function toMinutes(t) {
   var m = String(t || '').match(/^(\d{1,2}):(\d{2})$/);
   return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : -1;
@@ -943,7 +958,7 @@ async function runOnce(req) {
       var stxt = scheds[si];
       var dup = false;
       for (var dj = 0; dj < v.sb.schedule.length; dj++) { if (v.sb.schedule[dj].txt === stxt) { dup = true; break; } }
-      if (!dup && stxt) v.sb.schedule.push({ txt: stxt, ts: Date.now(), gameDay: (v.sb.game && v.sb.game.day) || 1 });   // gameDay=记下这条的剧情日（UWU 日历按它落格子）
+      if (!dup && stxt) v.sb.schedule.push({ txt: stxt, ts: Date.now(), gameDay: schedTextGameDay(v.sb, stxt) });   // gameDay=事件发生那天（认文本里的日期/星期，修串时间）
     }
     if (v.sb.schedule.length > 20) v.sb.schedule = v.sb.schedule.slice(-20);
     pruneContacts(v.sb);   // 超15人 → 自动清（置顶的免疫；固定NPC没被回话也一样挤出去）
