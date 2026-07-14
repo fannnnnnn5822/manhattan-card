@@ -2331,6 +2331,13 @@
     h += '<div class="sb-frow"><label>服务器 Key（用官方服留空）</label><input id="sbnyc-on-key" autocomplete="off" readonly data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="sb_publishable_..." value="' + esc(oc.key) + '"></div></details>';
     h += '<div style="display:flex;margin:4px 14px 10px;"><button class="sb-abtn" id="sbnyc-on-toggle" style="flex:1;">' + (oc.off ? '🔌 联机已全关（点我打开）' : '🌐 联机已开（点我全关）') + '</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">起个排行榜名字，点「更新我的排名」就能上全服榜。联机只做两件事：拉全服橱窗上新、你主动点更新时上传 名字+余额数字。私信、剧情、人设永远不上传。全关后本卡零网络请求。</div>';
+    // 数据导入导出 + 回档（来自 UWU 老师：换聊天/开新档时迁移记录用）
+    // 硬化点（合并时加）：import/reset 的 SBupdate 保留整个变量根 v、只改 v.sb，绝不用 {sb:X} 整替——防误删别的扩展存的顶层聊天变量
+    h += '<div class="sb-sec" style="margin-top:16px;">数据 · Data</div>';
+    h += '<div style="display:flex;margin:4px 14px 6px;gap:8px;"><button class="sb-abtn" id="sbnyc-export" style="flex:1;">📤 导出全部数据</button><button class="sb-abtn" id="sbnyc-import" style="flex:1;">📥 导入数据</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">导出 = 把全部手机数据（联系人/钱包/衣橱/日程/私信记录/设置）下载为一个 .json 文件。导入 = 选之前导出的文件覆盖当前数据。<b>导入不可逆，建议先导出一份备份。</b></div>';
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">🔄 初始化聊天（回档到 Day 1）</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
     h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 —— 来自 UWU 老师的二创贡献</div>';
     h += '</div>';
@@ -2465,6 +2472,97 @@
         });
       })(wpopBtns[wpi]);
     }
+    // 📤 导出全部 sb 数据
+    var exportBtn = chatEl.querySelector('#sbnyc-export');
+    if (exportBtn) exportBtn.addEventListener('click', function () {
+      try {
+        var data = SBgetVars();
+        var json = JSON.stringify(data.sb || data, null, 2);
+        var blob = new Blob([json], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = DOC.createElement('a');
+        a.href = url;
+        a.download = 'SugarOS_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+        DOC.body.appendChild(a); a.click(); DOC.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast('success', '📤 已导出备份文件');
+      } catch (e) { toast('error', '导出失败: ' + ((e && e.message) || e)); }
+    });
+    // 📥 导入数据
+    var importBtn = chatEl.querySelector('#sbnyc-import');
+    if (importBtn) importBtn.addEventListener('click', function () {
+      var input = DOC.createElement('input');
+      input.type = 'file'; input.accept = '.json';
+      input.addEventListener('change', function () {
+        var file = input.files && input.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function (e2) {
+          try {
+            var imported = JSON.parse(e2.target.result);
+            var sb = imported.sb || imported;
+            if (!sb || typeof sb !== 'object') throw new Error('格式不对——找不到 sb 数据');
+            SBupdate(function (v) { if (!v) v = {}; v.sb = sb; return v; });
+            if (state) { state = sb; }
+            toast('success', '📥 数据已导入——手机将刷新');
+            SBemit('sb_updated');
+            closeChat();
+          } catch (e3) { toast('error', '导入失败: ' + ((e3 && e3.message) || e3) + '。请确认是 .json 备份文件。'); }
+        };
+        reader.onerror = function () { toast('error', '文件读取失败'); };
+        reader.readAsText(file);
+      });
+      input.click();
+    });
+    // 🔄 初始化聊天（三次确认）
+    var resetBtn = chatEl.querySelector('#sbnyc-reset');
+    if (resetBtn) resetBtn.addEventListener('click', function () {
+      var step = 0;
+      var prompts = [
+        '确定要初始化聊天吗？所有联系人、私信、钱包记录都会被清空——但你的个人档案会保留。这是第一次确认。',
+        '再确认一次：初始化后游戏日回到第 1 天，日程清空，钱包归零。个人档案（名字/年龄/签证/学校/外形/家庭背景）保留。这是第二次确认。',
+        '最后一次确认：初始化不可逆。你之前导出的备份可以导入恢复。确认要执行吗？'
+      ];
+      function askNext() {
+        if (step >= 3) {
+          // 执行初始化——保留 profile，其余回档
+          var savedProfile = (state && state.profile) ? JSON.parse(JSON.stringify(state.profile)) : {};
+          SBupdate(function (v) {
+            var fresh = {
+              profile: savedProfile,
+              wallet: { balance: 0, bills: [], transactions: [], allTransactions: [] },
+              npcs: {},
+              beauty: { charm: 50, treatments: [] },
+              lifestyle: { apartment: 'studio', monthly_burn: 0 },
+              schedule: [],
+              sugarelite: { subscribed: false, tier: 'none' },
+              game: { day: 1, time: '', date: '', nsfw: true, epoch: (v.sb && v.sb.game && v.sb.game.epoch) || GAME_EPOCH_STR, epochLocked: !!(v.sb && v.sb.game && v.sb.game.epochLocked) },
+              taxQuestions: null,
+              akumaRank: 0,
+            };
+            if (!v) v = {}; v.sb = fresh; return v;
+          });
+          if (state) {
+            state = {
+              profile: savedProfile,
+              wallet: { balance: 0, bills: [], transactions: [], allTransactions: [] },
+              npcs: {}, beauty: { charm: 50, treatments: [] },
+              lifestyle: { apartment: 'studio', monthly_burn: 0 }, schedule: [],
+              sugarelite: { subscribed: false, tier: 'none' },
+              game: { day: 1, time: '', date: '', nsfw: true, epoch: (state.game && state.game.epoch) || GAME_EPOCH_STR, epochLocked: !!(state.game && state.game.epochLocked) },
+              taxQuestions: null, akumaRank: 0,
+            };
+          }
+          toast('success', '🔄 已初始化——回到 Day 1。个人档案已保留。');
+          SBemit('sb_updated');
+          closeChat();
+          return;
+        }
+        var ok = (DOC.defaultView || window).confirm(prompts[step]);
+        if (ok) { step++; askNext(); }
+      }
+      askNext();
+    });
     chatEl.querySelector('#sbnyc-on-toggle').addEventListener('click', function () {
       var c2 = onlineCfg(); c2.off = !c2.off; saveOnlineCfg(c2);
       toast('info', c2.off ? '🔌 联机已全关，零网络请求' : '🌐 联机已打开');
