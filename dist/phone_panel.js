@@ -722,6 +722,20 @@
     var d = new Date(year, month - 1, day);
     return Math.round((d.getTime() - ep.getTime()) / 86400000) + 1;
   }
+  // 行程文本 → 事件发生的 gameDay：认日期(4/18)或星期(周五=接下来最近的周五)，都没有=今天。
+  // 修"串时间"bug：以前 gameDay 一律记成添加日，和玩家写的"周五"打架（显示两个日子、日历落错格）
+  function schedTextToGameDay(txt) {
+    var s = String(txt || '');
+    var today = (state && state.game && state.game.day) || 1;
+    var m = s.match(/(\d{1,2})\/(\d{1,2})/) || s.match(/(\d{1,2})月(\d{1,2})日?/);
+    if (m) { var gd = dateStrToGameDay(parseInt(m[1], 10), parseInt(m[2], 10)); return gd >= 1 ? gd : today; }
+    var w = s.match(/(?:周|星期|礼拜)([日天一二三四五六])/);
+    if (w) {
+      var MAP = { '日': 0, '天': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6 };
+      return today + ((MAP[w[1]] - gameDateOf(today).getDay() + 7) % 7);   // 今天周三填周五=+2；填周三=就是今天
+    }
+    return today;
+  }
   // ⏱ 校准剧情时间/日期（点顶栏时间触发）。UWU 只能调时分；这里补上"跳到任意日期"：
   // 走 MVU 变量——sb.game 本来就注入 prompt，LLM 下一轮自然读到新日期，不需要额外发 system 消息。前进时账单同步倒计时。
   function calibrateTime() {
@@ -765,6 +779,7 @@
       if (newTime != null) parts.push('🕒 ' + newTime);
       toast('success', '已校准到 ' + parts.join(' ') + '（下一轮正文会读到）');
       render();
+      if (currentPage === 'calendar') openCalendar();   // 从日历跳的话，刷新日历里的“今天”金格
     });
   }
   // 🖼️ 壁纸（UWU）：Base64 存本地，跟浏览器不跟聊天文件
@@ -985,7 +1000,8 @@
           panelPrompt('编辑行程', it0.txt).then(function (nv) {
             nv = (nv || '').trim().slice(0, 40);
             if (!nv || nv === it0.txt) return;
-            schedUpdate(i0, function (arr, i) { arr[i].txt = nv; });
+            var nd = schedTextToGameDay(nv);   // 改了"周五"→"周六"这类，日期跟着挪
+            schedUpdate(i0, function (arr, i) { arr[i].txt = nv; if (!arr[i].academic) arr[i].gameDay = nd; });
           });
         });
       })(stxts[st]);
@@ -1003,18 +1019,19 @@
     }
     var sadd = root.querySelector('#sbnyc-sched-add');
     if (sadd) sadd.addEventListener('click', function () {
-      panelPrompt('输入行程（格式：周X / HH:MM / 地点 / 和谁·干嘛）', '').then(function (txt) {
+      panelPrompt('输入行程（如：4/18 / 19:00 / 地点 / 和谁·干嘛，日期也可写 周五）', '').then(function (txt) {
         txt = (txt || '').trim().slice(0, 60);
         if (!txt) return;
+        var evDay = schedTextToGameDay(txt);   // 落在事件发生那天，不是添加那天（修串时间）
         SBupdate(function (v) {
           if (!v.sb) return v;
           if (!Array.isArray(v.sb.schedule)) v.sb.schedule = [];
-          v.sb.schedule.push({ txt: txt, ts: Date.now(), gameDay: (v.sb.game && v.sb.game.day) || 1 });
+          v.sb.schedule.push({ txt: txt, ts: Date.now(), gameDay: evDay });
           if (v.sb.schedule.length > 20) v.sb.schedule = v.sb.schedule.slice(-20);
           return v;
         });
         if (!Array.isArray(state.schedule)) state.schedule = [];
-        state.schedule.push({ txt: txt, ts: Date.now(), gameDay: (state.game && state.game.day) || 1 });
+        state.schedule.push({ txt: txt, ts: Date.now(), gameDay: evDay });
         render();
       });
     });
@@ -2099,12 +2116,15 @@
     }
     h += '</div>';
     h += '<div id="sb-cal-detail" style="margin-top:10px;padding:10px;background:var(--paper-3);border-radius:12px;display:none;max-height:120px;overflow-y:auto;font-size:12px;color:var(--ink);"></div>';
-    h += '<div class="sb-empty" style="font-style:normal;padding:10px 4px 2px;">今天=金色格子（剧情第 ' + (state.game.day || 1) + ' 天）。点 📚 给自己排点课业——毕竟你名义上还是个学生。</div>';
+    h += '<button class="sb-abtn" id="sb-cal-jump" style="width:calc(100% - 8px);margin:12px 4px 2px;">⏱ 校准时间 / 跳到某天</button>';
+    h += '<div class="sb-empty" style="font-style:normal;padding:8px 4px 2px;">今天=金色格子（剧情第 ' + (state.game.day || 1) + ' 天）。点 ⏱ 校准时间或跳日期，点 📚 排课业。</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
     chatEl.querySelector('.cal-prev').addEventListener('click', function () { _calMonthOffset--; openCalendar(); });
     chatEl.querySelector('.cal-next').addEventListener('click', function () { _calMonthOffset++; openCalendar(); });
+    var jumpBtn = chatEl.querySelector('#sb-cal-jump');
+    if (jumpBtn) jumpBtn.addEventListener('click', function () { calibrateTime(); });   // 顶栏时间被拖动handle吞了点击，改从这个按钮进
     var acadBtn = chatEl.querySelector('#sb-cal-academic');
     if (acadBtn) acadBtn.addEventListener('click', function () {
       var academicCount = ((state && state.schedule) || []).filter(function (s) { return s.academic; }).length;
