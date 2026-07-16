@@ -1772,6 +1772,9 @@
     h += '<div class="sb-sec" style="margin-top:14px;">新面孔</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-contact-new" style="flex:1;">✍️ 输入名字，新建一个聊天</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">给谁发都行——名字随你起（备注名也行，比如"Dr.Levine_UWS"）。号码怎么来的这种事，你自己心里有数。' + (randomOnly ? '' : '<br><br>找不到 L.？他没有联系方式——只会单方面给你写信。') + ((state && state.sugarelite && state.sugarelite.subscribed) ? '' : '<br>SugarElite™ 的管家要订阅后才会出现（去 ✦ Elite）。') + '</div>';
+    h += '<div class="sb-sec" style="margin-top:14px;">旧识</div>';
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-contact-import" style="flex:1;">📥 从别的故事里请一个人过来</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">你在别的世界书里认识的人也能进这部手机——搜TA的世界书，平台做一次背调，TA就带着自己的脾气出现在通讯录里。</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
@@ -1786,6 +1789,8 @@
     }
     var nbtn = chatEl.querySelector('#sbnyc-contact-new');
     if (nbtn) nbtn.addEventListener('click', newCustomContact);
+    var impbtn = chatEl.querySelector('#sbnyc-contact-import');
+    if (impbtn) impbtn.addEventListener('click', openImportContact);
   }
   // 固定NPC：persistent=true（不会被自动清理），声音卡生成器里本来就有，建好直接聊
   function contactFromFixed(name, tag) {
@@ -1830,6 +1835,120 @@
         openChat(name, state.npcs[name]);
       });
     });
+  }
+
+  // ── 📥 旧识导入：搜玩家酒馆里的世界书 → 填两句话 → 发给生成器做AI背调（蒸馏成档案+声音卡）→ TA主动来打招呼 ──
+  // 搜索是双查：世界书名直接匹配 + 角色卡名匹配后反查TA绑定的世界书。结果只存下标，名字里的引号弄不坏 attribute。
+  var _impResults = [];
+  function openImportContact() {
+    currentPage = 'import';
+    _impResults = [];
+    var inputStyle = 'border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);';
+    var taStyle = 'width:100%;' + inputStyle + 'line-height:1.7;resize:vertical;';
+    var h = pageHeader('📥 请旧识过来', '搜世界书 · 背调 · 入通讯录', false);
+    h += '<div class="sb-msgs" style="display:block;padding-top:12px;">';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 8px;">你在别的故事里认识的人，也能进这部手机。输入TA的名字或TA所在的世界书名——搜的是你酒馆里装的所有世界书。</div>';
+    h += '<div style="display:flex;gap:8px;margin:0 14px;"><input id="sbnyc-imp-q" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="角色名 / 世界书名 / 角色卡名" style="flex:1;min-width:0;' + inputStyle + '"><button class="sb-abtn" id="sbnyc-imp-go" style="flex:none;padding:0 16px;">搜索</button></div>';
+    h += '<div id="sbnyc-imp-results"></div>';
+    h += '<div id="sbnyc-imp-form" style="display:none;">';
+    h += '<div class="sb-sec" style="margin-top:14px;">背调登记 · <span id="sbnyc-imp-wbname"></span></div>';
+    h += '<div class="sb-frow" style="margin:0 14px 8px;"><input id="sbnyc-imp-name" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="TA的名字（照世界书里的写法）" style="width:100%;' + inputStyle + '"></div>';
+    h += '<div class="sb-frow" style="margin:0 14px 8px;"><textarea id="sbnyc-imp-who" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="TA在纽约是什么身份？例：Chelsea画廊主 / 对冲基金分析师。留空=按TA原本的气质安排" style="' + taStyle + '"></textarea></div>';
+    h += '<div class="sb-frow" style="margin:0 14px 8px;"><textarea id="sbnyc-imp-rel" rows="2" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="TA认识你吗，怎么认识的？例：上个月慈善晚宴认识 / 还不认识，TA刚要到你的号。留空=让TA自己找上门" style="' + taStyle + '"></textarea></div>';
+    h += '<div style="display:flex;margin:8px 14px;"><button class="sb-abtn" id="sbnyc-imp-btn" style="flex:1;">🕵️ 开始背调</button></div>';
+    h += '<div class="sb-empty" id="sbnyc-imp-status" style="font-style:normal;text-align:left;padding:4px 16px;"></div>';
+    h += '</div>';
+    h += '</div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    bindPageChrome(openContacts);
+    var qEl = chatEl.querySelector('#sbnyc-imp-q');
+    var goBtn = chatEl.querySelector('#sbnyc-imp-go');
+    if (goBtn) goBtn.addEventListener('click', impSearch);
+    if (qEl) qEl.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); impSearch(); } });
+    var ibtn = chatEl.querySelector('#sbnyc-imp-btn');
+    if (ibtn) ibtn.addEventListener('click', impSubmit);
+  }
+  function impSearch() {
+    var qEl = chatEl.querySelector('#sbnyc-imp-q');
+    var box = chatEl.querySelector('#sbnyc-imp-results');
+    var q = ((qEl && qEl.value) || '').trim();
+    if (!box) return;
+    if (!q) { toast('info', '先输入TA的名字或世界书名'); return; }
+    var ql = q.toLowerCase();
+    function scoreOf(s) { s = String(s || '').toLowerCase(); return s === ql ? 3 : s.indexOf(ql) === 0 ? 2 : s.indexOf(ql) !== -1 ? 1 : 0; }
+    var byWb = {};
+    var wbs = []; try { wbs = getWorldbookNames() || []; } catch (e) {}
+    for (var i = 0; i < wbs.length; i++) {
+      var s1 = scoreOf(wbs[i]);
+      if (s1) byWb[wbs[i]] = { wb: wbs[i], via: '', score: s1 + 0.5 };   // 书名直接命中比"经角色卡摸到"略优先
+    }
+    var chars = []; try { chars = getCharacterNames() || []; } catch (e) {}
+    for (var c = 0; c < chars.length; c++) {
+      var s2 = scoreOf(chars[c]);
+      if (!s2) continue;
+      var bound = null; try { bound = getCharWorldbookNames(chars[c]); } catch (e) { continue; }
+      var books = [].concat((bound && bound.primary) || []).concat((bound && bound.additional) || []);
+      for (var b = 0; b < books.length; b++) {
+        if (!books[b]) continue;
+        var prev = byWb[books[b]];
+        if (!prev || prev.score < s2) byWb[books[b]] = { wb: books[b], via: chars[c], score: s2 };
+      }
+    }
+    _impResults = [];
+    for (var k in byWb) { if (byWb.hasOwnProperty(k)) _impResults.push(byWb[k]); }
+    _impResults.sort(function (a, b) { return b.score - a.score; });
+    _impResults = _impResults.slice(0, 8);
+    if (!_impResults.length) { box.innerHTML = '<div class="sb-empty">没搜到。试试世界书名的一部分，或TA所在角色卡的卡名。</div>'; return; }
+    var rh = '<div class="sb-sec" style="margin-top:12px;">选TA所在的世界书</div>';
+    for (var r = 0; r < _impResults.length; r++) {
+      var it = _impResults[r];
+      var ini = (it.wb.replace(/[^A-Za-z一-鿿]/g, '')[0] || '书').toUpperCase();
+      rh += '<div class="sb-forow sb-contact" data-imp="' + r + '" style="cursor:pointer;"><span class="fi">' + esc(ini) + '</span><div class="fb"><b>' + esc(it.wb) + '</b><small>' + esc(it.via ? '绑定在「' + it.via + '」' : '世界书') + '</small></div><span class="sb-soon">选TA ›</span></div>';
+    }
+    box.innerHTML = rh;
+    var rows = box.querySelectorAll('.sb-contact');
+    for (var x = 0; x < rows.length; x++) {
+      (function (row) {
+        row.addEventListener('click', function () {
+          var it = _impResults[parseInt(row.getAttribute('data-imp'), 10)];
+          if (it) impPick(it, q);
+        });
+      })(rows[x]);
+    }
+  }
+  function impPick(it, q) {
+    var form = chatEl.querySelector('#sbnyc-imp-form');
+    var wbEl = chatEl.querySelector('#sbnyc-imp-wbname');
+    var nmEl = chatEl.querySelector('#sbnyc-imp-name');
+    if (!form || !wbEl) return;
+    form.setAttribute('data-wb', it.wb);
+    wbEl.textContent = it.wb;
+    // 搜索词多半就是TA的名字（搜的是书名时不预填，别把书名当人名）
+    if (nmEl && !nmEl.value && q !== it.wb) nmEl.value = q.slice(0, 24);
+    form.style.display = 'block';
+    try { form.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
+  }
+  function impSubmit() {
+    var form = chatEl.querySelector('#sbnyc-imp-form');
+    var wb = (form && form.getAttribute('data-wb')) || '';
+    if (!wb) { toast('info', '先从搜索结果里选一本世界书'); return; }
+    var nmEl = chatEl.querySelector('#sbnyc-imp-name');
+    var name = ((nmEl && nmEl.value) || '').trim().slice(0, 24);
+    if (!name) { toast('warning', '得有名字——照世界书里的写法填'); return; }
+    var ex = state && state.npcs && state.npcs[name];
+    if (ex && ex.dm_history && ex.dm_history.length) { toast('info', '通讯录里已经有 ' + name + ' 了'); openChat(name, ex); return; }
+    var whoEl = chatEl.querySelector('#sbnyc-imp-who');
+    var relEl = chatEl.querySelector('#sbnyc-imp-rel');
+    var btn = chatEl.querySelector('#sbnyc-imp-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '🕵️ 背调中…'; }
+    var st = chatEl.querySelector('#sbnyc-imp-status');
+    if (st) st.textContent = '平台正在通读TA的档案写调查报告——十几秒到一分钟，办完TA会自己来打招呼。';
+    SBemit('sb_request_import', {
+      worldbook: wb, name: name,
+      identity: ((whoEl && whoEl.value) || '').trim().slice(0, 120),
+      relation: ((relEl && relEl.value) || '').trim().slice(0, 200),
+    });
+    setStatus('🕵️ 背调 ' + name + ' 中…');
   }
 
   // ── 💬 从招聘帖开私信：把楼主建成联系人（帖子原文存成TA的bio=人设简历，生成器照着回话），直接进聊天页 ──
@@ -3405,6 +3524,23 @@
     if (Object.keys(_pendingTrs).length) {
       _pendingTrs = {};
       if (currentChatName && state && state.npcs && state.npcs[currentChatName]) openChat(currentChatName, state.npcs[currentChatName]);
+    }
+  });
+  // 📥 旧识背调结果：成功=直接把TA的聊天开出来等第一条私信；失败=复位导入页按钮（失败必出声铁律）
+  SBon('sb_import_done', function (p) {
+    var nm = (p && p.name) || '';
+    loadState();
+    toast('success', '📥 ' + nm + ' 已入通讯录' + ((p && p.warnings && p.warnings.length) ? '（' + p.warnings[0] + '）' : ''));
+    if (nm && state && state.npcs && state.npcs[nm]) { openChat(nm, state.npcs[nm]); showTyping(nm); }
+  });
+  SBon('sb_import_failed', function (msg) {
+    toast('error', '📥 背调失败：' + (msg || '未知原因'));
+    setStatus('⚠️ 背调失败');
+    if (currentPage === 'import') {
+      var b = chatEl.querySelector('#sbnyc-imp-btn');
+      if (b) { b.disabled = false; b.textContent = '🕵️ 开始背调'; }
+      var st = chatEl.querySelector('#sbnyc-imp-status');
+      if (st) st.textContent = '';
     }
   });
   SBon('sb_status', function (msg) {

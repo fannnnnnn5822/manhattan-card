@@ -735,6 +735,23 @@ async function generateOnce(sb, plot, n, reason, strict) {
   var expPool = await wbContent('体验池', '');
   if (expPool) ordered.push({ role: 'system', content: '【体验池（邀约场合从这里挑或仿，别只会约吃饭）】\n' + String(expPool).slice(0, 3000) });
 
+  // 📥 旧识联系人（玩家从别的故事导入的角色）：声音卡永远跟车防串腔，完整档案只在TA被点名时上（省token）。
+  // TA们不在 PERSISTENT_CANONICAL 里，所以陌生人专场的代码闸不会滤掉TA——玩家亲手请来的人，专场照常在场。
+  var importedList = [];
+  var npcsAll = sb.npcs || {};
+  for (var ipk in npcsAll) {
+    if (npcsAll.hasOwnProperty(ipk) && npcsAll[ipk] && npcsAll[ipk].imported && !npcsAll[ipk].muted) importedList.push(npcsAll[ipk]);
+  }
+  if (importedList.length) {
+    var impLines = [];
+    for (var ipv = 0; ipv < importedList.length; ipv++) {
+      var ipn = importedList[ipv];
+      if (ipn.voice) impLines.push('· ' + ipn.name + (ipn.archetype ? '(' + ipn.archetype + ')' : '') + '：' + String(ipn.voice).slice(0, 400));
+    }
+    if (impLines.length) ordered.push({ role: 'system', content:
+      '【旧识联系人】这些人是玩家亲手从别的故事请进通讯录的，不属于随机素材库，陌生人专场也照常在场。每人必须用自己的腔调，绝不混淆：\n' + impLines.join('\n') });
+  }
+
   // 私享版闺蜜群：reason 点名了群 → 挂群聊规则 + 两位成员的档案（S. 和 Akuma 都上车）
   var groupMode = IS_PERSONAL && !!reason && reason.indexOf(GROUP_NAME) !== -1;
   if (groupMode) {
@@ -752,10 +769,23 @@ async function generateOnce(sb, plot, n, reason, strict) {
   }
   // 正在私聊某个固定NPC → 拉他的完整世界书档案上车（只带这一个人，回信人设密度=主线同级）
   else if (reason) {
+    var fixedMatched = false;
     for (var fk in NPC_WB_KEY) {
       if (NPC_WB_KEY.hasOwnProperty(fk) && reason.indexOf(fk) !== -1) {
         var dossier = await wbContent(NPC_WB_KEY[fk], '');
         if (dossier) ordered.push({ role: 'system', content: '【' + fk + ' 的完整档案（他的回信必须贴合这份人设）】\n' + String(dossier).slice(0, 4000) });
+        fixedMatched = true;
+        break;
+      }
+    }
+    // 旧识被点名 → 蒸馏档案整份上车。TA的世界书不在本卡里，档案只活在TA自己的联系人记录上
+    if (!fixedMatched) {
+      for (var mi = 0; mi < importedList.length; mi++) {
+        if (reason.indexOf(importedList[mi].name) === -1) continue;
+        var mn = importedList[mi];
+        if (mn.dossier) ordered.push({ role: 'system', content:
+          '【' + mn.name + ' 的完整档案（TA的回信必须贴合这份人设）】\n' + String(mn.dossier).slice(0, 4000) +
+          (mn.dm_style ? '\n【TA的私信习惯】' + String(mn.dm_style).slice(0, 300) : '') });
         break;
       }
     }
@@ -1907,7 +1937,240 @@ eventOn('sb_request_tax_questions', async function () {
   }
 });
 
+// ── 📥 导入旧识（入口在手机「新私信」页）：读玩家酒馆里任一世界书 → AI蒸馏成联系人档案 → 入通讯录 ──
+// 蒸馏而不是解析：别人的世界书格式五花八门，写解析器必死；让模型把原文提炼成 SB 自己的档案格式。
+// 档案存在 npc 记录上（bio/dossier/voice/dm_style），不写世界书=不污染玩家的书；
+// 生成时声音卡跟车、点名才上全档（两处注入都在 generateOnce 里）。
+function serializeWbFor(charName, entries) {
+  var lc = charName.toLowerCase();
+  var scored = [];
+  for (var i = 0; i < entries.length; i++) {
+    var en = entries[i] || {};
+    var nm = String(en.name || '');
+    var keys = (((en.strategy || {}).keys) || []).map(function (k) { return String(k); }).join(' / ');
+    var content = String(en.content || '');
+    var score = 0;
+    if (nm.toLowerCase().indexOf(lc) !== -1) score += 4;
+    if (keys.toLowerCase().indexOf(lc) !== -1) score += 3;
+    if (content.toLowerCase().indexOf(lc) !== -1) score += 1;
+    scored.push({ i: i, score: score, text: '#' + (i + 1) + ' ' + (nm || '未命名条目') + (keys ? '\nkeys: ' + keys : '') + '\ncontent:\n' + content });
+  }
+  // 角色相关的条目排前面：真截断时牺牲的是不相关的世界观，不是角色本人
+  scored.sort(function (a, b) { return b.score !== a.score ? b.score - a.score : a.i - b.i; });
+  var out = '', truncated = false;
+  for (var j = 0; j < scored.length; j++) {
+    var block = scored[j].text + '\n\n---\n\n';
+    if (out.length + block.length > 90000) { truncated = true; out += '[还有 ' + (scored.length - j) + ' 个条目因长度被截断；与角色相关的条目已优先排在前面。]\n'; break; }
+    out += block;
+  }
+  return { text: out, total: entries.length, truncated: truncated };
+}
+function parseImportJson(raw) {
+  var t = String(raw || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  var a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a < 0 || b <= a) throw new Error('AI 没有返回 JSON 对象');
+  return JSON.parse(t.slice(a, b + 1));
+}
+// 背调**只走正文模型**（主API），故意不用手机的独立API（Fan 2026-07-16 拍板）：
+// 手机独立API多是 Flash 之类的小模型，够发私信但写不出调色盘密度——这活儿是"写人设"不是"发私信"，
+// 和主线叙事同级，值得占主API的名额。慢一点无所谓，一个角色一辈子只背调一次。
+async function callImportLLM(sys, instr) {
+  var ordered = [{ role: 'system', content: sys }];
+  await waitForSlot();
+  var raw = await generateRaw({ user_input: instr, should_silence: true, max_chat_history: 0, ordered_prompts: ordered });
+  return typeof raw === 'string' ? raw : (raw && raw.content) || '';
+}
+var _importBusy = false;
+async function handleImport(p) {
+  var wbName = String((p && p.worldbook) || '').trim();
+  var charName = String((p && p.name) || '').trim().slice(0, 24);
+  var identity = String((p && p.identity) || '').trim().slice(0, 120);
+  var relation = String((p && p.relation) || '').trim().slice(0, 200);
+  if (!wbName || !charName) { try { eventEmit('sb_import_failed', '世界书或角色名没填'); } catch (e0) {} return; }
+  if (isPersistent(charName)) { try { eventEmit('sb_import_failed', charName + ' 是本卡的固定角色，不用导入——去通讯录直接开聊'); } catch (e0) {} return; }
+  if (_importBusy) { try { eventEmit('sb_import_failed', '上一单背调还没做完，稍等'); } catch (e0) {} return; }
+  _importBusy = true;
+  try {
+    var entries = await getWorldbook(wbName);   // 世界书不存在会抛错 → 统一走下面的出声通道
+    var src = serializeWbFor(charName, entries || []);
+    if (!src.text) throw new Error('这本世界书是空的');
+    var sys = [
+      '你是「鎏金曼哈顿」（2026年纽约 sugar 圈生活模拟）的角色移植师。玩家要把TA在别的故事里认识的一个角色请进这部卡：既进手机当可私聊的联系人，也进主线当真实存在的人。你的任务是把来源世界书里的这个角色，提炼成一份和本卡原生NPC同等密度的完整档案。',
+      '',
+      '════ 第一部分：怎么写人设（这是本卡的写法，必须照这个来）════',
+      '【性格调色盘】人的性格像调色盘，由多种性格衍生组合才是活生生的人：',
+      '· 底色＝最深层基调，始终在但不一定最明显（如"温柔"）',
+      '· 主色调＝第一印象、日常最多，1-2个（如"清醒""偏爱"）',
+      '· 点缀＝只在特定人/特定场景才浮现的隐藏性格，往往最真实最脆弱（如"幻想""倔强"）',
+      '· 衍生＝每个性格在**具体场景里的行为**，不是定义。每个性格2-3条，每条给一个带动作和物理事实的画面。',
+      '  格式示例：「温柔衍生一：动作先行——她的温柔总是动作先到，声音随后才来。看到围巾没围好，手已经伸过去替他压好松开的地方，话还没出口。」',
+      '· ⭐衍生的命门：**允许跨性格关联、允许自相矛盾**——"叛逆的衍生里出现依赖的影子"。逻辑自洽的性格是资料库，自相矛盾才是活人。找到TA身上互相打架的两股劲，把它们贴进同一个动作里。',
+      '【三面性】只有当TA在不同压力场景下行为**根本性切换**（伪装/创伤/不同关系定位）时才写；找不出两个以上"压力性质截然不同"的场景就留空——硬写会把连贯角色切成几块演。写就给每张面：触发条件/能量状态/身体行为模式/功能(在保护什么)/语料。只写"怎么运作"，不写"为什么"（为什么是二次解释的活）。',
+      '【二次解释】作者的终极注释，专堵AI乱补全的口子。格式：「关于XX：真正是什么／不是什么／什么时候出现什么时候不出现／和别的性格什么关系」。挑TA身上最容易被写歪的2-3个点写。',
+      '【NSFW底色】写"为什么做"不写"做什么"——亲密行为是性格在身体层面的延续（依赖的人床上也依赖，怕被抛弃的人床上也怕）。',
+      '  ❌"她喜欢骑乘位"（AI只会机械执行） ✅"她需要控制节奏才有安全感，所以即使被压在身下腿也会缠紧对方的腰"（AI懂动机，任何情境都能延续）',
+      '  禁止"敏感部位：耳朵脖子"这种清单。原文的癖好/危险性/背德感直白保留，不洗白不道德化不加清醒旁白。',
+      '【说话方式】靠可演的**例句**装性格，不靠标签规定性格。给2-3句TA的原话或贴着原文语气改写的句子，标注"腔调参考，禁照抄"。',
+      '【八股禁令】禁模糊词(似乎/仿佛/宛如)、劣质比喻(像小兽/心湖涟漪)、微表情(嘴角上扬/指尖泛白)、语气描写(带着xx口吻)、极端情绪词、**否定转折句(不是…而是…)**、大段心理分析。情绪从动作和物理事实里长出来，不要罗列"她悲伤、温柔、痛苦"。',
+      '',
+      '════ 第二部分：迁移规则 ════',
+      '【只提炼一个人】来源世界书可能写了很多角色：只提炼「指定角色名」那一个，绝不混入其他角色的人设、关系和口吻。没有精确同名就找最明显的别名/同一人条目，判断依据写进 warnings；实在认不出目标也在 warnings 说明，再按最接近的那个提炼。',
+      '【读取范围】读全部条目，不只读激活的、不只读标题像"人设"的。原文里的角色基础、调色盘、混色、三面性、作者二次解释、语料、关系设定，全部纳入判断。',
+      '【⭐提取，不是发明】这是移植不是重写：',
+      '· 原文**已经有**调色盘/三面性/混色画面 → **大面积保留原结构**，底色/主色调/点缀原则上不改，衍生保留原意和原画面，只改与原世界专属地点/剧情线强绑定的部分',
+      '· 原文**没有**调色盘 → 你从原文的行为、台词、经历里**归纳**出底色/主色调/点缀。每一条衍生都必须能在原文找到根据，**不许凭空发明**。原文没写够的地方宁可少写，也不要编一个泛泛的AI八股性格',
+      '· 混色/画面式写法**保留画面**，不要把画面改写成性格解释',
+      '· 三面性**别为了简化压扁成单一性格**；也别为了本卡强行新增"金主面""恋爱脑面"',
+      '· 原文里最能体现"这个人就是这个人"的画面、硬约束、禁止误读项，必须带过来',
+      '【世界观取舍】判据只有一条：删掉这条世界观后TA还是不是同一个人？还是→删掉。不是→保留并压缩。原卡的宏大世界观/势力结构/主线剧情/只为别人服务的NPC一律不要；解释TA身份、能力、身体状态、核心行为逻辑所必须的过往，保留。世界观为角色服务，不让角色为世界观服务。',
+      '【落地纽约·强制】TA必须有一个2026年纽约真实成立的身份。玩家填了身份就以玩家的为准（用原著气质补细节）；没填就按TA原本的权力位置/职业/圈层找纽约等价物（宗门掌门→家族办公室掌舵人，皇储→外交豪门继承人，剑客→私人安保顾问）。**换的是舞台不是人**：核心性格、欲望结构、说话的调子、创伤和癖好原样保留。原世界的超自然设定若是TA人格核心（如失明、异能带来的孤立），保留其**人格后果**、把设定本身压成一句能在纽约成立的等价物。',
+      '【关系适配·强制】原故事里TA和User的关系一律作废（原卡的青梅竹马/同门/主仆都不算数）。玩家说了怎么认识就照玩家说的写；没说就设计一个此刻自然成立的起点。保留TA的**互动模式和情感逻辑**，只换相识背景。原本不适合谈恋爱的角色不要强行改成恋爱模板，保留TA本来的亲密方式。',
+      '【不得改写】不得把TA写成普通恋爱模板、不得写成只围绕User成立的工具人、不得为了本卡降低TA的人格完整度、不得把TA写浅写坏写蠢写轻浮。TA不必是金主——按TA本来的样子进入User的生活。',
+      '【写正文不写报告】所有字段都是**直接投喂给生成器演的人设正文**，禁止"建议保留/应该压缩/可以改写"这类元指令，禁止写成迁移报告。',
+      '',
+      '════ 第三部分：输出格式 ════',
+      '只输出一个合法 JSON 对象（不要Markdown、不要代码块、不要任何解释），字段：',
+      '  character_name: 联系人名，用玩家填的名字',
+      '  tag: 2-6字中文标签，格式 身份·性格（如 画廊主·毒舌）',
+      '  summary: 60-120字，TA是谁+和User什么关系，手机联系人预览用',
+      '  identity: 100-250字身份档案——纽约身份/地位/外形里能认出本人的特征/住哪/怎么和User搭上线/联系习惯',
+      '  palette: 400-900字性格调色盘——先列「底色/主色调/点缀」，再逐条写衍生（每条带标题+具体画面）。这是整份档案的肉，写足',
+      '  three_faces: 三面性；原文支持才写(200-500字)，不支持写空字符串""',
+      '  speech: 150-350字说话方式+2-3句例句（标注"腔调参考，禁照抄"）',
+      '  relationship: 150-350字——和User的关系起点、互动模式、核心张力（TA身上哪两股劲在打架）',
+      '  nsfw: 100-300字NSFW底色，写"为什么做"；原文完全没有性相关内容就写""',
+      '  boundary: 50-150字认知边界——TA知道什么、不知道什么（TA看不到User的手机、不知道User和别人聊了什么）',
+      '  secondary: 150-400字二次解释，堵AI乱补全的口子',
+      '  voice: 150-300字私信声音卡——句式特征+绝不做的事+收尾习惯+2-3句原话例句。**这条决定TA发消息像不像TA本人**，没有它TA会和通讯录里所有人一个腔',
+      '  dm_style: 两三句——TA会主动私信聊什么、第一条消息通常怎么开口',
+      '  warnings: 字符串数组，没有就 []',
+    ].join('\n');
+    var instr = [
+      '【玩家的要求】',
+      '要导入的角色名：' + charName,
+      'TA在纽约的身份：' + (identity || '（玩家没填——按TA原本的权力位置/圈层找纽约等价物）'),
+      'TA和User怎么认识：' + (relation || '（玩家没填——设计一个此刻自然成立的起点）'),
+      '',
+      '【本卡背景（供适配）】2026年纽约。User 是 sugar baby，手机是圈内邀请制私信App（上了平台的人都知道彼此是干嘛的，私信里敢说真话）。这份档案有两个用途：生成TA发给User的私信；主线正文提到TA时照这份档案演TA。所以密度要够——本卡原生NPC的档案都在两三千字以上，你写的这份是TA在这个世界里的全部依据。',
+      '',
+      '【来源世界书：' + wbName + '】共 ' + src.total + ' 个条目' + (src.truncated ? '（超长已截断，与角色相关的条目已优先排在前面）' : ''),
+      src.text,
+    ].join('\n');
+    var raw = await callImportLLM(sys, instr);
+    var d = null;
+    var name = charName;   // 联系人 key 永远用玩家填的名字——LLM 擅自改名会让玩家在通讯录里找不到人
+    // 分字段收上来再拼成档案：一个大 profile 字段模型必偷工（只写职业和经历），
+    // 拆成调色盘/三面性/二次解释/NSFW 逐项要，才逼得出和本卡原生NPC（Akuma 4458字/谢书砚 7194字）同级的密度。
+    var sec = function (title, body, cap) {
+      body = String(body || '').trim();
+      return body ? '\n\n【' + title + '】\n' + body.slice(0, cap) : '';
+    };
+    var tag = '', dossierText = '', badWhy = '';
+    // 质量闸也要重试：模型偷工（只写职业经历不写调色盘）和 JSON 解析失败一样，是"这一发不合格"，不是整单失败。
+    // 重试时把不合格的原因塞回去——泛泛说"再来一次"模型多半还那样。
+    for (var att = 0; att < 3; att++) {
+      if (att > 0) {
+        console.warn('[SB-NYC v4] import attempt ' + att + ' rejected: ' + badWhy);
+        try { eventEmit('sb_status', '🕵️ 档案不合格，重写中…(' + (att + 1) + '/3)'); } catch (eS) {}
+        raw = await callImportLLM(sys, '【上一次输出不合格：' + badWhy + '。重写一份，只输出一个合法JSON对象，' +
+          'palette 必须写足：先列底色/主色调/点缀，再逐条写带具体画面的衍生，每条都要能在来源原文里找到根据】\n' + instr);
+      }
+      d = null;
+      try { d = parseImportJson(raw); }
+      catch (e1) { badWhy = 'JSON解析失败(' + ((e1 && e1.message) || e1) + ')'; console.warn('[SB-NYC v4] ' + badWhy, String(raw).slice(0, 200)); continue; }
+      tag = String(d.tag || '旧识').replace(/\|/g, '·').slice(0, 12);
+      dossierText = (
+        '角色：' + name + '（' + tag + '）——User 在别处认识、如今也在纽约的人' +
+        sec('身份档案', d.identity, 700) +
+        sec('性格调色盘', d.palette, 2200) +
+        sec('三面性', d.three_faces, 1400) +
+        sec('说话方式', d.speech, 900) +
+        sec('和User的关系', d.relationship, 900) +
+        sec('NSFW 底色（为什么做，不是做什么）', d.nsfw, 800) +
+        sec('认知边界', d.boundary, 400) +
+        sec('二次解释（防AI乱补全）', d.secondary, 1000) +
+        (relation ? '\n\n【玩家亲手定的关系起点（最高优先级，与上文冲突时以此为准）】\n' + relation : '')
+      ).trim();
+      // 没调色盘 = 正是 2026-07-16 Fan 骂的"只有最表面的职业和经历"，这份档案不能要
+      if (String(d.palette || '').trim().length < 150) { badWhy = '性格调色盘没写或太短（档案会只剩职业和经历）'; d = null; continue; }
+      if (!String(d.voice || '').trim()) { badWhy = '没写声音卡（TA会和通讯录里所有人一个腔）'; d = null; continue; }
+      if (dossierText.length < 600) { badWhy = '整份档案只有' + dossierText.length + '字，太单薄'; d = null; continue; }
+      break;
+    }
+    if (!d) throw new Error('背调质量不合格：' + badWhy + '。换个模型或再点一次试试');
+    console.log('[SB-NYC v4] import distilled: ' + name + ' (' + dossierText.length + ' chars)');
+    var fresh = {
+      name: name, archetype: tag, persistent: false, engaged: false, unlocked: true,
+      imported: true, pinned: true,   // 自动置顶：档案只活在这条记录上，被自动清理=白背调（玩家可取消置顶放走TA）
+      total_transfers: 0, relationship: 0,
+      last_contact: nowTime(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [],
+      bio: String(d.summary || '').slice(0, 300),
+      dossier: dossierText.slice(0, 9000),   // 主线世界书条目用全份；私信生成时另按 4000 截（generateOnce 里）
+      voice: String(d.voice || '').slice(0, 600),
+      dm_style: String(d.dm_style || '').slice(0, 300),
+      // 原始背调参数留底：以后蒸馏提示词改好了，靠这三样就能一键"重新背调"（读回原参数重跑，不用玩家再填一遍）。
+      // 现在不存 = 那之前导入的人永远补不回来。imp_v 标记档案是第几版提示词产的，将来可据此提示玩家可升级。
+      origin_wb: wbName, imp_identity: identity, imp_relation: relation, imp_v: 2,
+    };
+    await Promise.resolve(updateVariablesWith(function (v) {
+      if (!v.sb) v.sb = defaultState();
+      if (!v.sb.npcs) v.sb.npcs = {};
+      var ex = v.sb.npcs[name];
+      if (!ex) v.sb.npcs[name] = fresh;
+      else {   // 重名（比如二次导入刷新档案）：只更新档案字段，聊天记录和关系原样保留
+        ex.archetype = ex.archetype || tag;
+        ex.imported = true; ex.pinned = true;
+        ex.bio = fresh.bio; ex.dossier = fresh.dossier; ex.voice = fresh.voice; ex.dm_style = fresh.dm_style;
+        ex.origin_wb = wbName; ex.imp_identity = identity; ex.imp_relation = relation; ex.imp_v = 1;
+        if (ex.muted) ex.muted = false;
+      }
+      return v;
+    }, { type: 'chat' }));
+    // 写进聊天世界书 → 主线也认识TA（正文里提到TA名字才激活=绿灯，平时不烧token）。
+    // 选聊天书不选卡绑书：NPC存在聊天变量里、是这一局的人，作用域对齐；且整卡更新会覆盖卡绑书，写那里必被冲掉。
+    // ⚠️ 书名必须显式给：不传名字酒馆会按当前时间起名（"2026-07-16 20h09m"），玩家在世界书列表里根本认不出来
+    //    （2026-07-16 Fan 实测"世界书没有新条目"＝条目在，但藏在时间戳名的书里）。带上聊天文件名=每局一本、互不串。
+    // 写失败不挡导入——手机侧靠npc记录照常工作，但必须出声（铁律）。成功也要出声：告诉玩家写进了哪本书。
+    try {
+      var wbTitle = '鎏金曼哈顿 · 旧识';
+      try { var cd = await getCharData('current'); if (cd && cd.chat) wbTitle += ' · ' + String(cd.chat).slice(0, 40); } catch (eN) {}
+      var chatWb = await getOrCreateChatWorldbook('current', wbTitle);
+      await deleteWorldbookEntries(chatWb, function (en) { return !!(en && en.extra && en.extra.sb_import === name); });   // 二次导入=旧条目先拆
+      await createWorldbookEntries(chatWb, [{
+        name: '旧识-' + name,
+        enabled: true,
+        strategy: { type: 'selective', keys: [name], keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
+        position: { type: 'before_character_definition', role: 'system', depth: 0, order: 100 },
+        content: fresh.dossier + '\n\n【声音（TA开口必须贴这个腔调）】\n' + fresh.voice,
+        probability: 100,
+        recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+        effect: { sticky: null, cooldown: null, delay: null },
+        extra: { sb_import: name },
+      }]);
+      console.log('[SB-NYC v4] import worldbook entry written: 「旧识-' + name + '」(' + fresh.dossier.length + ' chars) → ' + chatWb);
+      try { if (typeof toastr !== 'undefined') toastr.success('📖 ' + name + ' 的档案（' + fresh.dossier.length + '字）已写进世界书「' + chatWb + '」，正文提到TA名字时主线自动认得', 'SugarOS'); } catch (e5) {}
+    } catch (eWb) {
+      console.warn('[SB-NYC v4] import worldbook write failed', eWb);
+      try { if (typeof toastr !== 'undefined') toastr.warning('世界书写入失败(' + ((eWb && eWb.message) || eWb) + ')——TA目前只活在手机里，主线还不认识TA', 'SugarOS'); } catch (e6) {}
+    }
+    try { eventEmit('sb_updated'); } catch (e2) {}
+    try { eventEmit('sb_import_done', { name: name, tag: tag, summary: fresh.bio, warnings: Array.isArray(d.warnings) ? d.warnings : [] }); } catch (e3) {}
+    // TA 主动来打招呼：走正常私信管道；reason 含"别的角色不要出现"=闭集锁，只有TA本人发言
+    handleRequest({
+      reason: '旧识 ' + name + '（' + tag + '）刚出现在User的通讯录里：' + fresh.bio +
+        (relation ? ' 两人的关系：' + relation + '。' : '') +
+        ' TA现在主动给User发来第一条私信，按TA自己的开口习惯来' + (fresh.dm_style ? '（' + fresh.dm_style + '）' : '') +
+        '。只让 ' + name + ' 本人回应这些，别的角色不要出现。',
+      n: '1-2',
+    });
+  } catch (e) {
+    console.warn('[SB-NYC v4] import failed', e);
+    try { eventEmit('sb_import_failed', (e && e.message) || String(e)); } catch (e4) {}
+  } finally { _importBusy = false; }
+}
+
 eventOn('sb_seed_dm', seedDMs);
+eventOn('sb_request_import', handleImport);
 eventOn('sb_request_translate', handleTranslate);
 eventOn('sb_request_ad_comments', handleAdComments);
 eventOn('sb_request_mag', function (p) { generateMagazine(!!(p && p.force), (p && p.sections) || null); });
