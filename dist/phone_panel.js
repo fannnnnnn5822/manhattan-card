@@ -956,7 +956,7 @@
       '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button></div>';   // 第二行（UWU 的两个新页面）
   }
   function renderDMList(npcs) {
-    var entries = []; for (var n in npcs) { if (!npcs.hasOwnProperty(n)) continue; var npc = npcs[n]; if (!npc.unlocked && !npc.persistent && (npc.unread || 0) <= 0 && !npc.engaged) continue; entries.push(npc); }
+    var entries = []; for (var n in npcs) { if (!npcs.hasOwnProperty(n)) continue; var npc = npcs[n]; if (!npc.unlocked && !npc.persistent && (npc.unread || 0) <= 0 && !npc.engaged) continue; if (npc.muted && !(npc.dm_history && npc.dm_history.length) && (npc.unread || 0) <= 0 && !npc.engaged) continue; entries.push(npc); }
     // ➕ 新私信常驻标题栏：不在列表里的人（David/神父这种没主动来过的）也能被你先撩
     var head = '<div class="sb-sec" style="display:flex;justify-content:space-between;align-items:center;">iMessage<span class="sb-newdm" id="sbnyc-new-dm">➕ 新私信</span></div>';
     if (!entries.length) return head;
@@ -1755,7 +1755,9 @@
     var randomOnly = !!(state && state.game && state.game.random_only);   // 陌生人专场：固定名单不进通讯录（白名单 Akuma 除外）
     for (var i = 0; i < FIXED_ROSTER.length; i++) {
       if (randomOnly && FIXED_ROSTER[i][0] !== 'Akuma') continue;
-      if (!npcs[FIXED_ROSTER[i][0]]) missing.push(FIXED_ROSTER[i]);
+      // 没聊过（不存在）or 被冷处理清空过（muted+空记录）→ 都当"还没聊过的"重新可开聊，别让删过的固定NPC卡在首页空窗口里回不来
+      var exFx = npcs[FIXED_ROSTER[i][0]];
+      if (!exFx || (exFx.muted && !(exFx.dm_history && exFx.dm_history.length))) missing.push(FIXED_ROSTER[i]);
     }
     if (missing.length) {
       h += '<div class="sb-sec">通讯录里还没聊过的</div>';
@@ -1795,11 +1797,13 @@
     SBupdate(function (v) {
       if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
       if (!v.sb.npcs[name]) v.sb.npcs[name] = fresh;
+      else if (v.sb.npcs[name].muted) v.sb.npcs[name].muted = false;   // 冷处理过的固定NPC从通讯录重新开聊=解冻（User 主动开口）
       return v;
     });
     if (state) {
       if (!state.npcs) state.npcs = {};
       if (!state.npcs[name]) state.npcs[name] = fresh;
+      else if (state.npcs[name].muted) state.npcs[name].muted = false;
     }
     openChat(name, state.npcs[name]);
   }
