@@ -760,7 +760,7 @@
     statusUntil = Date.now() + (t.indexOf('⚠') !== -1 ? 20000 : 8000);   // ⚠️ 多停一会
     showIsland(t, t);
   }
-  setInterval(function () {
+  var _songTimer = setInterval(function () {
     if (Date.now() < statusUntil) return;
     songIdx = (songIdx + 1) % PLAYLIST.length;
     showIsland('♪ ' + PLAYLIST[songIdx]);
@@ -1774,7 +1774,7 @@
     }
     h += '<div class="sb-sec" style="margin-top:14px;">新面孔</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-contact-new" style="flex:1;">✍️ 输入名字，新建一个聊天</button></div>';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">给谁发都行——名字随你起（备注名也行，比如"Dr.Levine_UWS"）。号码怎么来的这种事，你自己心里有数。' + (randomOnly ? '' : '<br><br>找不到 L.？他没有联系方式——只会单方面给你写信。') + ((state && state.sugarelite && state.sugarelite.subscribed) ? '' : '<br>SugarElite™ 的管家要订阅后才会出现（去 ✦ Elite）。') + '</div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">给谁发都行——名字随你起（备注名也行，比如"Dr.Zhang_医美"）。号码怎么来的这种事，你自己心里有数。' + (randomOnly ? '' : '<br><br>找不到 L.？他没有联系方式——只会单方面给你写信。') + ((state && state.sugarelite && state.sugarelite.subscribed) ? '' : '<br>SugarElite™ 的管家要订阅后才会出现（去 ✦ Elite）。') + '</div>';
     h += '<div class="sb-sec" style="margin-top:14px;">旧识</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-contact-import" style="flex:1;">📥 从别的故事里请一个人过来</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">你在别的世界书里认识的人也能进这部手机——搜TA的世界书，平台做一次背调，TA就带着自己的脾气出现在通讯录里。</div>';
@@ -1817,11 +1817,11 @@
   }
   // 自定义新面孔：名字随便起，可以顺手给一句"TA是谁"存成bio（生成器照这个演），留空=让TA自己长出来
   function newCustomContact() {
-    panelPrompt('TA叫什么？（备注名也行，比如 Dr.Levine_UWS / 那个画廊主）', '').then(function (name) {
+    panelPrompt('TA叫什么？（备注名也行，比如 Dr.Zhang_医美 / 那个画廊主）', '').then(function (name) {
       name = (name || '').trim().slice(0, 24);
       if (!name) return;
       if (state && state.npcs && state.npcs[name]) { openChat(name, state.npcs[name]); return; }   // 已存在=直接进
-      panelPrompt('TA是谁？一句话（比如"52岁上东区画廊主，说话夹法语"）。留空=让TA接到消息时自己长出来', '').then(function (who) {
+      panelPrompt('TA是谁？一句话（比如"52岁老城区画廊主，说话夹法语"）。留空=让TA接到消息时自己长出来', '').then(function (who) {
         who = (who || '').trim();
         var fresh = {
           name: name, archetype: '', persistent: false, engaged: false,
@@ -1985,7 +1985,7 @@
     var h = pageHeader('✍️ 发帖自荐', '挂上招聘版 · 会有人私信你', true);
     h += '<div class="sb-msgs" style="display:block;padding-top:14px;">';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px 10px;">写你自己：谁、什么条件（外形/语言/才艺/时间）、想找什么样的 daddy、期望（PPM 单次还是月度 allowance、起步数字、要不要验资）。写得越具体，上钩的人越对味。别用真名，用个昵称。</div>';
-    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-recruit-text" rows="7" name="sbnyc-ad" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：昵称 Kiki，23，NYU 艺术史，会弹琴、法语流利，身高175。平日课排满，只有周末和假期有空。想找懂生活、不查岗、愿意带我见世面的成熟先生。月度 allowance 起步 8k，先验资再见面，不接受 PPM。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
+    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-recruit-text" rows="7" name="sbnyc-ad" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：昵称 Kiki，23，学艺术史，会弹琴、法语流利，身高175。平日排得满，只有周末和假期有空。想找懂生活、不查岗、愿意带我见世面的成熟先生。月度 allowance 起步 2w，先验资再见面，不接受 PPM。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
     h += '<div style="display:flex;margin:8px 14px;"><button class="sb-abtn" id="sbnyc-recruit-submit" style="flex:1;">📤 挂出去</button></div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
@@ -2016,7 +2016,7 @@
     var h = pageHeader('✍️ 发帖吐槽', '匿名马甲 · 想骂谁骂谁', false);
     h += '<div class="sb-msgs" style="display:block;padding-top:14px;">';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px 10px;">吐槽男人、避雷、求助、炫耀都行。马甲发布——正文里的人可能刷到这条帖子并对号入座，但没人能确定是你（除非你自己认）。发出去以后评论区自动开盖。</div>';
-    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-gossip-text" rows="6" name="sbnyc-gossip" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：😡 见面只肯给500车马费还想牵手，让他滚了。姐妹们避雷 UES 某自称 PE 合伙人的秃头，表是真的，人是假的。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
+    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-gossip-text" rows="6" name="sbnyc-gossip" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：😡 见面只肯给500车马费还想牵手，让他滚了。姐妹们避雷 CBD 某自称私募合伙人的秃头，表是真的，人是假的。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
     h += '<div style="display:flex;gap:8px;margin:8px 14px;"><button class="sb-abtn" id="sbnyc-gossip-local" style="flex:1;">📤 发出去（仅本体）</button><button class="sb-abtn" id="sbnyc-gossip-global" style="flex:1;">🌍 发出去 + 全服可见</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">「仅本体」＝只存在你的游戏里，NPC 来评论。「全服」＝同时挂到官方服的姐妹楼，其他玩家看得到、能回你（署你的排行榜马甲）。⚠️ 全服帖覆水难收：本体的删帖只删你这边，服务器那份删不掉，骂真人请三思。</div>';
     h += '</div>';
@@ -2243,7 +2243,7 @@
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
-    chatEl.querySelector('#sbnyc-sub').addEventListener('click', function () { subscribeElite(3000); });
+    chatEl.querySelector('#sbnyc-sub').addEventListener('click', function () { subscribeElite(20000); });   // 和付费墙写的 ￥20,000/月 对齐（3000 是美元时代的遗留）
   }
 
   function subscribeElite(price) {
@@ -2286,7 +2286,7 @@
     var displayDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + _calMonthOffset, 1);
     var viewYear = displayDate.getFullYear(), viewMonth = displayDate.getMonth();
     var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b>日历</b><small>' + viewYear + '年 ' + (viewMonth + 1) + '月</small></div>' +
-      '<button class="sb-ch-del" id="sb-cal-academic" title="生成学业日程（NYU 的 deadline 不会放过你）" style="opacity:.8;">📚</button></div>';
+      '<button class="sb-ch-del" id="sb-cal-academic" title="生成本周日程（医美/健身/工作/账单，按你的生活来）" style="opacity:.8;">📚</button></div>';
     h += '<div class="sb-msgs" id="sb-cal-wrap" style="display:block;padding:10px;">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
       '<button class="sb-abtn cal-prev" style="flex:0 0 auto;">◀</button>' +
@@ -3403,6 +3403,28 @@
   panel.addEventListener('focusout', keepInViewSoon, true);
   try { VIEW.addEventListener('resize', keepInView); } catch (e) {}
   try { if (VIEW.visualViewport) VIEW.visualViewport.addEventListener('resize', keepInView); } catch (e) {}
+
+  // ── 关掉脚本时把自己收干净（玩家反馈：关了脚本手机还在页面上赖着）──
+  // 酒馆助手只自动卸载 eventOn 的监听；我们 appendChild 到 parent.document 的
+  // 悬浮球/面板/style 它管不着。脚本跑在自己的 iframe 里，被关掉时这个 iframe
+  // 销毁 → 它自己的 window 派发 pagehide，在那儿收摊（官方推荐做法）。
+  // 按 id 兜底再扫一遍：万一上面某个引用因异常没建起来，也不会漏下孤儿节点。
+  function sbSelfCleanup() {
+    try { clearInterval(_songTimer); } catch (e) {}
+    try { clearTimeout(_kvTimer); } catch (e) {}
+    try { VIEW.removeEventListener('resize', keepInView); } catch (e) {}
+    try { if (VIEW.visualViewport) VIEW.visualViewport.removeEventListener('resize', keepInView); } catch (e) {}
+    try {
+      ['sbnyc-fab', 'sbnyc-panel', 'sbnyc-style'].forEach(function (id) {
+        var el = DOC.getElementById(id);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      });
+    } catch (e) {}
+    try { console.log('[SB phone] 脚本关闭，悬浮手机已自我清理'); } catch (e) {}
+  }
+  // window 是脚本自己的 iframe（不是酒馆主页面）——它被销毁时才触发，正是我们要的时机
+  try { window.addEventListener('pagehide', sbSelfCleanup); } catch (e) {}
+  try { window.addEventListener('unload', sbSelfCleanup); } catch (e) {}   // 老浏览器兜底
   // QR 栏保底按钮（动森同款自救入口）：悬浮球拖丢/手机端不可见 → 点它复位+开关面板
   try {
     eventOn(getButtonEvent('📱手机'), function () {
