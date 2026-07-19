@@ -2529,6 +2529,14 @@
     if (wpSolid) panel.classList.add('wp-solid');
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-wp-solid-toggle" style="flex:1;">❤️ 爱来自藐姑射仙老师：' + (wpSolid ? '透明已关（点我开）' : '透明已开（点我关）') + '</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 6px;">透明背景模式：聊天页和消息列表的底色变为透明，壁纸完整可见。默认开启——这是藐姑射仙老师的心意。</div>';
+    // 🎨 AI生图画风预设（UWU）：localStorage sbnyc_img_style（'0'=不开 '1'=厚涂 '2'=平涂）
+    var imgSty = imgStylePreset();
+    h += '<div style="margin:8px 14px 4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+      '<span style="font-size:12px;color:var(--ink);">🎨 AI生图画风（来自UWU）：</span>' +
+      '<button class="sb-abtn sb-imgsty-btn" data-sty="0" style="flex:0 0 auto;' + (imgSty === '0' ? 'background:var(--gold);color:#fff;' : '') + '">不加</button>' +
+      '<button class="sb-abtn sb-imgsty-btn" data-sty="1" style="flex:0 0 auto;' + (imgSty === '1' ? 'background:var(--gold);color:#fff;' : '') + '">厚涂油画</button>' +
+      '<button class="sb-abtn sb-imgsty-btn" data-sty="2" style="flex:0 0 auto;' + (imgSty === '2' ? 'background:var(--gold);color:#fff;' : '') + '">平涂插画</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 6px;">聊天 ➕ 菜单里的「🎨 AI生图」会自动拼上所选画风。预设不含人物描述——适合场景/氛围/静物/光影，不适合生成人物。</div>';
     // 联机区块（SugarRank 排行榜 + 全服橱窗）
     var oc = onlineCfg();
     h += '<div class="sb-sec" style="margin-top:16px;">Online · 联机</div>';
@@ -2688,6 +2696,16 @@
           openSettings();
         });
       })(wpopBtns[wpi]);
+    }
+    // 🎨 AI生图画风预设按钮（UWU）
+    var imgStyBtns = chatEl.querySelectorAll('.sb-imgsty-btn');
+    for (var isi = 0; isi < imgStyBtns.length; isi++) {
+      (function (b) {
+        b.addEventListener('click', function () {
+          try { VIEW.localStorage.setItem('sbnyc_img_style', b.getAttribute('data-sty')); } catch (e) {}
+          openSettings();
+        });
+      })(imgStyBtns[isi]);
     }
     // 藐姑射仙老师的透明背景切换
     var wpSolidBtn = chatEl.querySelector('#sbnyc-wp-solid-toggle');
@@ -2887,20 +2905,24 @@
 
     // 新交互：回车=攒消息（可连打几条），发送键=让 TA 回复（学两个用户的建议，统一简单）
     // queueMsg 只把消息记下+显示，不触发生成；replyOne(发送键)才让这个人一次性回应攒的全部
-    function queueMsg(txt, mtype) {
+    function queueMsg(txt, mtype, extra) {   // extra：调用方塞额外字段（如 imgUrl），不改原有调用（UWU）
       var text = txt || input.value.trim(); if (!text) return;
       var t = nowT(); var ty = mtype || 'text';
       var gDay = (state && state.game && state.game.day) || 1;
       npc.engaged = true;
       if (!npc.dm_history) npc.dm_history = [];
       var prevQ = npc.dm_history.length ? npc.dm_history[npc.dm_history.length - 1] : null;   // 分割线要看上一条
-      npc.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay });
+      var msgObj = { sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay };
+      if (extra) { for (var ek in extra) { if (extra.hasOwnProperty(ek)) msgObj[ek] = extra[ek]; } }
+      npc.dm_history.push(msgObj);
       if (npc.dm_history.length > 400) npc.dm_history = npc.dm_history.slice(-400);
       SBupdate(function (v) {
         if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
         var n = v.sb.npcs[name]; if (!n) return v;
         if (!n.dm_history) n.dm_history = [];
-        n.dm_history.push({ sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay });
+        var vObj = { sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay };
+        if (extra) { for (var ek2 in extra) { if (extra.hasOwnProperty(ek2)) vObj[ek2] = extra[ek2]; } }
+        n.dm_history.push(vObj);
         if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400);
         n.engaged = true; n.unread = 0; n.last_ts = Date.now(); n.last_contact = t; n.muted = false;
         n.last_message = lastPreview({ sender: 'USER', type: ty, content: text });   // 列表显示"你：xxx"——一眼知道回过没
@@ -2916,10 +2938,9 @@
       input.value = '';
       var box = chatEl.querySelector('.sb-msgs');
       if (box) {
-        var currQ = { sender: 'USER', time: t, type: ty, content: text, gameDay: gDay };
-        var dvq = dividerBetween(prevQ, currQ);   // 局部插入也补分割线（UWU）——不然重开聊天才出现
+        var dvq = dividerBetween(prevQ, msgObj);   // 局部插入也补分割线（UWU）——不然重开聊天才出现；msgObj 已含 extra 字段
         if (dvq) box.insertAdjacentHTML('beforeend', dividerHtml(dvq));
-        box.insertAdjacentHTML('beforeend', renderOneMsg(currQ, name, npc.dm_history.length - 1, false, false, true));
+        box.insertAdjacentHTML('beforeend', renderOneMsg(msgObj, name, npc.dm_history.length - 1, false, false, true));
         box.scrollTop = box.scrollHeight;
       }
     }
@@ -3013,12 +3034,14 @@
           '<button data-pa="q1">🍽️ 帮我订位</button>' +
           '<button data-pa="q2">🕵️ 查个人</button>' +
           '<button data-pa="photo">📷 发照片（自己描述）</button>' +
+          '<button data-pa="img">🎨 AI生图</button>' +
           '<button data-pa="link">🔗 发链接（科普帖/账单/商品）</button>';
       } else {
         mh += '<button data-pa="meet">☕ 约见面（开正文剧情）</button>' +
           '<button data-pa="broke">🥺 哭穷（一键）</button>' +
           '<button data-pa="selfie">🤳 快捷自拍（一键）</button>' +
           '<button data-pa="photo">📷 发照片（自己描述）</button>' +
+          '<button data-pa="img">🎨 AI生图</button>' +
           '<button data-pa="voice">🎙️ 发语音（自己描述）</button>' +
           '<button data-pa="loc">📍 发定位</button>' +
           '<button data-pa="pay">💸 转账给TA（从你钱包扣）</button>' +
@@ -3066,6 +3089,54 @@
             toast('success', '💸 已转 ' + fmtUSD(amt) + ' 给 ' + name + '——点发送让TA看到');
           });
         }
+        else if (act === 'img') {
+          // 🎨 AI生图（UWU）：Pollinations.ai 免费生图，零 API Key 零配置
+          // 流程：弹 prompt → 插随机等待文案气泡 → Image 探测 → 成功入待发 / 失败重试一次
+          var WAIT_MSGS = [
+            '正在调教画笔…画笔发出一声娇吟 ✨', 'AI 在翻你的 mood board，稍等 🎨',
+            '画师正在请神上身…再等一下下 💫', '画师正在喝咖啡提神...咖啡撒了，好在只是emoji ☕',
+            '正在申请访问FBI数据库寻找参考...访问失败，我们只找到了纽约的阳光 🌇', '在众多色彩里挑最适合你的那个...十二星座决定你的幸运色 🎯',
+            '光影、构图、氛围…对画师来说一样都不能少...熬夜、饮食不规律、精神状态抽象也是 🖌️', 'AI 正在与啃数据线的仓鼠搏斗...%#@￥%...吱吱，吱吱吱 ',
+            '已经在生成啦，真的，没骗你 🫣', '正在生成一只鸽子成为画奴...鸽子飞向了自由的远方 ',
+          ];
+          panelPrompt('🎨 描述你要生成的画面（中英文都行）', '一个在纽约街头散步的优雅女人，金色阳光，电影感').then(function (prompt) {
+            prompt = (prompt || '').trim();
+            if (!prompt) return;
+            var sp = imgStylePrompt();   // 画风预设（UWU）：设置页可选厚涂/平涂，不开=原样
+            var finalPrompt = sp ? (sp.pos + ', ' + prompt + ' --- NOT: ' + sp.neg) : prompt;
+            var imgUrl = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(finalPrompt);
+            setStatus('🎨 AI 正在画…');
+            // 插入假消息气泡（sb-typing 呼吸动画），完事无论成败都摘掉
+            var box = chatEl.querySelector('.sb-msgs');
+            var waitBubble = null;
+            if (box) {
+              var waitMsg = WAIT_MSGS[Math.floor(Math.random() * WAIT_MSGS.length)];
+              box.insertAdjacentHTML('beforeend', '<div class="sb-msg me sb-typing" style="max-width:82%;">' + esc(waitMsg) + '</div>');
+              waitBubble = box.lastElementChild;
+              box.scrollTop = box.scrollHeight;
+            }
+            var done = function () {
+              setStatus('');
+              try { if (waitBubble && waitBubble.parentNode) waitBubble.parentNode.removeChild(waitBubble); } catch (e) {}
+            };
+            var ok = function () {
+              done();
+              queueMsg('（AI 生成的画面：' + prompt.slice(0, 200) + '）', 'image', { imgUrl: imgUrl });
+              toast('success', '🎨 AI 生图已进待发——点发送让TA看到');
+            };
+            var probe = new Image();   // 用 Image 对象探测 Pollinations 是否生成完毕
+            probe.onload = ok;
+            probe.onerror = function () {
+              setTimeout(function () {   // Pollinations 冷启动可能慢，3秒后重试一次
+                var retry = new Image();
+                retry.onload = ok;
+                retry.onerror = function () { done(); toast('error', '生图失败——换个描述试试，英文效果通常更好'); };
+                retry.src = imgUrl;
+              }, 3000);
+            };
+            probe.src = imgUrl;
+          });
+        }
         else if (act === 'link') openLinkMenu();
       });
       _msgMenu = menu;
@@ -3073,6 +3144,24 @@
   }
 
   function closeChat() { currentChatName = null; currentPage = null; _msel = null; chatEl.style.display = 'none'; root.style.display = ''; render(); }
+
+  // ── 🎨 AI生图画风预设（UWU · 2026-07-17）──
+  // '0'=不开 '1'=厚涂油画 '2'=平涂插画；提示词不含人物描述——适合场景/氛围/静物/光影
+  function imgStylePreset() {
+    try { return VIEW.localStorage.getItem('sbnyc_img_style') || '0'; } catch (e) { return '0'; }
+  }
+  function imgStylePrompt() {
+    var s = imgStylePreset();
+    if (s === '1') return {
+      pos: 'classical oil painting style, clear composition structure, fine delicate brushstrokes, soft shadow, Rembrandt lighting, painterly digital illustration, thick textured brushstrokes, soft oil painting texture, warm painterly rendering, subtle canvas grain, blended soft shading, loose expressive brushwork',
+      neg: 'anime, cartoon, cel shading, flat colors, 3d render, plastic texture, smooth airbrushed, ugly, blurry, lowres, deformed, harsh neon colors, comic halftone, pixel art',
+    };
+    if (s === '2') return {
+      pos: '2D anime style illustration, delicate sharp clean line art, soft semi-cel shading, rich vibrant colors, clean clear color blocks, detailed crisp background, translucent watercolor wash texture mixed with digital painting, subtle brush texture, elegant soft ink wash edge, glossy fabric highlight, soft warm diffused indoor light, gentle rim light, pale warm pastel tone, soft glowing highlights, low contrast soft shadow, luminous hazy light bloom, gentle warm color grading',
+      neg: 'photorealistic, oil painting, rough thick brushstrokes, 3d render, clay, ugly, blurry, lowres, deformed, messy rough lines, heavy cel shading, harsh black shadow, saturated neon color, western comic, pixel art',
+    };
+    return null;
+  }
 
   function renderOneMsg(m, trName, trIdx, autoShow, canReroll, isLast) {
     var isU = m.sender === 'USER'; var cls = isU ? 'me' : 'them'; var type = (m.type || 'text').toLowerCase();
@@ -3107,7 +3196,15 @@
     }
     if (type === 'transfer') return '<div class="sb-msg transfer' + (isU ? ' me' : '') + '"' + dataA + ' data-tp="transfer"><div class="tl">' + (isU ? 'You sent' : 'Received') + '</div><div class="ta">' + fmtUSD(c) + '</div>' + (n ? '<div class="tl">' + esc(n) + '</div>' : '') + tH + '</div>';
     if (type === 'gift') return '<div class="sb-msg transfer"' + dataA + ' data-tp="gift"><div class="tl">Gift · 已入衣橱</div><div class="ta" style="font-size:16px;">🎁 ' + esc(c) + '</div>' + tH + '</div>';
-    if (type === 'image') return '<div class="sb-msg ' + cls + ' media"' + dataA + '>' + gsp + '📷 ' + esc(c) + tH + trH + '</div>';
+    if (type === 'image') {
+      // 消息带 imgUrl（🎨 AI生图）→ 渲染真实 <img>；否则保持旧文字样式（UWU）
+      if (m.imgUrl) {
+        return '<div class="sb-msg ' + cls + '"' + dataA + ' style="max-width:88%;padding:4px;background:transparent;">' +
+          '<img src="' + esc(m.imgUrl) + '" style="max-width:100%;max-height:300px;border-radius:12px;display:block;" loading="lazy" onerror="this.style.display=\'none\'">' +
+          '<div style="font-size:11px;color:var(--ink-sub);margin-top:4px;padding:0 6px;">📷 ' + esc(c) + '</div>' + tH + trH + '</div>';
+      }
+      return '<div class="sb-msg ' + cls + ' media"' + dataA + '>' + gsp + '📷 ' + esc(c) + tH + trH + '</div>';
+    }
     if (type === 'voice') {
       // 沉浸语音条：只露波形和秒数（时长按字数估），点一下气泡才展开文字
       var plain = String(c).replace(/\s/g, '');
