@@ -467,9 +467,16 @@ function describeState(sb) {
   if (uid.persona) lines.push('玩家写的人设（这是关于她的唯一可信设定，别自己另编一套）:\n' + uid.persona.slice(0, 1200));
   if (p.look) lines.push('外形: ' + p.look);
   if (!uid.name && !uid.persona && !p.look) {
-    lines.push('（玩家没有填人设——她的长相、来历、职业都还没定。**不要替她编一个**：用"她/你"指代，'
+    lines.push('（玩家没有填人设——她的长相、来历、职业都还没定。**不要替她编一个**：'
       + '需要具体细节时只从主线正文里已经写过的描写里取，没写过就留白。）');
   }
+  // 称呼：没给名字时 LLM 会自己现编一个（实测出现过）——正面给出该怎么叫，比列禁令管用
+  lines.push(uid.name
+    ? '【怎么称呼她】她叫「' + uid.name + '」，名字以这个为准。称呼按各人的关系、段位和人设挑：'
+      + '宝宝 / baby / 小X（取她名字里一个字）/ 小猫咪 / 乖孩子 / 连名带姓 / 或者压根不叫名字直接说事——'
+      + '越亲的越黏，越端着的越正式，谨慎的那几个从头到尾只用"你"。'
+    : '【怎么称呼她】她的名字还没定。用**不需要名字的称呼**：宝宝 / baby / 小猫咪 / 乖孩子 / 或者直接"你"。'
+      + '同样按各人的关系和人设挑，谨慎的那几个只用"你"最像他们。');
   var w = sb.wallet || {};
   lines.push('【钱包】余额 ￥' + (w.balance != null ? w.balance : 0).toLocaleString());
   // Akuma 私信要用到的江湖地位（她刷论坛看得到榜）——只在超过/紧咬时提，Akuma 领先是常态不用说（专场里她也在岗，照常）
@@ -1865,6 +1872,7 @@ function seedDMs() {
     }
     ensureAkumaRank(v.sb);   // 开场就给 Akuma 定影子身家（顶端 SB，起步压 User 一头）
     v.sb._seeded = true;
+    v.sb._wantSeed = false;   // 订单已完成，摘掉旗标
     return v;
   }, { type: 'chat' });
   Promise.resolve(p).then(function () {
@@ -2215,6 +2223,18 @@ async function handleImport(p) {
 }
 
 eventOn('sb_seed_dm', seedDMs);
+// 兜底：开场白挂 _wantSeed 旗标后就发事件，但脚本本体是从 CDN 拉下来再 eval 的——
+// 慢的时候上面这行还没执行，事件就已经发完了，事件丢掉 = 玩家开局手机全空（实测摔过）。
+// 所以脚本一就位先自己查一遍旗标，该种就种，不依赖事件时序。
+(function selfSeed() {
+  try {
+    var v = getVariables({ type: 'chat' });
+    if (v && v.sb && v.sb._wantSeed && !v.sb._seeded) {
+      console.log('[SB-S v4] 捡到种子旗标，补种开场私信');
+      seedDMs();
+    }
+  } catch (e) { console.warn('[SB-S v4] selfSeed check failed', e); }
+})();
 eventOn('sb_request_import', handleImport);
 eventOn('sb_request_translate', handleTranslate);
 eventOn('sb_request_ad_comments', handleAdComments);

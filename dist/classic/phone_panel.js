@@ -1739,12 +1739,11 @@
   // ── ➕ 新私信：固定NPC没主动来过消息（David/神父这种）玩家就没入口先撩TA——这页解决这个 ──
   // 名单要和生成器的 VOICES 对齐（名字对得上生成器才认识TA）；L. 故意不在名单里：他没有联系方式，只单方面写信。
   var FIXED_ROSTER = [
-    ['T.', '巨鲸·老钱', '对冲基金巨鲸。话少，事密，从不寒暄'],
-    ['Marco Rossi', '假富·话痨', '话痨装逼男。G-Wagen 是租的'],
-    ['David Pemberton', '邻居·已婚律师', '隔壁的已婚合伙人。谨慎到只写便条'],
-    ['Hudson Park', '战友·男公关', '高端男公关。你的战友，不收你钱'],
-    ['Cole Marlowe', '乐队·反向要钱', 'Bushwick 主唱。会反过来跟你要钱'],
-    ['Father Dan', '神父·禁忌', '耶稣会神父。只用 Signal'],
+    ['纪司柏', '巨鲸·待验证', '看着什么都有。你还没验过资'],
+    ['顾维', '邻居·已婚律师', '隔壁的已婚合伙人。电梯里问过你几点回来'],
+    ['楚何河', '战友·男公关', '顶级会所的头牌。你的战友，不收你钱'],
+    ['祈星', '边缘艺术家·吞金兽', '地下乐队主唱。会反过来跟你要钱'],
+    ['释空', '高僧·禁忌破戒', '古刹的监院。深夜也会回消息'],
     ['Akuma', '闺蜜·圈内人气王', '你闺蜜。论坛人气王'],
     ['上夜班的人', '？·论坛私信', '论坛上私信过你的匿名账号'],
   ];
@@ -2560,7 +2559,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">🔄 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
