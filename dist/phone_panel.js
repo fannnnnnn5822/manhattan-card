@@ -756,7 +756,7 @@
     statusUntil = Date.now() + (t.indexOf('⚠') !== -1 ? 20000 : 8000);   // ⚠️ 多停一会
     showIsland(t, t);
   }
-  setInterval(function () {
+  var _songTimer = setInterval(function () {
     if (Date.now() < statusUntil) return;
     songIdx = (songIdx + 1) % PLAYLIST.length;
     showIsland('♪ ' + PLAYLIST[songIdx]);
@@ -2556,7 +2556,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">🔄 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -3396,6 +3396,28 @@
   panel.addEventListener('focusout', keepInViewSoon, true);
   try { VIEW.addEventListener('resize', keepInView); } catch (e) {}
   try { if (VIEW.visualViewport) VIEW.visualViewport.addEventListener('resize', keepInView); } catch (e) {}
+
+  // ── 关掉脚本时把自己收干净（玩家反馈：关了脚本手机还在页面上赖着）──
+  // 酒馆助手只自动卸载 eventOn 的监听；我们 appendChild 到 parent.document 的
+  // 悬浮球/面板/style 它管不着。脚本跑在自己的 iframe 里，被关掉时这个 iframe
+  // 销毁 → 它自己的 window 派发 pagehide，在那儿收摊（官方推荐做法）。
+  // 按 id 兜底再扫一遍：万一上面某个引用因异常没建起来，也不会漏下孤儿节点。
+  function sbSelfCleanup() {
+    try { clearInterval(_songTimer); } catch (e) {}
+    try { clearTimeout(_kvTimer); } catch (e) {}
+    try { VIEW.removeEventListener('resize', keepInView); } catch (e) {}
+    try { if (VIEW.visualViewport) VIEW.visualViewport.removeEventListener('resize', keepInView); } catch (e) {}
+    try {
+      ['sbnyc-fab', 'sbnyc-panel', 'sbnyc-style'].forEach(function (id) {
+        var el = DOC.getElementById(id);
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+      });
+    } catch (e) {}
+    try { console.log('[SB phone] 脚本关闭，悬浮手机已自我清理'); } catch (e) {}
+  }
+  // window 是脚本自己的 iframe（不是酒馆主页面）——它被销毁时才触发，正是我们要的时机
+  try { window.addEventListener('pagehide', sbSelfCleanup); } catch (e) {}
+  try { window.addEventListener('unload', sbSelfCleanup); } catch (e) {}   // 老浏览器兜底
   // QR 栏保底按钮（动森同款自救入口）：悬浮球拖丢/手机端不可见 → 点它复位+开关面板
   try {
     eventOn(getButtonEvent('📱手机'), function () {

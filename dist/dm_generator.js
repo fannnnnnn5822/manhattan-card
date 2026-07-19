@@ -2202,6 +2202,14 @@ async function handleImport(p) {
 }
 
 eventOn('sb_seed_dm', seedDMs);
+
+// 关掉脚本时撤掉注入主线的私信摘要：injectPrompts 不随脚本关闭消失，
+// 留着会让主线一直"记得"手机里的对话，玩家关了脚本却发现 AI 还知道，很出戏。
+try {
+  window.addEventListener('pagehide', function () {
+    try { uninjectPrompts(['sbnyc-dm-digest']); } catch (e) {}
+  });
+} catch (e) {}
 eventOn('sb_request_import', handleImport);
 eventOn('sb_request_translate', handleTranslate);
 eventOn('sb_request_ad_comments', handleAdComments);
