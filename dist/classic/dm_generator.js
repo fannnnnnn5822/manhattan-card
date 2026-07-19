@@ -450,8 +450,16 @@ var NPC_WB_KEY = {
 // 结果是每次都把一个不存在的纽约学生身份喂给 LLM）。没填就明说没填，让它留白。
 function userIdentity() {
   var name = '', persona = '';
-  try { if (typeof substitudeMacros === 'function') name = String(substitudeMacros('{{user}}') || '').trim(); } catch (e) {}
-  try { if (typeof substitudeMacros === 'function') persona = String(substitudeMacros('{{persona}}') || '').trim(); } catch (e) {}
+  // 优先走正经接口（酒馆助手 4.6+ 的用户人设 API）：返回 { name, description }，结构化、不会吐回宏字面量
+  try {
+    if (typeof getPersona === 'function') {
+      var pp = getPersona('current');
+      if (pp) { name = String(pp.name || '').trim(); persona = String(pp.description || '').trim(); }
+    }
+  } catch (e) {}
+  // 兜底：助手版本低于 4.6 没有上面那个函数时，退回宏
+  try { if (!name && typeof substitudeMacros === 'function') name = String(substitudeMacros('{{user}}') || '').trim(); } catch (e) {}
+  try { if (!persona && typeof substitudeMacros === 'function') persona = String(substitudeMacros('{{persona}}') || '').trim(); } catch (e) {}
   if (/^\{\{[^}]*\}\}$/.test(name)) name = '';         // 宏不被支持时会原样吐回来
   if (/^\{\{[^}]*\}\}$/.test(persona)) persona = '';
   return { name: name, persona: persona };
