@@ -1307,12 +1307,13 @@ function closetAdd(sb, name, price) {
     if (sb._closetDedup[di].k === key) {
       try { if (typeof toastr !== 'undefined') toastr.warning('⛔ 拦下重复入橱：' + name + '——10分钟内已入橱过同名物品', 'SugarOS 衣橱'); } catch (e) {}
       console.warn('[SB-NYC v4] closet dedup blocked: ' + name);
-      return;
+      return false;
     }
   }
   sb._closetDedup.push({ k: key, ts: now });
   sb.closet.push({ name: String(name).slice(0, 40), price: price || 0, from: '正文', img: '', time: nowTime() });
   if (sb.closet.length > 60) sb.closet = sb.closet.slice(-60);
+  return true;
 }
 function closetRemove(sb, name) {
   if (!Array.isArray(sb.closet)) return;
@@ -1358,14 +1359,74 @@ async function maybeAutoStranger() {
   } catch (e) {}
 }
 
+// ── 正文 swipe 回退：同一 message_id 第二次触发 = 玩家重roll了，先撤销上一版的钱包/衣橱变动再处理新标记 ──
+var _lastMainMsgId = null;
+var _lastMainEffects = { walletOps: [], closetAdds: [] };
+
 async function onMainMessage(message_id) {
   try {
     var msgs = await getChatMessages(String(message_id));
     if (!msgs || !msgs.length) return;
     var m = msgs[0];
     if (m.role !== 'assistant') return;
-    try { await maybeAutoStranger(); } catch (e) { console.warn('[SB-NYC v4] auto-stranger check failed', e); }
+    var msgIdStr = String(message_id);
+    var isSwipe = (_lastMainMsgId === msgIdStr);
+    if (!isSwipe) {
+      try { await maybeAutoStranger(); } catch (e) { console.warn('[SB-NYC v4] auto-stranger check failed', e); }
+    }
+    // ── swipe 检测：同一 message_id 第二次进来 = 玩家重新生成了，先回退上一版的财务影响 ──
+    if (isSwipe && (_lastMainEffects.walletOps.length || _lastMainEffects.closetAdds.length)) {
+      await updateVariablesWith(function (v) {
+        if (!v.sb) return v;
+        var w = v.sb.wallet;
+        // 回退钱包
+        for (var ri = 0; ri < _lastMainEffects.walletOps.length; ri++) {
+          var eff = _lastMainEffects.walletOps[ri];
+          if (w) {
+            w.balance = (w.balance || 0) + (eff.dir === '+' ? -eff.amount : eff.amount);
+            if (!w.transactions) w.transactions = [];
+            w.transactions.push({ direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime() });
+            if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+            if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
+            w.allTransactions.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime(), gameDay: (v.sb.game && v.sb.game.day) || 1 });
+            if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
+          }
+          // 清掉上一版留的去重锁，让新标记能正常入账
+          if (w && Array.isArray(w._dedup)) {
+            var dk = eff.dir + String(eff.amount);
+            w._dedup = w._dedup.filter(function (d) { return d.k !== dk; });
+          }
+        }
+        // 回退衣橱
+        for (var rj = 0; rj < _lastMainEffects.closetAdds.length; rj++) {
+          closetRemove(v.sb, _lastMainEffects.closetAdds[rj].name);
+          if (Array.isArray(v.sb._closetDedup)) {
+            var ck = String(_lastMainEffects.closetAdds[rj].name).toLowerCase().trim().slice(0, 30);
+            v.sb._closetDedup = v.sb._closetDedup.filter(function (d) { return d.k !== ck; });
+          }
+        }
+        return v;
+      }, { type: 'chat' });
+      try { if (typeof toastr !== 'undefined') toastr.info('↩️ 检测到正文重新生成，已回退上一版的钱包/衣橱变动', 'SugarOS'); } catch (e) {}
+      console.log('[SB-NYC v4] swipe rollback: wallet×' + _lastMainEffects.walletOps.length + ' closet×' + _lastMainEffects.closetAdds.length);
+    }
     var text = m.message || '';
+    // ── 论坛发帖检测（独立于标记处理）：正文描述 User 发帖 → 自动触发一批匹配 XP 的陌生人私信 ──
+    if (!isSwipe) {
+      try {
+        if (/(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(text)) {
+          var forumSnippet = text.slice(0, 800);
+          var forumN = 2 + Math.floor(Math.random() * 3);
+          eventEmit('sb_request_dm', {
+            reason: '论坛发帖后自动响应：User 刚在 SugarRank 论坛发了招聘/召集帖，生成 ' + forumN + ' 个全新陌生人来私信搭讪应聘。' +
+              '每个人的癖好/XP 必须匹配 User 帖子里写的偏好（从正文推断）。质量参差——有认真感兴趣的大鱼、有还行的、有一看就是 Splenda 或 Salt 的，给玩家挑选余地。' +
+              '不要让任何已有联系人出现。正文参考：' + forumSnippet,
+            n: String(forumN)
+          });
+          console.log('[SB-NYC v4] forum post detected → firing ' + forumN + ' auto-DMs');
+        }
+      } catch (e) { console.warn('[SB-NYC v4] forum detect failed', e); }
+    }
     // ① 钱包标记
     var re = new RegExp(WALLET_RE_SRC, 'g');
     var found = [], match;
@@ -1404,16 +1465,18 @@ async function onMainMessage(message_id) {
     var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // [TIME:14:30|4/16] 或 [TIME:14:30]
     var newTime = timeM ? timeM[1] : null;
     var newDate = (timeM && timeM[2]) ? timeM[2].trim() : null;
-    if (!found.length && !items.length && !newTime) return;
+    if (!found.length && !items.length && !newTime) { _lastMainMsgId = msgIdStr; _lastMainEffects = { walletOps: [], closetAdds: [] }; return; }
     var credited = [];   // 只有真入账的才进成功toast——被去重闸拦下的那笔有自己的⛔警告，别再报"已入账"
+    var addedCloset = [];
     await updateVariablesWith(function (v) {
       if (!v.sb) return v;
       credited.length = 0;
+      addedCloset.length = 0;
       for (var i = 0; i < found.length; i++) {
         if (found[i].amount === 0) continue;   // WALLET=0=他人买单，User 没花钱，跳过入账
         if (creditWallet(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', '正文')) credited.push(found[i]);
       }
-      for (var j = 0; j < items.length; j++) { if (items[j].dir === '-') closetRemove(v.sb, items[j].name); else closetAdd(v.sb, items[j].name, items[j].price || 0); }
+      for (var j = 0; j < items.length; j++) { if (items[j].dir === '-') closetRemove(v.sb, items[j].name); else { if (closetAdd(v.sb, items[j].name, items[j].price || 0)) addedCloset.push(items[j]); } }
       if (newTime) {
         if (!v.sb.game) v.sb.game = {};
         var g = v.sb.game;
@@ -1456,13 +1519,19 @@ async function onMainMessage(message_id) {
       }
       return v;
     }, { type: 'chat' });
+    // 记住本轮的财务影响，下次同 message_id 进来时回退这些
+    _lastMainMsgId = msgIdStr;
+    _lastMainEffects = {
+      walletOps: credited.map(function (f) { return { dir: f.dir, amount: f.amount }; }),
+      closetAdds: addedCloset.map(function (x) { return { name: x.name }; })
+    };
     var stripped = text.replace(new RegExp(WALLET_RE_SRC, 'g'), '').replace(new RegExp(CLOSET_RE_SRC, 'g'), '').replace(/\[TIME:[^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '');
     await setChatMessages([{ message_id: m.message_id, message: stripped }], { refresh: 'affected' });
     try { eventEmit('sb_updated'); } catch (e) {}
     try {
       var toast = [];
       if (credited.length) toast.push('💳 ' + credited.map(function (f) { return f.dir + '$' + f.amount.toLocaleString() + ' ' + f.note; }).join('，'));
-      var into = items.filter(function (x) { return x.dir === '+'; });
+      var into = addedCloset;
       if (into.length) toast.push('👗 入橱 ' + into.map(function (x) { return x.name; }).join('、'));
       if (toast.length && typeof toastr !== 'undefined') toastr.success(toast.join(' ｜ '), 'SugarOS');
     } catch (e) {}
