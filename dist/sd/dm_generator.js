@@ -2207,56 +2207,6 @@ var SEED_THREADS = [
     { who: 'THEM', content: '算了不逗你了 有个事问你 你是认真找长期的还是试试水？' },
   ] },
 ];
-// ── 开场表单 → 聊天世界书的一条绿灯条目（2026-08-01，User 拍板改成这个）──
-// 为什么不常驻注入：①每轮都发是白烧 token ②**这些设定会变**——他升职了、赚到钱了、
-// 名声洗白了，一条焊死的"他其实没钱"就会天天和剧情打架。
-// 绿灯条目的好处：提到他的时候才上车；而且**玩家自己能改**——情况变了就去世界书里改那一条，
-// 不用等作者发新版。所以条目里特意写了一句话告诉玩家这条能改。
-async function ensureUserProfileEntry() {
-  try {
-    var v = getVariables({ type: 'chat' }) || {};
-    var sb = v.sb;
-    if (!sb || !sb.profile) return;
-    if (sb._profileWb) return;                      // 只写一次；之后归玩家管
-    var p = sb.profile;
-    var uid = userIdentity();
-    var nm = (p.name_cn || p.name_en || uid.name || '').trim();
-    var bits = [];
-    if (nm) bits.push('名字：' + nm);
-    if (p.age) bits.push('年龄：' + p.age);
-    if (p.job) bits.push('职业：' + p.job);
-    if (p.income) bits.push('年收入：' + p.income);
-    if (p.marital_label) bits.push('婚姻：' + p.marital_label);
-    if (p.look) bits.push('外形：' + p.look);
-    if (p.tier_label) bits.push('成色：' + p.tier_label + '（没人会当面戳破，圈里的规矩是等他自己露馅）');
-    if (p.rep_label) bits.push('圈内名声：' + p.rep_label);
-    if (p.want) bits.push('他注册时写的「想找什么」：' + p.want);
-    if (!bits.length) return;
-    var content = '【User 的底细（他自己在平台上填的）】\n' + bits.join('\n') +
-      '\n\n（这些是开局时的状态，**不是铁律**：他升职、赚到钱、名声洗白了，就以正文里已经发生的为准。' +
-      '玩家想改直接编辑本条即可。）';
-    var keys = [];
-    if (nm) keys.push(nm);
-    keys = keys.concat(['他的底细', '他的来路', '他的身家', '他有没有钱', '他做什么的', '他结婚了吗']);
-    var wb = await getOrCreateChatWorldbook('current', await dossierBookName(nm || 'User'));
-    await deleteWorldbookEntries(wb, function (en) { return !!(en && en.extra && en.extra.sd_profile); });
-    await createWorldbookEntries(wb, [{
-      name: 'User 档案-' + (nm || '未具名'),
-      enabled: true,
-      strategy: { type: 'selective', keys: keys, keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
-      position: { type: 'before_character_definition', role: 'system', depth: 0, order: 90 },
-      content: content,
-      probability: 100,
-      recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-      effect: { sticky: null, cooldown: null, delay: null },
-      extra: { sd_profile: true },
-    }]);
-    await updateVariablesWith(function (vv) { if (vv.sb) vv.sb._profileWb = true; return vv; }, { type: 'chat' });
-    console.log('[SD-S v4] user profile worldbook entry written (绿灯) → ' + wb);
-    try { if (typeof toastr !== 'undefined') toastr.info('📖 你填的资料已存进世界书「' + wb + '」的「User 档案」条目——提到你时才激活，情况变了随时可以自己改', 'SugarOS'); } catch (e) {}
-  } catch (e) { console.warn('[SD-S v4] user profile entry failed', e); }
-}
-
 function seedDMs() {
   var p = updateVariablesWith(function (v) {
     if (!v.sb) v.sb = defaultState();
@@ -2904,7 +2854,7 @@ async function saveDossier(p) {
 eventOn('sb_request_dossier', handleDossier);
 eventOn('sb_save_dossier', saveDossier);
 
-eventOn('sb_seed_dm', function () { seedDMs(); setTimeout(ensureUserProfileEntry, 1200); });   // 种完开场私信顺手把 User 档案写成绿灯条目
+eventOn('sb_seed_dm', seedDMs);
 
 // 关掉脚本时撤掉注入主线的私信摘要：injectPrompts 不随脚本关闭消失，
 // 留着会让主线一直"记得"手机里的对话，玩家关了脚本却发现 AI 还知道，很出戏。
