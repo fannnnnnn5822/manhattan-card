@@ -31,7 +31,9 @@ var VOICES = {
 var RANDOM_NPC_GUIDE =
   '新陌生SB按公式现抽（自由组合，不要照抄示例）：[昵称/ID]+[外形关键词]+[性格2个混]+[入行原因]+[癖好0-1个]+[一个让人心软的细节+一个让人警惕的细节]\n' +
   '· **反扁平铁律**：性格必须抽两个混（单一性格=人机）；给每个人一个让人心软的细节和一个让人警惕的细节——两者可以是同一件事的两面\n' +
-'· **名字铁律·中文优先**：这是中国 S 市，不是纽约。昵称/ID/代号**一律以中文为主**——英文最多占十分之一，且只能是中国人真会用的那种混搭（QueenA / Vivi / 冰_ / L小姐），**绝不出现 Marco/David/Hudson/Ethan 这类纯外国人名**。金主的代号同理（陈总/方总/老周/眼镜哥/开保时捷那个），别给中国人起英文本名。\n' +
+'· **称呼铁律·各叫各的**：每个女孩怎么称呼 User，由**她自己的人设**决定，绝不全场统一成同一个词。清纯型可能叫「叔叔」，职业型直呼名字或「先生」，撒娇型「哥哥~」，拜金直球型连称呼都懒得给直接说事，杀猪盘会挑最能拉近距离的叫法而且换着叫。同一个人前后一致（这是她的声音指纹之一），不同的人之间必须听得出差别。\n' +
+  '· **逆向 sugar（约5%低频，别每轮都来）**：偶尔来一个**钱从她那边出**的女金主——离异富太（只要人陪，随叫随到）／女老板（把他当项目，一切都有报价单）／年下富家女（觉得养个叔叔很好玩，当众转账看他脸红）／同行女金主（她也在养男孩，笑你被宰顺手转你一笔）。转账写 [WALLET:+金额]。⚠️ 爽点是**他头一次坐到桌子的另一边**——被安排、被点评、被人用他自己那套话术对待，不是他捡了便宜。别写成爽文，他可以享受也可以不适应。\n' +
+  '· **名字铁律·中文优先**：这是中国 S 市，不是纽约。昵称/ID/代号**一律以中文为主**——英文最多占十分之一，且只能是中国人真会用的那种混搭（QueenA / Vivi / 冰_ / L小姐），**绝不出现 Marco/David/Hudson/Ethan 这类纯外国人名**。金主的代号同理（陈总/方总/老周/眼镜哥/开保时捷那个），别给中国人起英文本名。\n' +
   '· ID风格：清纯型(念念_不忘/小鹿_大三/栀子花开/第一次好紧张🥺/学费还差两万) / 职业型(冰_/QueenA/别浪费我时间/看心情接单) / ' +
   '撒娇型(你的小猫咪🥺/想被哥哥宠/甜甜圈_只吃贵的/哥哥带我去吃好吃的嘛💕) / 直球型(别跟我谈感情/ATM请对号入座/先转再说)\n' +
   '· 原型：清纯新人(真假参半) / 职业顶级(服务好底线高贵得理直气壮) / 撒娇大师(emoji三倍密度) / 拜金直球(反而最诚实) / ' +
@@ -504,10 +506,6 @@ function describeState(sb) {
   if (uid.name) lines.push('名字: ' + uid.name);
   if (uid.persona) lines.push('玩家写的人设（这是关于他的唯一可信设定，别自己另编一套）:\n' + uid.persona.slice(0, 1200));
   if (p.look) lines.push('外形: ' + p.look);
-  if (!uid.name && !uid.persona && !p.look) {
-    lines.push('（玩家没有填人设——他的长相、来历、职业都还没定。**不要替他编一个**：'
-      + '需要具体细节时只从主线正文里已经写过的描写里取，没写过就留白。）');
-  }
   // 称呼：没给名字时 LLM 会自己现编一个（实测出现过）——正面给出该怎么叫，比列禁令管用
   lines.push(uid.name
     ? '【怎么称呼他】她叫「' + uid.name + '」，名字以这个为准。称呼按各人的关系、段位和人设挑：'
@@ -1479,7 +1477,7 @@ function buildDigest(sb) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
   }
   if (closet.length) {
-    out += '【User 的衣橱（她真实拥有的，出场/赴约时会自然穿戴使用，别人看得见的是"东西在她身上"，不是价格和来路）】' + closet.join('、') + '\n';
+    out += '【User 送出去的礼物（他买给她们的，收礼的人会戴着/用着出现，别人看得见的是"东西在她身上"，不是价格和来路）】' + closet.join('、') + '\n';
   }
   var schD = (sb.schedule || []).filter(function (s) { return !s.done; }).slice(-8).map(function (s) {
     var label = s.academic ? '📚' : '📅';
@@ -1498,9 +1496,9 @@ function buildDigest(sb) {
   // 江湖地位：Akuma 刷论坛 → 榜单是她唯一能名正言顺"看到" User 身家的窗口（信息通路）
   var st = akumaStanding(sb);
   if (st.over) {
-    out += '【江湖地位·SugarSecret 捞金榜】User 现在排在 Akuma 之上——她常年霸榜，这是头一遭被一个新金主压过去。Akuma 是论坛人气王、每层楼都刷，这事她一定看到了。她的反应三重同时上演、连她自己都分不清哪个是真：面上狂发彩虹屁道贺（"我宝贝女大了🥺杀疯了"），暗地里较着劲想赢回来（把 User 引去啃硬骨头 / 自己闷声搞钱），偶尔漏一句真心又秒收。正文里她出场就按这个演，别写成单纯的恭喜或单纯的嫉妒。\n';
+    out += '【江湖地位·SugarSecret 慷慨榜】User 这个月的出手已经压过 Akuma 手里那几个金主——Akuma 是论坛人气王、每层楼都刷，这事她一定看到了。她的反应三重同时上演、连她自己都分不清哪个是真：面上把他捧成圈内新贵（顺便让所有人都知道他能掏），暗地里想验一验这钱撑不撑得久（介绍最难搞的那个给他 / 或者自己下场试试他的底），偶尔漏一句真心的欣赏又秒收。正文里她出场就按这个演，别写成单纯的恭维或单纯的算计。\n';
   } else if (st.close) {
-    out += '【江湖地位·SugarSecret 捞金榜】User 紧咬着榜首的 Akuma，差一口气就超过闺蜜了。Akuma 隐隐感到威胁——嘴上还是姐妹情深，暗地里已经开始不着痕迹地加码。\n';
+    out += '【江湖地位·SugarSecret 慷慨榜】User 的出手快追上 Akuma 手里那几个常客了。她开始留意这个名字——嘴上还是场面话，暗地里已经在盘算他值不值得下注。\n';
   }
   out += '（铁律：正文只写散文，绝不复述、排版或重写这些内容。上面私信里出现过的转账都**已经自动入账**，正文绝不再写 [WALLET] 标记重复记这些钱。信息隔离：每个人只记得自己和 User 的那段私信；' +
     '任何角色都看不到 User 的手机——不知道他的余额、购物记录、论坛、以及他和别人的聊天，绝不提及、绝不影射。' +
@@ -2209,6 +2207,56 @@ var SEED_THREADS = [
     { who: 'THEM', content: '算了不逗你了 有个事问你 你是认真找长期的还是试试水？' },
   ] },
 ];
+// ── 开场表单 → 聊天世界书的一条绿灯条目（2026-08-01，User 拍板改成这个）──
+// 为什么不常驻注入：①每轮都发是白烧 token ②**这些设定会变**——他升职了、赚到钱了、
+// 名声洗白了，一条焊死的"他其实没钱"就会天天和剧情打架。
+// 绿灯条目的好处：提到他的时候才上车；而且**玩家自己能改**——情况变了就去世界书里改那一条，
+// 不用等作者发新版。所以条目里特意写了一句话告诉玩家这条能改。
+async function ensureUserProfileEntry() {
+  try {
+    var v = getVariables({ type: 'chat' }) || {};
+    var sb = v.sb;
+    if (!sb || !sb.profile) return;
+    if (sb._profileWb) return;                      // 只写一次；之后归玩家管
+    var p = sb.profile;
+    var uid = userIdentity();
+    var nm = (p.name_cn || p.name_en || uid.name || '').trim();
+    var bits = [];
+    if (nm) bits.push('名字：' + nm);
+    if (p.age) bits.push('年龄：' + p.age);
+    if (p.job) bits.push('职业：' + p.job);
+    if (p.income) bits.push('年收入：' + p.income);
+    if (p.marital_label) bits.push('婚姻：' + p.marital_label);
+    if (p.look) bits.push('外形：' + p.look);
+    if (p.tier_label) bits.push('成色：' + p.tier_label + '（没人会当面戳破，圈里的规矩是等他自己露馅）');
+    if (p.rep_label) bits.push('圈内名声：' + p.rep_label);
+    if (p.want) bits.push('他注册时写的「想找什么」：' + p.want);
+    if (!bits.length) return;
+    var content = '【User 的底细（他自己在平台上填的）】\n' + bits.join('\n') +
+      '\n\n（这些是开局时的状态，**不是铁律**：他升职、赚到钱、名声洗白了，就以正文里已经发生的为准。' +
+      '玩家想改直接编辑本条即可。）';
+    var keys = [];
+    if (nm) keys.push(nm);
+    keys = keys.concat(['他的底细', '他的来路', '他的身家', '他有没有钱', '他做什么的', '他结婚了吗']);
+    var wb = await getOrCreateChatWorldbook('current', await dossierBookName(nm || 'User'));
+    await deleteWorldbookEntries(wb, function (en) { return !!(en && en.extra && en.extra.sd_profile); });
+    await createWorldbookEntries(wb, [{
+      name: 'User 档案-' + (nm || '未具名'),
+      enabled: true,
+      strategy: { type: 'selective', keys: keys, keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
+      position: { type: 'before_character_definition', role: 'system', depth: 0, order: 90 },
+      content: content,
+      probability: 100,
+      recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+      effect: { sticky: null, cooldown: null, delay: null },
+      extra: { sd_profile: true },
+    }]);
+    await updateVariablesWith(function (vv) { if (vv.sb) vv.sb._profileWb = true; return vv; }, { type: 'chat' });
+    console.log('[SD-S v4] user profile worldbook entry written (绿灯) → ' + wb);
+    try { if (typeof toastr !== 'undefined') toastr.info('📖 你填的资料已存进世界书「' + wb + '」的「User 档案」条目——提到你时才激活，情况变了随时可以自己改', 'SugarOS'); } catch (e) {}
+  } catch (e) { console.warn('[SD-S v4] user profile entry failed', e); }
+}
+
 function seedDMs() {
   var p = updateVariablesWith(function (v) {
     if (!v.sb) v.sb = defaultState();
@@ -2435,6 +2483,29 @@ var DISTILL_OUTPUT = [
     '  warnings: 字符串数组，没有就 []',
 ];
 
+// 建档/旧识写出去的世界书叫什么名字（玩家在世界书列表里靠它认人）。
+// 规矩：**前缀和卡自带的世界书完全一样** → 两本在列表里紧挨着排，一眼看出是同一张卡的东西；
+// 然后是「旧识」、这个人的名字、日期。前缀不写死：读卡绑的那本书的名字、去掉尾巴上的版本号，
+// 以后改卡名/改版本，这里自动跟着变，不会再对不上。
+// ⚠️ 一个聊天只能绑一本世界书，所以名字里的 NPC 是**第一个被建档的人**；
+//    后面再建档的人进同一本，靠条目名（旧识-XX / 档案-XX）区分——存完的 toast 会告诉玩家进了哪本。
+async function dossierBookName(npcName) {
+  var prefix = '';
+  try {
+    var names = await getCharWorldbookNames('current');
+    var primary = names && names.primary;
+    // 去掉 " · World 1.1.6" / " World 0.1.0" 这类版本尾巴，只留可读的卡世界名
+    if (primary) prefix = String(primary).replace(/\s*·?\s*World\s*[\d.]+\s*$/i, '').trim();
+  } catch (e) {}
+  if (!prefix) prefix = '一掷千金';   // 兜底：拉不到就用卡的世界名，总比拿时间戳当书名强
+  var stamp = '';
+  try {
+    var d = new Date();
+    stamp = (d.getMonth() + 1) + '/' + d.getDate();
+  } catch (e2) {}
+  return (prefix + ' · 旧识 · ' + String(npcName || '').slice(0, 20) + (stamp ? ' · ' + stamp : '')).slice(0, 80);
+}
+
 async function handleImport(p) {
   var wbName = String((p && p.worldbook) || '').trim();
   var charName = String((p && p.name) || '').trim().slice(0, 24);
@@ -2555,9 +2626,7 @@ async function handleImport(p) {
     //    （2026-07-16 Fan 实测"世界书没有新条目"＝条目在，但藏在时间戳名的书里）。带上聊天文件名=每局一本、互不串。
     // 写失败不挡导入——手机侧靠npc记录照常工作，但必须出声（铁律）。成功也要出声：告诉玩家写进了哪本书。
     try {
-      var wbTitle = '纸醉金迷 · 旧识';
-      try { var cd = await getCharData('current'); if (cd && cd.chat) wbTitle += ' · ' + String(cd.chat).slice(0, 40); } catch (eN) {}
-      var chatWb = await getOrCreateChatWorldbook('current', wbTitle);
+      var chatWb = await getOrCreateChatWorldbook('current', await dossierBookName(name));
       await deleteWorldbookEntries(chatWb, function (en) { return !!(en && en.extra && en.extra.sb_import === name); });   // 二次导入=旧条目先拆
       await createWorldbookEntries(chatWb, [{
         name: '旧识-' + name,
@@ -2791,9 +2860,7 @@ async function saveDossier(p) {
   var draft = npc && npc._draft;
   if (!draft || !draft.dossier) { try { if (typeof toastr !== 'undefined') toastr.warning('这份档案已经过期了，让 S. 再查一次', 'SugarOS'); } catch (e) {} return; }
   try {
-    var wbTitle = '一掷千金 · 旧识';
-    try { var cd = await getCharData('current'); if (cd && cd.chat) wbTitle += ' · ' + String(cd.chat).slice(0, 40); } catch (eN) {}
-    var chatWb = await getOrCreateChatWorldbook('current', wbTitle);
+    var chatWb = await getOrCreateChatWorldbook('current', await dossierBookName(name));
     await deleteWorldbookEntries(chatWb, function (en) { return !!(en && en.extra && en.extra.sb_dossier === name); });
     await createWorldbookEntries(chatWb, [{
       name: '档案-' + name,
@@ -2837,7 +2904,7 @@ async function saveDossier(p) {
 eventOn('sb_request_dossier', handleDossier);
 eventOn('sb_save_dossier', saveDossier);
 
-eventOn('sb_seed_dm', seedDMs);
+eventOn('sb_seed_dm', function () { seedDMs(); setTimeout(ensureUserProfileEntry, 1200); });   // 种完开场私信顺手把 User 档案写成绿灯条目
 
 // 关掉脚本时撤掉注入主线的私信摘要：injectPrompts 不随脚本关闭消失，
 // 留着会让主线一直"记得"手机里的对话，玩家关了脚本却发现 AI 还知道，很出戏。
