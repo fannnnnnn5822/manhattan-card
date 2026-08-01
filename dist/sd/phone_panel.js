@@ -2997,6 +2997,14 @@
     // 新交互：回车=攒消息（可连打几条），发送键=让 TA 回复（学两个用户的建议，统一简单）
     // queueMsg 只把消息记下+显示，不触发生成；replyOne(发送键)才让这个人一次性回应攒的全部
     function queueMsg(txt, mtype, extra) {   // extra：调用方塞额外字段（如 imgUrl），不改原有调用（UWU）
+      // ⚠️ 带 txt 调用时（转账/照片/语音/定位/生图这些），输入框里玩家可能**已经打好了一句话**。
+      // 老写法下面会无条件 input.value=''，那句话连同它的意思一起被吞掉——
+      // 玩家转了100又说"拍张照"，发给 AI 的只剩"转账100"，TA永远不知道要拍照（玩家报的 bug，2026-08-01）。
+      // 所以：先把输入框里那句当普通消息攒进去，再攒这条特殊消息，顺序和玩家打字的顺序一致。
+      if (txt) {
+        var pend = input.value.trim();
+        if (pend) { input.value = ''; queueMsg(pend, 'text'); }
+      }
       var text = txt || input.value.trim(); if (!text) return;
       var t = nowT(); var ty = mtype || 'text';
       var gDay = (state && state.game && state.game.day) || 1;
