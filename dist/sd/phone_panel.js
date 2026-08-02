@@ -1185,18 +1185,27 @@
     if (!force && _exps && Date.now() - _expsAt < 10 * 60 * 1000) return;
     _expsAt = Date.now();
     try {
-      var rows = await srvFetch('sb_experiences_classic?active=eq.true&order=created_at.desc&limit=40');
+      var rows = await srvFetch('sd_experiences?active=eq.true&order=created_at.desc&limit=40');
       if (Array.isArray(rows)) { _exps = rows; console.log('[SD-S v4] experiences: ' + rows.length); }
     } catch (e) { console.warn('[SD-S v4] experiences fetch failed', e); }
   }
   // 服务器空/离线时的内置兜底（三条，保证功能永远能演示）——字段和服务器表一致
+  // 兜底体验池（服务器还没到货时用这几条）。⚠️ 全部是**金主视角**：他是掏钱和安排的那个人。
+  // 女性向那份的种子写的是"这是谁安排的、他为什么不亲自来"——被安排的人的视角，这张卡里整个反过来。
+  // 每条留了"一个人去 / 带谁去"两种可能：带人是给她看，一个人去是给自己看，两种都有戏。
   var EXP_FALLBACK = [
-    { id: 'f1', title: '直升机送你去东极岛看日出', location: 'S市 → 东极岛', price: 45000, image_url: '',
-      blurb: '天没亮就出发，螺旋桨声盖过一切', seed: '清晨四点，一辆车在楼下等，司机只说了句“先生安排好了”。直升机从市区直飞东极岛，你在两千米高空看太阳从东海里爬出来。落地后海边早餐已经摆好，没有别人。写这段：出发的黑暗、升空时城市在脚下缩小、日出砸进海面的那一刻、以及这是谁安排的、他为什么不亲自来。' },
-    { id: 'f2', title: '安缦私人 Spa 闭店包场一夜', location: '养云安缦', price: 30000, image_url: '',
-      blurb: '整层楼今晚只为你一个人开灯', seed: '整个安缦的 spa 层今晚闭店，只留给你一个人。古樟树影、九十分钟的四手按摩、温泉池上方是一整片没有光污染的夜空。芳疗师退下后，只剩水声。写这段：空无一人的奢华、身体一寸寸被松开的过程、独处时浮上来的念头、这份安排背后没说出口的意思。' },
-    { id: 'f3', title: '闭馆后的博物馆私人导览', location: '市博物馆', price: 55000, image_url: '',
-      blurb: '五点闭馆，五点半这里只有你和一位策展人', seed: '博物馆闭馆后，为你一个人开灯。一位策展人带你穿过空无一人的展厅，在一件平时隔着三层人头才看得到的东西前停下，讲了四十分钟。脚步声在大厅里回响。写这段：空馆的寂静、被单独讲解的那种被珍视感、她伸手却不能碰的那一下、以及买下这一晚的人为什么没来。' },
+    { id: 'sd1', title: '直升机送她去东极岛看日出', location: 'S市 → 东极岛', price: 45000, image_url: '',
+      blurb: '你订的位置，你不一定在上面', seed: '清晨四点，车在楼下等。直升机从市区直飞东极岛，两千米高空看太阳从东海里爬出来，落地后海边早餐已经摆好。写这段：他是订这一切的人——看她第一次坐直升机时抓紧扶手的样子、她拍照发朋友圈时挡住脸的角度、以及他自己在这趟里到底想看到什么。（如果他选择不去、只是把行程发给她，就写他在城里那个早晨怎么过的。）' },
+    { id: 'sd2', title: '安缦闭店包场一夜', location: '养云安缦', price: 30000, image_url: '',
+      blurb: '整层今晚只为两个人开灯', seed: '安缦的 spa 层今晚闭店。古樟树影、四手按摩、温泉池上方是没有光污染的夜空。写这段：他为什么订这里（道歉？奖励？还是就想安静一晚）、她进门时的第一反应、两个人泡在水里没话说的那几分钟、以及谁先开的口。' },
+    { id: 'sd3', title: '米其林三星整店包场', location: '外滩某法餐', price: 68000, image_url: '',
+      blurb: '一整间餐厅，两个人，八道菜', seed: '整间餐厅今晚只有一桌。主厨出来问过一次口味，之后再没人打扰。写这段：空荡的餐厅里说话会有回声、她一开始拘谨后来放开、他看着她吃第三道菜时在想什么、以及包场这件事她懂不懂、懂了之后态度有没有变。' },
+    { id: 'sd4', title: '拍卖行预展 · 带她去看不打算买的东西', location: '嘉里中心拍卖预展', price: 0, image_url: '',
+      blurb: '不花钱，但比花钱更能说明问题', seed: '拍卖预展，进场不要钱。他带她去看那些七位数的东西——不是要买，是想看她的反应。写这段：她在哪件东西前停下来了、她有没有装懂、他有没有告诉她真实价格、以及走出来之后两个人各自在想什么。' },
+    { id: 'sd5', title: '包一天试驾 · 山路', location: '莫干山', price: 12000, image_url: '',
+      blurb: '两辆车，一条山路，一整天', seed: '租一天的车和一段封闭山路。写这段：他开她坐、还是让她开（她敢不敢）、副驾上的人怕不怕、中途停车抽烟那十分钟说了什么、以及一整天下来他有没有得到他想要的那个东西。' },
+    { id: 'sd6', title: '一个人订的位子 · 江边居酒屋', location: '外滩源', price: 800, image_url: '',
+      blurb: '八百块，没有别人', seed: '他一个人来的，位子是提前一周订的。写这段：他为什么没叫任何人、手机在桌上亮了几次他都没翻、老板认得他、以及他在这里坐到几点、想的是谁。（这条不便宜也不奢华，但它是这个圈子里最少见的一种消费：给自己的。）' },
   ];
   // 已体验过的行程要从橱窗消失（按 id 记本地，和 seenLux 同理）
   function seenExp() { try { var r = VIEW.localStorage.getItem('sbnyc_exp_seen'); return r ? JSON.parse(r) : []; } catch (e) { return []; } }
@@ -1397,12 +1406,21 @@
   function purchase(name, price, channel, img, forceExp) {
     var exp = forceExp || isExperience(name);
     var ok = true;
-    try { ok = (DOC.defaultView || window).confirm((price > 0 ? '花 ' + fmtCNY(price) + ' ' : '') + '拿下「' + name + '」？' + (exp ? '\n（付款后填进正文输入框，补充细节发送，AI 接着写这段体验）' : '\n（付款后直接入衣橱）')); } catch (e) {}
+    // 这张卡买东西默认是**买给她**（不是入自己的衣橱）——下单前问一句送给谁，记进送礼账
+    try { ok = (DOC.defaultView || window).confirm((price > 0 ? '花 ' + fmtCNY(price) + ' ' : '') + '拿下「' + name + '」？' + (exp ? '\n（付款后填进正文输入框，补充细节发送，AI 接着写这段体验）' : '\n（下一步选送给谁；也可以留空＝先买着，回头再想给谁）')); } catch (e) {}
     if (!ok) return;
     if (price > 0 && !debit(price, name, channel)) return;
     if (!exp) {
-      addCloset({ name: name, price: price, from: channel, img: img || '', time: nowT() });
-      toast('success', '👗 ' + name + ' 已入衣橱' + (price > 0 ? '（-' + fmtCNY(price) + '）' : ''));
+      pickContact(function (who) {
+        addCloset({ name: name, price: price, to: who || '', from: channel, img: img || '', time: nowT(), gameDay: (state && state.game && state.game.day) || 1 });
+        toast('success', '🎁 ' + name + (who ? ' → 送给 ' + who : '（还没定给谁）') + (price > 0 ? '（-' + fmtCNY(price) + '）' : ''));
+        SBemit('sb_updated');
+      }, {
+        title: '这件送给谁？（点「✕ 算了」＝先买着，回头再定）',
+        limit: 20,
+        filter: function (np) { return np && np.unlocked !== false && !(np.name === 'SugarElite™'); },
+        empty: '通讯录里还没人——先买着，回头再送',
+      });
     } else if (price > 0) {
       toast('success', '💳 -' + fmtCNY(price) + ' ' + name);
     }
@@ -1424,7 +1442,7 @@
     markExpSeen(String(exp.id));   // 体验过 → 从橱窗消失
     toast('success', '✨ 体验已开启 · ' + (price > 0 ? '-' + fmtCNY(price) : '免费'));
     SBemit('sb_updated');
-    // 注入输入框（不代发）：留一个"和谁去"的空让玩家自己填——单独去/带某个金主/带闺蜜都行
+    // 注入输入框（不代发）：留一个"和谁去"的空让玩家自己填——带某个 SB / 带朋友 / 一个人去都行
     var head = '【开启预订体验】' + exp.title + (exp.location ? '（' + exp.location + '）' : '') + (price > 0 ? '，' + fmtCNY(price) + ' 已付' : '') + '。我打算和【　　】一起去（不想带人就删掉这句，写你想怎么开始）。';
     var seed = exp.seed ? ('\n' + exp.seed) : '';
     fillMainInput(head + seed);
@@ -2185,8 +2203,8 @@
       // 犒赏自己：服务器橱窗池抽3件（真图真货真当季，User当全服买手）；大额到账后价位贴着到账数字挑
       var treats = pickTreats(3);
       if (treats.length) {
-        h += '<div class="sb-sec">Treat Yourself · 犒赏自己</div>';
-        if (_windfall > 0) h += '<div class="sb-empty" style="padding:2px 16px 8px;">S.: 刚到账 ' + fmtCNY(_windfall) + '。今天值得。</div>';
+        h += '<div class="sb-sec">For Her · 买给她</div>';
+        if (_windfall > 0) h += '<div class="sb-empty" style="padding:2px 16px 8px;">S.: 刚到账 ' + fmtCNY(_windfall) + '。有人今晚会很高兴。</div>';
         for (i = 0; i < treats.length; i++) {
           g = treats[i];
           var luxName = (g.brand ? g.brand + ' ' : '') + (g.name || '');
