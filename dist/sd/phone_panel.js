@@ -3003,7 +3003,8 @@
       // 所以：先把输入框里那句当普通消息攒进去，再攒这条特殊消息，顺序和玩家打字的顺序一致。
       if (txt) {
         var pend = input.value.trim();
-        if (pend) { input.value = ''; queueMsg(pend, 'text'); }
+        // pend === txt 说明调用方传的就是输入框里那句本身（sendReply 就是这么干的）→ 再排一遍就发两条重样的
+        if (pend && pend !== String(txt)) { input.value = ''; queueMsg(pend, 'text'); }
       }
       var text = txt || input.value.trim(); if (!text) return;
       var t = nowT(); var ty = mtype || 'text';
@@ -3046,7 +3047,7 @@
     // 「发送」键：先把输入框里没发的也攒进去，再让这个人一次性回复攒的全部
     function sendReply() {
       var typed = input.value.trim();
-      if (typed) queueMsg(typed, 'text');
+      if (typed) { input.value = ''; queueMsg(typed, 'text'); }   // 先清空再排——不清的话上面那道守卫会把同一句再排一遍
       replyOne(name);
     }
     sendBtn.addEventListener('click', sendReply);
