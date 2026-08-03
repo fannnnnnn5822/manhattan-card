@@ -612,7 +612,8 @@
     '#sbnyc-panel .sb-post b{font-family:var(--font-cn);font-size:13px;color:var(--ink);display:block;margin-bottom:3px;font-weight:500;}',
     '#sbnyc-panel .sb-post .pb{font-size:12px;color:var(--ink-sub);line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;}',
     '#sbnyc-panel .sb-post .pm{font-size:10px;color:var(--ink-faint);margin-top:6px;font-family:var(--font-en);letter-spacing:1px;}',
-    // 💬 我的自荐帖评论区：一楼一条，@昵称 金色
+    '#sbnyc-panel .sb-post .pimg{display:block;max-width:100%;border-radius:10px;margin-top:8px;border:.5px solid var(--line);}',
+    // 💬 我的招聘帖评论区：一楼一条，@昵称 金色
     '#sbnyc-panel .sb-cmt{margin-top:7px;padding:7px 10px;background:var(--paper-3);border-radius:10px;font-size:11.5px;color:var(--ink-sub);line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}',
     '#sbnyc-panel .sb-cmt b{color:var(--gold);font-weight:600;margin-right:6px;font-family:var(--font-en);}',
     '#sbnyc-panel .sb-cmt-pull{margin-top:8px;text-align:center;font-size:10px;color:var(--gold);cursor:pointer;letter-spacing:1px;border:.5px dashed var(--gold);border-radius:999px;padding:4px 10px;opacity:.8;user-select:none;}',
@@ -1177,7 +1178,7 @@
       if (Array.isArray(rows)) { _pool = rows; console.log('[SD-S v4] lux pool: ' + rows.length + ' items'); }
     } catch (e) { console.warn('[SD-S v4] lux pool fetch failed', e); }
   }
-  // ── 奢华体验橱窗（服务器 sb_experiences 表，作者亲自填剧本种子）──
+  // ── 奢华体验橱窗（服务器 sd_experiences 表，作者亲自填剧本种子）──
   // 和 lux_drops 同为漂流瓶制：作者往表里写体验，玩家在 Elite 页捞到、下单、点开始 → 把作者写的 seed 注入正文，主线AI对着写整段旅程
   var _exps = null, _expsAt = 0;
   async function fetchExperiences(force) {
@@ -1255,14 +1256,27 @@
       }
     } catch (e) { console.warn('[SD-S v4] rank fetch failed', e); }
   }
-  // 全服姐妹楼（sb_posts 表，动森论坛同款零后端）：楼主帖 + 回帖(parent_id)，读匿名，写用马甲
+  // 全服姐妹楼（sd_posts 表，动森论坛同款零后端）：楼主帖 + 回帖(parent_id)，读匿名，写用马甲
   var _gposts = null, _gpostsAt = 0;
+  // 👑 官方帖（Akuma 发自拍这种）：sb_config.sd_akuma_post 指认哪一楼是官方的，值是 {"id":楼层id,"img":"图片url"}。
+  // 为什么用 config 表指认而不是认马甲/token：sd_posts 公开可写、token 对全体客户端可见，马甲和 token 谁都能抄着冒充——
+  // 而 sb_config 玩家没有写权限，指认权只在后台。图片 url 也只从这里来，绝不渲染玩家行里的 url（那是给全服开注入口子）。
+  // 没配这行 = 没有官方帖，一切照旧；换帖/换图只改 config，不用发脚本新版。
+  var _akOfficial = null, _akTried = false;
+  async function fetchOfficialPost() {
+    if (_akTried) return; _akTried = true;
+    try {
+      var rows = await srvFetch('sb_config?key=eq.sd_akuma_post&select=value');
+      if (rows && rows[0] && rows[0].value) _akOfficial = JSON.parse(rows[0].value);
+    } catch (e) { console.warn('[SD-S v4] official post cfg fetch failed（没配/联机关了都正常）', e); }
+  }
   async function fetchGlobalPosts(force) {
     if (onlineCfg().off) return;
     // 节流 20s：够短=每次开楼基本都拉到最新（原本 5min，别人发的新帖要等五分钟才看得见）；
     // 又必须 >0=拉完会回调 openBoard('gossip')，而 openBoard 又调本函数，节流就是这条回环唯一的刹车。别改成 force。
     if (!force && _gposts && Date.now() - _gpostsAt < 20 * 1000) return;
     _gpostsAt = Date.now();
+    await fetchOfficialPost();   // 只真正拉一次（_akTried），之后是空调用；放 posts 前=首屏就带认证标
     try {
       var rows = await srvFetch('sd_posts?order=created_at.desc&limit=200');   // 楼太热，60条只够顶楼10个瓜（Akuma的帖被顶没了群众有意见）
       if (Array.isArray(rows)) {
@@ -1284,7 +1298,9 @@
       var rH = '';
       for (var j = reps.length - 1; j >= 0; j--) rH += '<div class="sb-cmt"><b>@' + esc(reps[j].handle || '???') + '</b>' + esc(reps[j].content || '') + '</div>';
       rH += '<div class="sb-cmt-pull sb-greply" data-gid="' + p.id + '">💬 回一句</div>';
-      h += '<div class="sb-post"><b>🌍 @' + esc(p.handle || '???') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div><div class="pm">全服真人 · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
+      var ofc = (_akOfficial && p.id === _akOfficial.id) ? _akOfficial : null;   // 这一楼被后台指认为官方帖
+      var imgH = (ofc && ofc.img) ? '<img class="pimg" src="' + esc(ofc.img) + '" alt="" loading="lazy">' : '';
+      h += '<div class="sb-post"><b>' + (ofc ? '👑' : '🌍') + ' @' + esc(p.handle || '???') + (ofc ? ' <span style="color:var(--gold);">✔ 官方认证</span>' : '') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div>' + imgH + '<div class="pm">' + (ofc ? '本人 · 认证帖' : '全服真人') + ' · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
     }
     return h;
   }
@@ -1541,7 +1557,7 @@
       ['gossip', '☕', 'Community Gossip', '圈内八卦 · 避雷 · 吃瓜'],
       ['trend', '📈', '本季 Trend', '姐妹们在晒什么 · 种草即拔草'],
       ['abyss', '🕳️', '深渊区', '里 BBS · 不要问，问就是不知道'],
-      ['recruit', '📋', '招聘版', 'SB/SD 互招 · 发帖自荐，会有人私信你'],
+      ['recruit', '📋', '招聘版', 'SB/SD 互招 · 发帖招人，会有人私信你'],
     ];
     for (var i = 0; i < boards.length; i++) {
       var b = boards[i];
@@ -1641,7 +1657,7 @@
       }
     } else if (key === 'recruit') {
       title = '📋 招聘版'; sub = 'SB/SD 互招 · 挂个牌，等人上钩';
-      body += '<div style="display:flex;margin:0 12px 10px;"><button class="sb-abtn" id="sbnyc-recruit-post" style="flex:1;">✍️ 发帖自荐（挂出去，等人私信你）</button></div>';
+      body += '<div style="display:flex;margin:0 12px 10px;"><button class="sb-abtn" id="sbnyc-recruit-post" style="flex:1;">✍️ 发招聘帖（挂出去，等人来应聘）</button></div>';
       var mine = (state && state.myAds) || [];
       for (var rm = mine.length - 1; rm >= 0; rm--) {
         var ad = mine[rm];
@@ -1650,7 +1666,7 @@
         for (var cj = 0; cj < cms.length; cj++) cH += '<div class="sb-cmt"><b>@' + esc(cms[cj].n) + '</b>' + esc(cms[cj].t) + '</div>';
         // 💬 拉评论：没评论=引一波围观；有了=再钓一波新的（每次都是现生成，不会重复老梗）
         cH += '<div class="sb-cmt-pull" data-ts="' + ad.ts + '">💬 ' + (cms.length ? '再钓一波评论' : '引一波围观') + '</div>';
-        body += '<div class="sb-post" style="border-color:var(--gold);"><b>🌸 我的自荐帖</b><div class="pb">' + esc(ad.text) + '</div><div class="pm">@你 · 已挂出 · ' + (cms.length ? cms.length + ' 条评论' : '等有缘人私信') + ' · <span class="sb-addel" data-ts="' + ad.ts + '" style="cursor:pointer;color:var(--red);">🗑 删帖</span></div>' + cH + '</div>';
+        body += '<div class="sb-post" style="border-color:var(--gold);"><b>💼 我的招聘帖</b><div class="pb">' + esc(ad.text) + '</div><div class="pm">@你 · 已挂出 · ' + (cms.length ? cms.length + ' 条评论' : '等人来应聘') + ' · <span class="sb-addel" data-ts="' + ad.ts + '" style="cursor:pointer;color:var(--red);">🗑 删帖</span></div>' + cH + '</div>';
       }
       var l6 = mag.recruit || [];
       for (var i6 = 0; i6 < l6.length; i6++) {
@@ -1676,7 +1692,7 @@
     if (rpost) rpost.addEventListener('click', openRecruitCompose);
     var gpost = chatEl.querySelector('#sbnyc-gossip-post');
     if (gpost) gpost.addEventListener('click', openGossipCompose);
-    // 💬 拉评论按钮（我的自荐帖下面；:not 把八卦版和全服楼的同类按钮让出去，各归各的处理器）
+    // 💬 拉评论按钮（我的招聘帖下面；:not 把八卦版和全服楼的同类按钮让出去，各归各的处理器）
     var pulls = chatEl.querySelectorAll('.sb-cmt-pull:not(.sb-apply):not(.sb-gpull):not(.sb-greply)');
     for (var pk = 0; pk < pulls.length; pk++) {
       (function (b) {
@@ -1727,7 +1743,7 @@
         });
       })(pdels[pd]);
     }
-    // 🗑 删我的自荐帖
+    // 🗑 删我的招聘帖
     var adels = chatEl.querySelectorAll('.sb-addel');
     for (var ad2 = 0; ad2 < adels.length; ad2++) {
       (function (b) {
@@ -1738,7 +1754,7 @@
             return v;
           });
           if (state && Array.isArray(state.myAds)) state.myAds = state.myAds.filter(function (p) { return p.ts !== ts; });
-          toast('info', '🗑 自荐帖已撤下');
+          toast('info', '🗑 招聘帖已撤下');
           SBemit('sb_updated');
           openBoard('recruit');
         });
@@ -2010,7 +2026,7 @@
     var isSD = rp.side === 'SD';
     var bio = (String(rp.title || '') + '。' + String(rp.body || '')).slice(0, 400);
     var fresh = {
-      name: name, archetype: isSD ? '招聘·金主' : '同行·SB', persistent: false, engaged: false,
+      name: name, archetype: isSD ? '同行·金主' : '自荐·SB', persistent: false, engaged: false,
       total_transfers: 0, relationship: 0, unlocked: true,
       last_contact: nowT(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [], bio: bio,
     };
@@ -2025,17 +2041,17 @@
       if (!state.npcs[name]) state.npcs[name] = fresh;
       else if (!state.npcs[name].bio) state.npcs[name].bio = bio;
     }
-    toast('info', isSD ? '💬 去应聘——把你的条件甩给TA' : '💬 去搭话——同行也是人脉');
+    toast('info', isSD ? '💬 去会会同行——也可能是抢人的对手' : '💬 去谈——条件写在她帖子里，价格当面聊');
     openChat(name, state.npcs[name]);
   }
 
-  // ── 📋 发帖自荐：写一条挂到招聘版，挂完触发一个"冲着广告来的"陌生金主私信（复用陌生人专场生成） ──
+  // ── 📋 发招聘帖：写一条挂到招聘版，挂完触发一个"冲着帖子来应聘的"陌生SB私信（复用陌生人专场生成） ──
   function openRecruitCompose() {
     currentPage = 'recruit-compose';
-    var h = pageHeader('✍️ 发帖自荐', '挂上招聘版 · 会有人私信你', true);
+    var h = pageHeader('✍️ 发招聘帖', '挂上招聘版 · 会有人来应聘', true);
     h += '<div class="sb-msgs" style="display:block;padding-top:14px;">';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px 10px;">写你自己：谁、什么条件（外形/语言/才艺/时间）、想找什么样的 daddy、期望（PPM 单次还是月度 allowance、起步数字、要不要验资）。写得越具体，上钩的人越对味。别用真名，用个昵称。</div>';
-    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-recruit-text" rows="7" name="sbnyc-ad" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：昵称 Kiki，23，学艺术史，会弹琴、法语流利，身高175。平日排得满，只有周末和假期有空。想找懂生活、不查岗、愿意带我见世面的成熟先生。月度 allowance 起步 2w，先验资再见面，不接受 PPM。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px 10px;">写你要找的人：什么类型（学生/职业/御姐/小白兔）、硬性条件（外形/年龄/语言/才艺/时间怎么配合），再写你给什么（PPM 单次还是月度 allowance、数字区间、见面方式）。写得越具体，来应聘的越对味。别用真名，用个代号。</div>';
+    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-recruit-text" rows="7" name="sbnyc-ad" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：代号 老周，坐标S市。找在读或刚毕业的女孩，165以上，谈吐干净，会点外语加分，周末有空即可。月度 allowance 2w-4w 看条件，先喝咖啡聊聊再定。不查岗不磨叽，非诚勿扰，杀猪盘绕道。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
     h += '<div style="display:flex;margin:8px 14px;"><button class="sb-abtn" id="sbnyc-recruit-submit" style="flex:1;">📤 挂出去</button></div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
@@ -2053,7 +2069,7 @@
       });
       if (state) { if (!Array.isArray(state.myAds)) state.myAds = []; state.myAds.push({ text: txt, ts: adTs, comments: [] }); }
       var oneLine = txt.replace(/\s+/g, ' ');
-      SBemit('sb_request_dm', { reason: '有金主在招聘版看到了 User 挂出的自荐帖，主动私信找上门——只生成 1 个全新陌生金主的开场，他的开场白要直接呼应帖子内容、点出他被哪一句/哪个条件吸引，像真的读过这条广告。她的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: '1' });
+      SBemit('sb_request_dm', { reason: '有 SB 在招聘版看到了 User（金主）挂出的招聘帖，主动私信应聘——只生成 1 个全新陌生SB的开场。这个女孩从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**：她拿着自己本来的条件来接这条招聘——符合的地方她会强调，不符合的地方她会绕开、嘴硬、或者讨价还价（"我虽然不是学生，但是…"）；万一真抽到完美符合的，就让她贵、或者带一个帖子里没提的特殊要求。开场白要让人看出她真读过帖子。他的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: '1' });
       SBemit('sb_request_ad_comments', { ts: adTs, text: txt });   // 评论区同步开盖：发完帖过一会儿就有人来围观起哄
       toast('success', '📋 挂出去了——评论和私信马上就来');
       openBoard('recruit');
@@ -2192,7 +2208,7 @@
     if (!se.subscribed) return openPaywall();
     currentPage = 'elite';
     fetchPool();   // 池子保鲜（本次没到货下次开就有）
-    fetchExperiences();   // 体验橱窗保鲜（服务器 sb_experiences）
+    fetchExperiences();   // 体验橱窗保鲜（服务器 sd_experiences）
     var mag = magOf();
     var h = pageHeader('SugarElite™', 'member', true);
     h += '<div class="sb-msgs" style="display:block;">';
