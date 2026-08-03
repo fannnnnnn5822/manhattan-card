@@ -1299,8 +1299,14 @@
       for (var j = reps.length - 1; j >= 0; j--) rH += '<div class="sb-cmt"><b>@' + esc(reps[j].handle || '???') + '</b>' + esc(reps[j].content || '') + '</div>';
       rH += '<div class="sb-cmt-pull sb-greply" data-gid="' + p.id + '">💬 回一句</div>';
       var ofc = (_akOfficial && p.id === _akOfficial.id) ? _akOfficial : null;   // 这一楼被后台指认为官方帖
-      // 官方帖配图：抄 AI 生图的成熟写法（内联样式+onerror隐藏），不用 lazy——国内网络到存储桶本来就慢，lazy 再拖一步；占位底色防"空边框壳"
-      var imgH = (ofc && ofc.img) ? '<img src="' + esc(ofc.img) + '" alt="" referrerpolicy="no-referrer" style="display:block;width:100%;max-height:400px;object-fit:cover;border-radius:10px;margin-top:8px;background:var(--paper-3);min-height:120px;" onload="this.style.minHeight=\'0\'" onerror="this.style.display=\'none\'">' : '';
+      // 官方帖配图：jsDelivr 三域备胎（和脚本加载器同款——Supabase 存储路径国内会选择性抽风，玩家能拉到脚本就一定能拉到 jsDelivr 的图）。
+      // config 里只填一个 jsDelivr 图 url，这里自动展开三个域轮着试，全挂才隐藏；非 jsDelivr 的 url 原样单发。
+      var ofcImgs = [];
+      if (ofc && ofc.img) {
+        var jm = String(ofc.img).match(/^https?:\/\/[^/]*jsdelivr\.net(\/gh\/.+)$/);
+        ofcImgs = jm ? ['https://testingcf.jsdelivr.net' + jm[1], 'https://fastly.jsdelivr.net' + jm[1], 'https://cdn.jsdelivr.net' + jm[1]] : [String(ofc.img)];
+      }
+      var imgH = ofcImgs.length ? '<img src="' + esc(ofcImgs[0]) + '" data-alts="' + esc(ofcImgs.slice(1).join('|')) + '" alt="" referrerpolicy="no-referrer" style="display:block;width:100%;max-height:400px;object-fit:cover;border-radius:10px;margin-top:8px;background:var(--paper-3);min-height:120px;" onload="this.style.minHeight=\'0\'" onerror="var a=(this.getAttribute(\'data-alts\')||\'\').split(\'|\').filter(Boolean);if(a.length){this.setAttribute(\'data-alts\',a.slice(1).join(\'|\'));this.src=a[0];}else{this.style.display=\'none\';}">' : '';
       h += '<div class="sb-post"><b>' + (ofc ? '👑' : '🌍') + ' @' + esc(p.handle || '???') + (ofc ? ' <span style="color:var(--gold);">✔ 官方认证</span>' : '') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div>' + imgH + '<div class="pm">' + (ofc ? '本人 · 认证帖' : '全服真人') + ' · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
     }
     return h;
