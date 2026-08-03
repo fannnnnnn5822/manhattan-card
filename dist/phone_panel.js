@@ -564,6 +564,20 @@
     '#sbnyc-panel .sb-empty{text-align:center;font-size:11px;color:var(--ink-faint);padding:20px;font-style:italic;font-family:var(--font-en);}',
     '#sbnyc-panel .sb-wait{padding:30px 16px;font-size:12px;color:var(--ink-faint);text-align:center;line-height:1.9;}',
     // 翻译（微信式：英文消息气泡里自带"翻译"按钮，点开显示随消息一起预生成的中文，零等待零API）
+    // 🕵️ 档案卡（S. 查完一个人送来的东西，做成卷宗的样子）
+    '#sbnyc-panel .sb-dsr{align-self:flex-start;max-width:88%;margin:6px 0;padding:12px 14px;background:var(--paper-2);',
+    '  border:.5px solid var(--gold);border-radius:14px;border-top-left-radius:4px;position:relative;}',
+    '#sbnyc-panel .sb-dsr .dh{font-family:var(--font-en);font-size:8px;letter-spacing:2.5px;color:var(--gold);font-weight:600;}',
+    '#sbnyc-panel .sb-dsr .dn{font-size:17px;font-weight:600;color:var(--ink);margin:5px 0 1px;}',
+    '#sbnyc-panel .sb-dsr .dt{font-size:11px;color:var(--gold);letter-spacing:.5px;}',
+    '#sbnyc-panel .sb-dsr .db{font-size:12px;color:var(--ink-sub);line-height:1.6;margin:7px 0 0;}',
+    '#sbnyc-panel .sb-dsr .dm{font-size:10px;color:var(--ink-faint);margin-top:6px;padding-top:6px;border-top:.5px dashed var(--line);}',
+    '#sbnyc-panel .sb-dsr .da{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap;align-items:center;}',
+    '#sbnyc-panel .sb-dsr-btn{flex:1;min-width:96px;background:var(--paper-3);border:.5px solid var(--line);color:var(--ink);',
+    '  font-family:var(--font-cn);font-size:11.5px;padding:6px 8px;border-radius:999px;cursor:pointer;letter-spacing:.5px;}',
+    '#sbnyc-panel .sb-dsr-btn.ok{background:var(--gold);border-color:var(--gold);color:#fff;}',
+    '#sbnyc-panel .sb-dsr-btn:active{transform:scale(.97);}',
+    '#sbnyc-panel .sb-dsr .dok{font-size:10.5px;color:var(--green);letter-spacing:.5px;}',
     '#sbnyc-panel .sb-tr-btn{display:inline-block;margin-top:5px;font-size:9px;color:var(--gold);cursor:pointer;letter-spacing:1px;border:.5px solid var(--gold);border-radius:999px;padding:1px 8px;opacity:.75;user-select:none;}',
     '#sbnyc-panel .sb-tr-btn:hover{opacity:1;}',
     '#sbnyc-panel .sb-tr-txt{display:none;border-top:.5px dashed var(--line);margin-top:6px;padding-top:6px;font-size:12.5px;color:var(--ink-sub);font-style:normal;}',
@@ -751,15 +765,17 @@
     islandTxt.textContent = t || '';
     islandTxt.title = title || t || '';
   }
+  // 🎼 音乐 app 真放着歌时，灵动岛让位给真歌名（不然一边放 A 一边滚 B，出戏）
+  function islandIdle() { return (muPlaying && muTitle()) ? ('▶ ' + muTitle()) : ('♪ ' + PLAYLIST[songIdx]); }
   function setStatus(t) {
-    if (!t) { statusUntil = 0; showIsland('♪ ' + PLAYLIST[songIdx]); return; }
+    if (!t) { statusUntil = 0; showIsland(islandIdle()); return; }
     statusUntil = Date.now() + (t.indexOf('⚠') !== -1 ? 20000 : 8000);   // ⚠️ 多停一会
     showIsland(t, t);
   }
   var _songTimer = setInterval(function () {
     if (Date.now() < statusUntil) return;
-    songIdx = (songIdx + 1) % PLAYLIST.length;
-    showIsland('♪ ' + PLAYLIST[songIdx]);
+    if (!muPlaying) songIdx = (songIdx + 1) % PLAYLIST.length;
+    showIsland(islandIdle());
   }, 18000);
   showIsland('♪ ' + PLAYLIST[songIdx]);
 
@@ -908,8 +924,8 @@
     }
     if (chatEl.style.display !== 'none' && currentChatName && state.npcs && state.npcs[currentChatName]) {
       openChat(currentChatName, state.npcs[currentChatName]);   // 聊天页开着 → 重渲染显示新回应
-    } else if (chatEl.style.display !== 'none' && currentPage === 'settings') {
-      // 设置页开着别重渲染——会吹掉正在输入的 API key
+    } else if (chatEl.style.display !== 'none' && (currentPage === 'settings' || currentPage === 'music')) {
+      // 设置页开着别重渲染——会吹掉正在输入的 API key；音乐页同理（重建会把进度条/音量滑块打回原形）
     } else if (chatEl.style.display !== 'none' && currentPage) {
       reopenPage();                                              // 论坛/Elite 开着 → 重渲染（钱包变了/内容到了）
     } else {
@@ -953,7 +969,7 @@
   }
   function renderActions() {
     return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">🔄 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button><button class="sb-abtn" data-act="closet">👗 衣橱</button></div>' +
-      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button></div>';   // 第二行（UWU 的两个新页面）
+      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn" data-act="music">🎵 音乐</button></div>';   // 第二行（UWU 的三个新页面）
   }
   function renderDMList(npcs) {
     var entries = []; for (var n in npcs) { if (!npcs.hasOwnProperty(n)) continue; var npc = npcs[n]; if (!npc.unlocked && !npc.persistent && (npc.unread || 0) <= 0 && !npc.engaged) continue; if (npc.muted && !(npc.dm_history && npc.dm_history.length) && (npc.unread || 0) <= 0 && !npc.engaged) continue; entries.push(npc); }
@@ -1056,6 +1072,7 @@
       else if (a === 'closet') openCloset();
       else if (a === 'calendar') openCalendar();
       else if (a === 'trans') openTransactions();
+      else if (a === 'music') openMusic();
     }); })(btns[j]); }
     // 行程 todolist：⭕/✅打勾切换、点文字编辑、✕直接删（都不弹确认，误删了让TA重加——手机上确认框比误删烦）
     var chks = root.querySelectorAll('.sb-schk');
@@ -1429,18 +1446,20 @@
     toast('success', '🔗 已转发给 ' + who + '——去TA的聊天页点「发送」，看TA上不上道');
   }
   // 联系人选择器（复用长按菜单样式）：按最近活跃排前10
-  function pickContact(cb) {
+  // opts（可选，转发那边不传=保持原样）：title 换标题、filter 换筛选、limit 换条数、empty 换空态提示
+  function pickContact(cb, opts) {
+    opts = opts || {};
     var npcs = (state && state.npcs) || {};
     var keys = Object.keys(npcs)
-      .filter(function (k) { return npcs[k].unlocked !== false; })
+      .filter(function (k) { return opts.filter ? opts.filter(npcs[k]) : npcs[k].unlocked !== false; })
       .sort(function (a, b) { return (npcs[b].last_ts || 0) - (npcs[a].last_ts || 0); })
-      .slice(0, 10);
-    if (!keys.length) { toast('info', '还没有联系人可以转发'); return; }
+      .slice(0, opts.limit || 10);
+    if (!keys.length) { toast('info', opts.empty || '还没有联系人可以转发'); return; }
     closeMsgMenu();
     var menu = DOC.createElement('div');
     menu.className = 'sb-msgmenu';
     menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '18%';
-    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">发给谁？（圈内都懂这是什么意思）</div>';
+    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">' + esc(opts.title || '发给谁？（圈内都懂这是什么意思）') + '</div>';
     for (var i = 0; i < keys.length; i++) {
       var np = npcs[keys[i]];
       mh += '<button data-pick="' + esc(np.name) + '">' + esc(np.name) + (np.archetype ? ' <span style="opacity:.5;font-size:10px;">' + esc(np.archetype) + '</span>' : '') + '</button>';
@@ -1775,6 +1794,9 @@
     h += '<div class="sb-sec" style="margin-top:14px;">旧识</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-contact-import" style="flex:1;">📥 从别的故事里请一个人过来</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">你在别的世界书里认识的人也能进这部手机——搜TA的世界书，平台做一次背调，TA就带着自己的脾气出现在通讯录里。</div>';
+    // 🕵️ 调查建档：紧跟在「旧识」下面——旧识是"从外面请人进来"，建档是"把已经在这儿的人留下"，一进一出凑成一对
+    h += '<div style="display:flex;margin:10px 14px 6px;"><button class="sb-abtn" id="sbnyc-dossier-go" style="flex:1;">🕵️ 让 S. 给这局里的人建档</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">这局里跑出来的人，S. 可以读你和TA的全部私信＋正文里所有和TA有关的场次，写成一份正式档案（性格调色盘/三面性/说话方式/NSFW底色全套），发到你和他的聊天里让你过目。存进世界书后主线永远认得TA，TA也会照档案里的腔调说话——<b>你就拥有了一个属于自己的角色</b>，那条世界书条目能带去别的卡。</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
@@ -1791,6 +1813,7 @@
     if (nbtn) nbtn.addEventListener('click', newCustomContact);
     var impbtn = chatEl.querySelector('#sbnyc-contact-import');
     if (impbtn) impbtn.addEventListener('click', openImportContact);
+    bindDossierGo();
   }
   // 固定NPC：persistent=true（不会被自动清理），声音卡生成器里本来就有，建好直接聊
   function contactFromFixed(name, tag) {
@@ -2230,6 +2253,32 @@
     }
   }
 
+  // 🕵️ 让 S. 查一个人：选人 → S. 去查 → 他把档案卡发进你和他的聊天里
+  // 固定NPC不上名单：他们的档案本来就在卡自带的世界书里，再存一份等于自己和自己打架
+  function bindDossierGo() {
+    var gb = chatEl.querySelector('#sbnyc-dossier-go');
+    if (!gb) return;
+    gb.addEventListener('click', function (ev) {
+      // ⚠️ 必须拦冒泡：不然"点菜单外=收菜单"的全局监听会把这同一次点击刚开的选择器秒关，
+      // 表现就是"点了没反应"（血泪教训 #2，🔗 转发那个按钮早就踩过一次）
+      ev.stopPropagation();
+      pickContact(function (who) {
+        toast('info', '🕵️ S. 去查 ' + who + ' 了——查完他会把档案发到你和他的聊天里');
+        setStatus('🕵️ S. 正在查 ' + who + '…');
+        SBemit('sb_request_dossier', { name: who });
+      }, {
+        title: '查谁？（S. 会读你和TA的全部私信＋正文里所有和TA有关的场次）',
+        limit: 20,
+        filter: function (np) {
+          if (!np || np.unlocked === false) return false;
+          return !(np.persistent || np.name === 'SugarElite™');   // 只挡卡自带的人（他们的档案本来就在世界书里）
+          // 料够不够由 dm_generator 那边合起来判（私信薄但线下戏多的人照样查得出来），这里不预先拦
+        },
+        empty: '通讯录里还没有可以查的人',
+      });
+    });
+  }
+
   function openPaywall() {
     currentPage = 'elite';
     var h = pageHeader('SugarElite™', 'members only', false);
@@ -2469,13 +2518,20 @@
     h += '<div class="sb-sec" style="margin-top:16px;">显示 · Display</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-blind-toggle" style="flex:1;">' + (blindOn ? '🎁 盲盒模式已开（点我显示身份标签）' : '🏷️ 身份标签已显示（点我开盲盒）') + '</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">盲盒模式：藏起所有人的身份标签（「巨鲸·阔绰」这种），只留名字，谁是谁、什么来路自己从聊天里猜。</div>';
-    // 手机对话写进正文：两个独立开关（可同时开），都默认关
-    var tailOn = false, layerOn = false;
+    // 手机对话写进正文：三选一（互斥，开一个自动关另外两个；也可以三个都关）
+    var tailOn = false, layerOn = false, bubOn = true, bubSync = false;
     try { tailOn = VIEW.localStorage.getItem('sbnyc_floorlog') === '1'; } catch (e) {}
     try { layerOn = VIEW.localStorage.getItem('sbnyc_floorlog2') === '1'; } catch (e) {}
+    try { bubOn = VIEW.localStorage.getItem('sbnyc_floorlog3') !== '0'; } catch (e) {}
+    try { bubSync = VIEW.localStorage.getItem('sbnyc_floorlog3_sync') === '1'; } catch (e) {}
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-floor3-toggle" style="flex:1;">💬 私信渲染成聊天气泡（来自UWU）：' + (bubOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
+    if (bubOn) {
+      h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-floor3-sync" style="flex:1;">↩️ 删楼层时同步撤掉私信（来自UWU）：' + (bubSync ? '开（点我关）' : '关（点我开）') + '</button></div>';
+      h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">开了之后：删掉/重roll 带气泡的正文楼层，手机里那几条私信也跟着消失——正文和手机永远对得上。<b>它会真的删手机记录，不可撤销</b>，所以默认关着，想要严丝合缝的人自己开。只动最近两轮的消息，更早的算定案，不会被翻旧账。</div>';
+    }
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-floor-toggle" style="flex:1;">📄 私信摘要贴正文楼尾：' + (tailOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-floor2-toggle" style="flex:1;">📱 手机动态独立折叠层：' + (layerOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">两种"写进正文"随你挑（也可以都开）：<b>📄 贴正文楼尾</b>=每轮私信压成小引用块，接在剧情正文最后一楼的尾巴上（最早那版）；<b>📱 独立动态层</b>=专门一层记手机上的一切（私信/买东西/卖二手/付账单），平时折叠点开才看，你没发言前都更新在同一层。两种都<b>只记你回复过的对话</b>：你一回复，TA之前的搭讪+你的回复+TA的回应整段进正文；从头到尾没搭理的人一个字不占正文。两种正文 AI 都读得到。<b>都关着也不影响正文「知道」手机内容</b>——后台另有隐形记忆在同步。默认都关。</div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">三种"写进正文"<b>三选一</b>（开一个会自动关掉另外两个，也可以三个都关）：<b>💬 聊天气泡</b>=私信直接渲染成气泡出现在正文里，读起来就是"她低头看了眼手机"那种感觉（默认，来自 UWU 老师）；<b>📄 贴正文楼尾</b>=每轮私信压成小引用块接在剧情最后一楼尾巴上（最早那版）；<b>📱 独立动态层</b>=专门一层记手机上的一切（私信/买东西/卖二手/付账单），平时折叠点开才看。三种都<b>只记你回复过的对话</b>：你一回复，TA之前的搭讪+你的回复+TA的回应整段进正文；从头到尾没搭理的人一个字不占正文。三种正文 AI 都读得到。<b>全关也不影响正文「知道」手机内容</b>——后台另有隐形记忆在同步。</div>';
     // 🧠 AI 记忆的私信条数：60/150/300 三档循环
     var memN = 150; try { memN = parseInt(VIEW.localStorage.getItem('sbnyc_dm_mem'), 10) || 150; } catch (e) {}
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-mem-toggle" style="flex:1;">🧠 AI 记忆的私信条数：' + memN + ' 条（点我换挡）</button></div>';
@@ -2556,7 +2612,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">🔄 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 · 💬正文聊天气泡 · 🎼公共歌库音乐 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -2597,19 +2653,39 @@
     if (kIn2) kIn2.addEventListener('focus', function () { kIn2.removeAttribute('readonly'); });
     var blindBtn = chatEl.querySelector('#sbnyc-blind-toggle');
     if (blindBtn) blindBtn.addEventListener('click', function () { applyBlind(!panel.classList.contains('blindbox')); openSettings(); });
+    // 三种「写进正文」互斥：开哪个就把另外两个按下去（同时开=同一段对话在正文里出现两次）
+    function setFloorMode(mode) {
+      try {
+        VIEW.localStorage.setItem('sbnyc_floorlog', mode === 'tail' ? '1' : '0');
+        VIEW.localStorage.setItem('sbnyc_floorlog2', mode === 'layer' ? '1' : '0');
+        VIEW.localStorage.setItem('sbnyc_floorlog3', mode === 'bubble' ? '1' : '0');
+      } catch (e) {}
+      openSettings();
+    }
+    var floor3Btn = chatEl.querySelector('#sbnyc-floor3-toggle');
+    if (floor3Btn) floor3Btn.addEventListener('click', function () {
+      var on = true; try { on = VIEW.localStorage.getItem('sbnyc_floorlog3') !== '0'; } catch (e) {}
+      toast('info', on ? '💬 私信不再写进正文' : '💬 私信会以聊天气泡出现在正文里');
+      setFloorMode(on ? '' : 'bubble');
+    });
+    var floor3Sync = chatEl.querySelector('#sbnyc-floor3-sync');
+    if (floor3Sync) floor3Sync.addEventListener('click', function () {
+      var cur0 = false; try { cur0 = VIEW.localStorage.getItem('sbnyc_floorlog3_sync') === '1'; } catch (e) {}
+      try { VIEW.localStorage.setItem('sbnyc_floorlog3_sync', cur0 ? '0' : '1'); } catch (e) {}
+      toast('info', cur0 ? '↩️ 删楼层不再动手机记录' : '↩️ 删楼层时，手机里对应的私信会跟着撤掉');
+      openSettings();
+    });
     var floorBtn = chatEl.querySelector('#sbnyc-floor-toggle');
     if (floorBtn) floorBtn.addEventListener('click', function () {
       var cur = false; try { cur = VIEW.localStorage.getItem('sbnyc_floorlog') === '1'; } catch (e) {}
-      try { VIEW.localStorage.setItem('sbnyc_floorlog', cur ? '0' : '1'); } catch (e) {}
       toast('info', cur ? '📄 私信摘要不再贴正文楼尾' : '📄 私信摘要会贴在正文楼尾');
-      openSettings();
+      setFloorMode(cur ? '' : 'tail');
     });
     var floor2Btn = chatEl.querySelector('#sbnyc-floor2-toggle');
     if (floor2Btn) floor2Btn.addEventListener('click', function () {
       var cur2 = false; try { cur2 = VIEW.localStorage.getItem('sbnyc_floorlog2') === '1'; } catch (e) {}
-      try { VIEW.localStorage.setItem('sbnyc_floorlog2', cur2 ? '0' : '1'); } catch (e) {}
       toast('info', cur2 ? '📱 手机动态层已关' : '📱 手机动态会记进独立折叠层');
-      openSettings();
+      setFloorMode(cur2 ? '' : 'layer');
     });
     var memBtn = chatEl.querySelector('#sbnyc-mem-toggle');
     if (memBtn) memBtn.addEventListener('click', function () {
@@ -2906,6 +2982,15 @@
     // 新交互：回车=攒消息（可连打几条），发送键=让 TA 回复（学两个用户的建议，统一简单）
     // queueMsg 只把消息记下+显示，不触发生成；replyOne(发送键)才让这个人一次性回应攒的全部
     function queueMsg(txt, mtype, extra) {   // extra：调用方塞额外字段（如 imgUrl），不改原有调用（UWU）
+      // ⚠️ 带 txt 调用时（转账/照片/语音/定位/生图这些），输入框里玩家可能**已经打好了一句话**。
+      // 老写法下面会无条件 input.value=''，那句话连同它的意思一起被吞掉——
+      // 玩家转了钱又说"拍张照"，发给 AI 的只剩"转账"，TA 永远不知道要拍照。
+      // 所以先把输入框里那句当普通消息攒进去，再攒这条特殊消息，顺序和玩家打字的顺序一致。
+      // pend === txt 说明调用方传的就是输入框里那句本身（sendReply 就是这么干的）→ 再排一遍会发两条重样的
+      if (txt) {
+        var pend = input.value.trim();
+        if (pend && pend !== String(txt)) { input.value = ''; queueMsg(pend, 'text'); }
+      }
       var text = txt || input.value.trim(); if (!text) return;
       var t = nowT(); var ty = mtype || 'text';
       var gDay = (state && state.game && state.game.day) || 1;
@@ -2947,7 +3032,7 @@
     // 「发送」键：先把输入框里没发的也攒进去，再让这个人一次性回复攒的全部
     function sendReply() {
       var typed = input.value.trim();
-      if (typed) queueMsg(typed, 'text');
+      if (typed) { input.value = ''; queueMsg(typed, 'text'); }   // 先清空再排——不清的话上面那道守卫会把同一句再排一遍
       replyOne(name);
     }
     sendBtn.addEventListener('click', sendReply);
@@ -3179,7 +3264,7 @@
     var dataA = '';
     if (trName != null && trIdx != null) {
       dataA = ' data-owner="' + (isU ? 'me' : 'them') + '" data-nm="' + esc(trName) + '" data-mi="' + trIdx + '"';
-      if (type !== 'transfer' && type !== 'recall' && type !== 'system' && type !== 'gift') {
+      if (type !== 'transfer' && type !== 'recall' && type !== 'system' && type !== 'gift' && type !== 'dossier') {   // 档案卡不给重roll/编辑（它不是一条消息，卡上自带「再查一次」）
         if (canReroll && !isU) dataA += ' data-rr="1"';
         if (isU && (type === 'text' || type === 'image' || type === 'voice')) {
           dataA += ' data-ed="1"';
@@ -3214,6 +3299,30 @@
       return '<div class="sb-msg ' + cls + ' voice"' + dataA + '>' + gsp +
         '<div class="sb-vc"><span>🎙️</span><span class="vwave">' + wave + '</span><span class="vsec">' + vlen + '″</span></div>' +
         '<div class="sb-vc-txt">' + esc(c).replace(/\n/g, '<br>') + '</div>' + tH + trH + '</div>';
+    }
+    // 🕵️ 档案卡（S. 查完一个人送过来的）：content=那个人的名字，note=标签（存过档就带"· 已存档"）
+    if (type === 'dossier') {
+      var dName = String(c);
+      var dNpc = (state && state.npcs && state.npcs[dName]) || {};
+      var draft = dNpc._draft;
+      var saved = !!dNpc.dossier_saved && !draft;
+      var dLen = draft ? String(draft.dossier || '').length : String(dNpc.dossier || '').length;
+      var head = '<div class="sb-dsr"' + dataA + ' data-tp="dossier"><div class="dh">SUGARELITE™ · BACKGROUND CHECK</div>' +
+        '<div class="dn">' + esc(dName) + '</div>' +
+        '<div class="dt">' + esc((draft && draft.tag) || n || dNpc.archetype || '') + '</div>' +
+        (draft && draft.bio ? '<div class="db">' + esc(draft.bio) + '</div>' : '') +
+        '<div class="dm">' + (dLen ? dLen + ' 字 · 调色盘/三面性/声音卡齐全' : '档案已过期') + '</div>';
+      if (draft) {
+        head += '<div class="da">' +
+          '<button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">🔄 不太对，再查一次</button>' +
+          '<button class="sb-dsr-btn ok" data-dsr="save" data-n="' + esc(dName) + '">📖 存进世界书</button></div>';
+      } else if (saved) {
+        head += '<div class="da"><button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">🔄 重新查一份</button>' +
+          '<span class="dok">✓ 已存进世界书</span></div>';
+      } else {
+        head += '<div class="da"><button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">🔄 重新查一份</button></div>';
+      }
+      return head + tH + '</div>';
     }
     if (type === 'recall') return '<div class="sb-msg system"' + dataA + ' data-tp="recall">「' + (isU ? '你' : '对方') + '撤回了一条消息」' + tH + '</div>';   // 内容不显示——说了什么只有发的人自己记得
     if (type === 'system') return '<div class="sb-msg system"' + dataA + ' data-tp="system">' + esc(c) + '</div>';
@@ -3380,6 +3489,8 @@
         setClientPos(fab, c1.x, c1.y);
       } catch (e) {}
     }
+    // 音乐面板也跟着重排（转屏/键盘/换窗口大小后别飘出去；它里面没有输入框，打字中也不用冻结）
+    try { placeMusicPanel(DOC.getElementById('sbnyc-mu-panel'), false); } catch (e) {}
     if (panel.classList.contains('open')) {
       if (typing) { liftForKeyboard(); return; }                   // 打字中：整机抬升，不改位置存档
       panel.style.transform = '';                                  // 没在打字：清掉抬升 → 回原位
@@ -3397,6 +3508,402 @@
   try { VIEW.addEventListener('resize', keepInView); } catch (e) {}
   try { if (VIEW.visualViewport) VIEW.visualViewport.addEventListener('resize', keepInView); } catch (e) {}
 
+  // ══════════════════════════════════════════════════════════════════
+  // 正文聊天气泡（```chat 方案来自 UWU 老师）
+  // dm_generator 把私信以 ```chat 围栏写进楼层，酒馆把围栏渲染成 <pre><code>，
+  // 这里再把它换成聊天气泡。围栏里始终是干净的 `名字: 内容` 纯文本——
+  // 关了脚本也只是变回代码块，一个字都不丢。
+  // 为什么是 ```chat：UWU 试过一堆写法，只有代码围栏不会被正文 markdown 冲破，
+  // 而且一条楼层里有好几块时能全部渲染出来（别的写法第二块就哑了）。
+  // ══════════════════════════════════════════════════════════════════
+  var EXTRA_CSS = [
+    // 气泡活在正文里（不在 #sbnyc-panel 内），拿不到面板的 CSS 变量 → 这里把手机那套色和字**照抄一份**，
+    // 数值和面板顶上的 :root 段一模一样（改面板配色记得同步这里）。
+    // 效果＝正文里出现一块"手机截图"：同样的纸色、同样的宋体、同样的金色气泡、同样的圆角缺口方向。
+    // 跟着手机的 🌙 走：面板切夜间时给 body 挂 sbnyc-night-doc，这里的深色变量就生效。
+    // ⚠️ 不给外框、不给底色：加了框就成了一个窄条容器，长句子被挤成"长长的一条"。
+    // 现在整块是透明的，气泡直接铺在正文的宽度上——左边 NPC 头像+气泡，右边 User 头像+气泡。
+    // 色和字照抄手机那套（数值同面板顶上的 :root 段，改配色记得同步），气泡自带前景+背景色，
+    // 所以玩家用浅色还是深色主题都读得清。跟着手机的 🌙 走（body 上挂 sbnyc-night-doc）。
+    '.sbnyc-bubs{--bink:#1f2937;--bfaint:#a8acb3;--bpaper2:#fbf9f4;--bpaper3:#ece8dd;',
+    '  --bline:rgba(26,42,58,.12);--bgold:#b89968;--bgoldsoft:#d4b88a;',
+    "  font-family:-apple-system,'PingFang SC','Helvetica Neue',sans-serif;",
+    '  margin:14px 0;padding:0;border:0;background:none;font-size:13.5px;line-height:1.55;}',
+    'body.sbnyc-night-doc .sbnyc-bubs{--bink:#ece7db;--bfaint:#7d7869;--bpaper2:#1e212a;',
+    '  --bpaper3:#2b2f3a;--bline:rgba(212,184,138,.22);--bgold:#cba86a;--bgoldsoft:#d9c08a;}',
+    // 时间分割线：和手机聊天页里的日期分隔一个样
+    '.sbnyc-bubs .bd{display:flex;align-items:center;gap:8px;margin:10px 2px 8px;font-family:Georgia,"Times New Roman",serif;',
+    '  font-size:10px;letter-spacing:1px;color:var(--bgold);}',
+    '.sbnyc-bubs .bd::before,.sbnyc-bubs .bd::after{content:"";flex:1;height:1px;background:var(--bline);}',
+    // 一行＝头像 + 气泡；User 那行整行反向，头像就落到右边
+    '.sbnyc-bubs .br{display:flex;align-items:flex-end;gap:8px;margin:7px 0;}',
+    '.sbnyc-bubs .br.me{flex-direction:row-reverse;}',
+    '.sbnyc-bubs .av{flex:0 0 30px;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;',
+    '  justify-content:center;font-family:Georgia,"Times New Roman",serif;font-size:13px;line-height:1;',
+    '  background:var(--bpaper2);border:.5px solid var(--bgold);color:var(--bgold);}',
+    '.sbnyc-bubs .br.me .av{background:linear-gradient(135deg,var(--bgoldsoft),var(--bgold));border-color:var(--bgold);color:#fff;}',
+    '.sbnyc-bubs .bw{display:flex;flex-direction:column;align-items:flex-start;max-width:76%;min-width:0;}',
+    '.sbnyc-bubs .br.me .bw{align-items:flex-end;}',
+    '.sbnyc-bubs .bn{font-family:Georgia,"Times New Roman",serif;font-size:9.5px;color:var(--bfaint);margin:0 4px 3px;letter-spacing:.6px;}',
+    // 对方＝纸色气泡左下缺口；User＝金色渐变气泡右下缺口。和 .sb-msg.them / .sb-msg.me 同一套几何
+    '.sbnyc-bubs .bb{padding:8px 13px;border-radius:16px;border-bottom-left-radius:4px;background:var(--bpaper3);',
+    '  color:var(--bink);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;}',
+    '.sbnyc-bubs .br.me .bb{border-bottom-left-radius:16px;border-bottom-right-radius:4px;font-weight:500;',
+    '  background:linear-gradient(135deg,var(--bgoldsoft),var(--bgold));color:#fff;}',
+    '.sbnyc-bubs .bs{text-align:center;font-size:10.5px;color:var(--bfaint);font-style:italic;margin:7px 0;}',
+    // 🎼 音乐（QR 按钮开的那个独立小面板，来自 UWU 老师）
+    // 尺寸和位置一律由 placeMusicPanel() 用实测坐标算（手机版酒馆会给页面加缩放，
+    // vw/vh 和 position:fixed 的 px 都不等于真实屏幕坐标）。这里的 width/max-height 只是兜底。
+    '#sbnyc-mu-panel{position:fixed;z-index:2147483601;width:320px;max-height:70vh;overflow-y:auto;',
+    '  background:#fbf9f4;color:#1f2937;border:1px solid rgba(184,153,104,.55);border-radius:20px;padding:14px;',
+    '  box-shadow:0 18px 48px rgba(0,0,0,.28);font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;box-sizing:border-box;}',
+    '#sbnyc-mu-panel.night{background:#1e212a;color:#ece7db;}',
+    // 独立面板在手机面板之外，用不上 #sbnyc-panel 那套变量样式 → 这里给同名类补一份等价的
+    '#sbnyc-mu-panel .sb-abtn{flex:1;background:rgba(128,128,128,.10);border:.5px solid rgba(128,128,128,.28);color:inherit;',
+    '  font-size:12px;padding:7px 6px;border-radius:999px;cursor:pointer;text-align:center;letter-spacing:1px;}',
+    '#sbnyc-mu-panel .sb-abtn:hover{border-color:rgba(184,153,104,.7);}',
+    '#sbnyc-mu-panel .sb-empty{text-align:center;font-size:11px;opacity:.6;padding:16px;font-style:italic;}',
+    '#sbnyc-mu-panel .sb-rank{display:flex;align-items:center;gap:10px;margin:0 0 6px;padding:8px 10px;',
+    '  background:rgba(128,128,128,.08);border:.5px solid rgba(128,128,128,.22);border-radius:12px;}',
+    '#sbnyc-mu-panel .sb-rank .rb{flex:1;min-width:0;}',
+    '#sbnyc-mu-panel .sb-rank .rb b{font-size:13px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '#sbnyc-mu-panel .sb-rank .rb small{font-size:11px;opacity:.55;display:block;}',
+    '#sbnyc-mu-panel .sb-buy{background:#b89968;color:#fff;border:none;border-radius:999px;padding:5px 10px;font-size:12px;cursor:pointer;flex-shrink:0;}',
+    '#sbnyc-mu-panel .sb-wp-upload{display:inline-block;cursor:pointer;color:#b89968;border:.5px dashed #b89968;',
+    '  border-radius:999px;padding:6px 10px;font-size:11px;opacity:.9;}',
+    '#sbnyc-mu-panel .sb-wp-upload input{display:none;}',
+    // 手机里的音乐页：歌单在窄屏上别顶满，和别的页面留一样的边
+    '#sbnyc-panel .mu-list{margin:0 -4px;}',
+  ].join('\n');
+  var extraStyleEl = DOC.createElement('style');
+  extraStyleEl.id = 'sbnyc-extra-style';
+  extraStyleEl.textContent = EXTRA_CSS;
+  DOC.head.appendChild(extraStyleEl);
+
+  // 解析围栏内容。任何一行不合语法就整块放弃——宁可不渲染，也不去动别人的代码块。
+  function parseBubs(text) {
+    var lines = String(text || '').split('\n');
+    var groups = [], cur = null, real = 0;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (!line.trim()) continue;
+      if (line.charAt(0) === '#') { cur = { title: line.slice(1).trim(), rows: [] }; groups.push(cur); continue; }
+      if (!cur) { cur = { title: '', rows: [] }; groups.push(cur); }
+      if (line.charAt(0) === '\xB7') { cur.rows.push({ sys: true, text: line.slice(1).trim() }); continue; }
+      var c = line.indexOf(': ');
+      if (c < 1 || c > 32) return null;                       // 不是 `名字: 内容` → 不是我们的块
+      cur.rows.push({ who: line.slice(0, c), text: line.slice(c + 2) });
+      real++;
+    }
+    // 一整块只有系统行（例如那一轮只发生了"撤回了一条消息"）也照渲染——
+    // 认领这一关已经卡死了必须带我们写的 `#…的私信` 标题，不会误伤别人的代码块
+    if (!real && !(groups.length && groups[0].title)) return null;
+    return groups.length ? groups : null;
+  }
+  // 头像取首字：和手机联系人列表同一套（去掉标点符号取第一个字母/汉字）
+  function bubIni(who) {
+    if (who === 'User') {
+      var me = (state && state.profile && (state.profile.name_cn || state.profile.name_en)) || '';
+      var mi = String(me).replace(/[^A-Za-z一-鿿]/g, '')[0];
+      return mi ? mi.toUpperCase() : '我';
+    }
+    var c = String(who).replace(/[^A-Za-z一-鿿]/g, '')[0];
+    return c ? c.toUpperCase() : '\xB7';
+  }
+  function buildBubs(groups) {
+    var wrap = DOC.createElement('div');
+    wrap.className = 'sbnyc-bubs';
+    for (var g = 0; g < groups.length; g++) {
+      var grp = groups[g];
+      if (grp.title) {
+        var dv = DOC.createElement('div'); dv.className = 'bd'; dv.textContent = grp.title; wrap.appendChild(dv);
+      }
+      var lastWho = null;
+      for (var r = 0; r < grp.rows.length; r++) {
+        var row = grp.rows[r];
+        if (row.sys) {
+          var sy = DOC.createElement('div'); sy.className = 'bs'; sy.textContent = row.text; wrap.appendChild(sy);
+          lastWho = null; continue;
+        }
+        var isMe = row.who === 'User';
+        var line = DOC.createElement('div');
+        line.className = 'br' + (isMe ? ' me' : '');
+        var av = DOC.createElement('div'); av.className = 'av'; av.textContent = bubIni(row.who);
+        av.title = row.who;
+        if (row.who === lastWho) av.style.visibility = 'hidden';   // 同一个人连发几条：只有第一条露头像，剩下的留空位对齐
+        var bw = DOC.createElement('div'); bw.className = 'bw';
+        if (!isMe && row.who !== lastWho) { var nm = DOC.createElement('div'); nm.className = 'bn'; nm.textContent = row.who; bw.appendChild(nm); }
+        var bb = DOC.createElement('div'); bb.className = 'bb'; bb.textContent = row.text;   // textContent：正文里的内容一律当纯文本，不给 HTML 可乘之机
+        bw.appendChild(bb);
+        line.appendChild(av); line.appendChild(bw);
+        wrap.appendChild(line);
+        lastWho = row.who;
+      }
+    }
+    return wrap;
+  }
+  function renderChatBubbles() {
+    try {
+      var codes = DOC.querySelectorAll('pre > code');
+      for (var i = 0; i < codes.length; i++) {
+        var codeEl = codes[i];
+        var pre = codeEl.parentNode;
+        if (!pre || !pre.parentNode) continue;
+        var cls = codeEl.className || '';
+        var txt = codeEl.textContent || '';
+        // 认领条件必须严：要么酒馆给围栏打了 language-chat，要么开头就是我们写的那行时间分割线。
+        // 只按"每行都像 名字: 内容"认，会把玩家正文里的 YAML / JSON 代码块也变成气泡。
+        if (cls.indexOf('chat') === -1 && !/^\s*#.+的私信/.test(txt)) continue;
+        var groups = parseBubs(txt);
+        if (!groups) continue;
+        pre.parentNode.replaceChild(buildBubs(groups), pre);
+      }
+    } catch (e) { console.warn('[SB phone] 气泡渲染异常', e); }
+  }
+  // 酒馆重绘（新楼层/翻页/编辑/切聊天）后气泡会被吹回代码块 → 观察 DOM 攒一拍再补渲染
+  var _bubTimer = null, _bubObs = null;
+  try {
+    _bubObs = new MutationObserver(function () {
+      clearTimeout(_bubTimer);
+      _bubTimer = setTimeout(function () { _bubTimer = null; renderChatBubbles(); }, 260);
+    });
+    var chatRoot = DOC.getElementById('chat') || DOC.body;
+    if (chatRoot) _bubObs.observe(chatRoot, { childList: true, subtree: true });
+  } catch (e) {}
+  setTimeout(renderChatBubbles, 500);
+
+  // ══════════════════════════════════════════════════════════════════
+  // 🎼 音乐（整套来自 UWU 老师，直连薄荷图床的公共歌库：谁上传大家都听得到）
+  // 一套引擎两个入口：QR 栏的 🎼 独立小面板 + 手机里的 🎵 音乐 app。
+  // ══════════════════════════════════════════════════════════════════
+  var MU_HOST = 'https://s6z1.com/ta1013', MU_TOKEN = '4cffb8f2c35aae5986d0', MU_DIR = '歌曲', MU_MAXMB = 10;
+  var MU_EXT = ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma'];
+  var muSongs = [], muAudio = null, muCur = '', muPlaying = false, muLoop = 0, muState = 'idle';   // idle|loading|ok|fail
+  var muVol = 0.8;
+  try { var mv = VIEW.localStorage.getItem('sbnyc_mu_vol'); if (mv != null) muVol = Math.max(0, Math.min(1, parseFloat(mv) || 0.8)); } catch (e) {}
+  function muTitle() { for (var i = 0; i < muSongs.length; i++) { if (muSongs[i].url === muCur) return muSongs[i].title; } return ''; }
+  function muSize(b) { return b < 1024 ? b + ' B' : (b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : (b / 1048576).toFixed(1) + ' MB'); }
+  function muLoad(force) {
+    if (muState === 'loading') return;
+    if (muState === 'ok' && !force) { muPaint(); return; }
+    muState = 'loading'; muPaint();
+    var body = 'api_token=' + encodeURIComponent(MU_TOKEN) + '&path=' + encodeURIComponent(MU_DIR) + '&ext=mp3&type=file&quantity=500&fields=filename,path,size';
+    fetch(MU_HOST + '/api/filelist/', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var files = (d && d.data && d.data.files) || [];
+        muSongs = files.map(function (f) {
+          return { url: MU_HOST + '/i/' + String(f.path || '').replace(/^\//, ''), title: String(f.filename || '').replace(/\.[^.]+$/, ''), size: f.size || 0 };
+        });
+        muState = 'ok'; muPaint();
+      })
+      .catch(function (e) {
+        muState = 'fail'; muPaint();
+        toast('error', '🎼 歌库拉不动：' + ((e && e.message) || e) + '（多半是网络或图床挂了）');   // 失败必出声，别让人对着空列表猜
+      });
+  }
+  function muEnsureAudio() {
+    if (muAudio) return;
+    muAudio = new Audio();
+    muAudio.volume = muVol;
+    muAudio.onended = function () {
+      muPlaying = false;
+      if (muLoop === 1) { muAudio.currentTime = 0; muAudio.play().then(function () { muPlaying = true; muPaint(); }).catch(function () { muCur = ''; muPaint(); }); }
+      else if (muLoop === 0) { muCur = ''; muPaint(); muStep(1); }
+      else { muCur = ''; muPaint(); }
+    };
+    muAudio.onerror = function () { muPlaying = false; muCur = ''; muPaint(); toast('warning', '🎼 这首放不出来，跳过'); };
+  }
+  function muPlay(url) {
+    muEnsureAudio();
+    if (muCur === url) {                                   // 点同一首 = 暂停/继续（用 muCur 比，浏览器会把中文路径编码掉）
+      if (muPlaying) { muAudio.pause(); muPlaying = false; muPaint(); }
+      else muAudio.play().then(function () { muPlaying = true; muPaint(); }).catch(function () {});
+      return;
+    }
+    muCur = url; muAudio.src = url;
+    muAudio.play().then(function () { muPlaying = true; muPaint(); })
+      .catch(function () { muPlaying = false; muCur = ''; muPaint(); toast('warning', '🎼 播放被浏览器拦了——先点一下页面再试'); });
+  }
+  function muStep(dir) {
+    if (!muSongs.length) return;
+    var idx = -1;
+    for (var i = 0; i < muSongs.length; i++) { if (muSongs[i].url === muCur) { idx = i; break; } }
+    idx = dir > 0 ? (idx + 1) % muSongs.length : (idx <= 0 ? muSongs.length - 1 : idx - 1);
+    muPlay(muSongs[idx].url);
+  }
+  function muUpload(file) {
+    var fd = new FormData();
+    fd.append('api_token', MU_TOKEN); fd.append('mode', '2'); fd.append('uploadPath', MU_DIR); fd.append('uploadedFile', file, file.name);
+    toast('info', '⏫ 上传中：' + file.name);
+    fetch(MU_HOST + '/api/upload/', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.status === 'success') { toast('success', '🎼 上传成功，大家都能听到了'); muLoad(true); }
+        else toast('error', '上传失败：' + ((d && d.resultData) || '未知错误'));
+      })
+      .catch(function () { toast('error', '上传失败：网络错误'); });
+  }
+  function muPickFiles(files) {
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var lower = f.name.toLowerCase();
+      var okExt = MU_EXT.some(function (e) { return lower.slice(-e.length) === e; });
+      if (!okExt) { toast('warning', f.name + ' 不是音频文件'); continue; }
+      if (f.size > MU_MAXMB * 1048576) { toast('warning', f.name + ' 超过 ' + MU_MAXMB + 'MB'); continue; }
+      muUpload(f);
+    }
+  }
+  // 两个入口共用的 HTML（本体是一段，谁装它谁负责给容器）
+  function muBodyHtml() {
+    var h = '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">' +
+      '<label class="sb-wp-upload" style="flex:1;text-align:center;"><span>⏫ 上传一首（≤' + MU_MAXMB + 'MB）</span><input type="file" class="mu-file" accept=".mp3,.wav,.ogg,.flac,.aac,.m4a,.wma" multiple></label>' +
+      '<button class="sb-abtn mu-reload" style="flex:0 0 auto;">🔄</button></div>';
+    h += '<div class="mu-now" style="text-align:center;font-size:11px;opacity:.6;min-height:15px;margin-bottom:4px;"></div>';
+    h += '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:8px;">' +
+      '<button class="sb-abtn mu-prev" style="flex:0 0 auto;">⏮</button>' +
+      '<button class="sb-abtn mu-pp" style="flex:0 0 auto;min-width:52px;">▶</button>' +
+      '<button class="sb-abtn mu-next" style="flex:0 0 auto;">⏭</button>' +
+      '<button class="sb-abtn mu-loop" style="flex:0 0 auto;" title="列表循环">🔁</button></div>';
+    h += '<div style="display:flex;align-items:center;gap:6px;margin:0 4px 10px;"><span style="font-size:11px;opacity:.5;">🔈</span>' +
+      '<input type="range" class="mu-vol" min="0" max="100" value="' + Math.round(muVol * 100) + '" style="flex:1;accent-color:#b89968;">' +
+      '<span style="font-size:11px;opacity:.5;">🔊</span></div>';
+    h += '<div class="mu-list"></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:8px 4px 2px;font-size:11px;">🎼 这是<b>公共歌库</b>——所有玩家共用一份，你上传的谁都听得到、也删不掉。别传私人东西。功能来自 <b>UWU 老师</b>。</div>';
+    return h;
+  }
+  function muListHtml() {
+    if (muState === 'loading') return '<div class="sb-empty">歌库加载中…</div>';
+    if (muState === 'fail') return '<div class="sb-empty">⚠ 歌库没拉到——点上面 🔄 再试一次</div>';
+    if (!muSongs.length) return '<div class="sb-empty">歌库还是空的——上传第一首</div>';
+    var h = '';
+    for (var i = 0; i < muSongs.length; i++) {
+      var s = muSongs[i], on = s.url === muCur;
+      h += '<div class="sb-rank" style="' + (on ? 'background:rgba(184,153,104,.14);' : '') + '">' +
+        '<button class="sb-buy mu-one" data-u="' + esc(s.url) + '" style="flex:0 0 auto;min-width:34px;">' + (on && muPlaying ? '⏸' : '▶') + '</button>' +
+        '<div class="rb" style="padding-left:8px;"><b>' + esc(s.title) + '</b><small>' + muSize(s.size) + '</small></div></div>';
+    }
+    return h;
+  }
+  // 两个入口可能同时开着 → 一处操作，两处都刷新
+  function muPaint() {
+    var hosts = [];
+    if (currentPage === 'music' && chatEl.style.display !== 'none') hosts.push(chatEl);
+    var sp = DOC.getElementById('sbnyc-mu-panel'); if (sp) hosts.push(sp);
+    for (var i = 0; i < hosts.length; i++) {
+      var host = hosts[i];
+      var list = host.querySelector('.mu-list'); if (list) list.innerHTML = muListHtml();
+      var pp = host.querySelector('.mu-pp'); if (pp) pp.textContent = muPlaying ? '⏸' : '▶';
+      var lp = host.querySelector('.mu-loop'); if (lp) { lp.textContent = ['🔁', '🔂', '🚫'][muLoop]; lp.title = ['列表循环', '单曲循环', '不循环'][muLoop]; }
+      var nw = host.querySelector('.mu-now');
+      if (nw) nw.textContent = muCur ? ((muPlaying ? '正在播放：' : '已暂停：') + muTitle()) : '';
+    }
+    if (muPlaying) showIsland('▶ ' + (muTitle() || '音乐'));
+  }
+  // ⚠️ 事件委托挂在"常驻容器"上时只能挂一次：chatEl 每次开页只换 innerHTML，容器本身不换，
+  // 每开一次音乐页就 addEventListener 一次 → 点一下播放触发 N 次（历次合并踩过的老雷）。
+  // 独立小面板每次是新建的节点，随手挂随手死，不用管。
+  var _muBoundChat = false;
+  function muBind(host) {
+    if (host === chatEl) { if (_muBoundChat) return; _muBoundChat = true; }
+    host.addEventListener('click', function (e) {
+      var t = e.target;
+      var one = t.closest ? t.closest('.mu-one') : null;
+      if (one) { muPlay(one.getAttribute('data-u')); return; }
+      if (t.closest && t.closest('.mu-pp')) { if (muCur) muPlay(muCur); else if (muSongs.length) muPlay(muSongs[0].url); return; }
+      if (t.closest && t.closest('.mu-prev')) { muStep(-1); return; }
+      if (t.closest && t.closest('.mu-next')) { muStep(1); return; }
+      if (t.closest && t.closest('.mu-reload')) { muLoad(true); return; }
+      if (t.closest && t.closest('.mu-loop')) { muLoop = (muLoop + 1) % 3; muPaint(); return; }
+    });
+    host.addEventListener('change', function (e) {
+      if (e.target && e.target.classList.contains('mu-file') && e.target.files) { muPickFiles(e.target.files); e.target.value = ''; }
+    });
+    host.addEventListener('input', function (e) {
+      if (e.target && e.target.classList.contains('mu-vol')) {
+        muVol = (parseFloat(e.target.value) || 0) / 100;
+        if (muAudio) muAudio.volume = muVol;
+        try { VIEW.localStorage.setItem('sbnyc_mu_vol', String(muVol)); } catch (er) {}
+      }
+    });
+  }
+  // 入口一：手机里的 🎵 音乐 app
+  function openMusic() {
+    currentPage = 'music'; currentChatName = null;
+    chatEl.innerHTML = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b>音乐</b><small>公共歌库 · 来自UWU</small></div></div>' +
+      '<div class="sb-msgs" style="display:block;padding:14px 12px;">' + muBodyHtml() + '</div>';
+    chatEl.style.display = 'flex'; root.style.display = 'none';
+    chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
+    muBind(chatEl);
+    muLoad(false); muPaint();
+  }
+  // ⚠️ 音乐面板的定位必须走和手机面板同一套「实测坐标」，不能直接写 px 或用 vw/vh：
+  // 手机版酒馆会给页面加 transform/zoom，position:fixed 退化成相对缩放容器定位 →
+  // 电脑上完美、手机上面板飘到屏幕外只露一角（悬浮手机为这个坑调了三个版本才治好，见 keepInView/fitPanel）。
+  // 所以：recalib() 实测缩放比 → 用 setClientPos 反推样式值 → 宽高也要除以 sx/sy。
+  // fresh=true 表示刚打开（可以采用上次拖到的位置）；resize 时传 false，只把它夹回屏幕里、不动位置
+  function placeMusicPanel(sp, fresh) {
+    if (!sp || !sp.parentNode) return;
+    recalib();
+    var narrow = vpW() < 500;
+    var w = narrow ? Math.min(vpW() - 16, 360) : 320;
+    sp.style.width = (w / CAL.sx) + 'px';
+    // 底界：窄屏别压住酒馆的输入栏（和 fitPanel 同一个判据）
+    var bottom = vpH();
+    try {
+      var sf = DOC.getElementById('send_form') || DOC.getElementById('form_sheld');
+      if (sf) { var r = sf.getBoundingClientRect(); if (r.top > 100) bottom = r.top; }
+    } catch (e) {}
+    var top = narrow ? 8 : 0;
+    var maxH = Math.max(200, Math.min(narrow ? (bottom - top - 12) : Math.round(vpH() * 0.7), bottom - 12));
+    sp.style.maxHeight = (maxH / CAL.sy) + 'px';
+    var x, y;
+    if (!fresh) {
+      // 转屏/键盘/改窗口大小：只把它夹回屏幕里，别把玩家拖好的位置抹掉
+      try { var rc = sp.getBoundingClientRect(); var cc = clampXY(rc.left, rc.top, 100); setClientPos(sp, cc.x, cc.y); } catch (e0) {}
+      return;
+    }
+    var saved = loadPos('sbnyc_mu_pos');                  // 上次拖到哪就开在哪（夹回屏幕内，永远丢不了）
+    if (saved && !narrow) {
+      var cs = clampXY(saved.x, saved.y, 100);
+      setClientPos(sp, cs.x, cs.y);
+      return;
+    }
+    if (narrow) {
+      x = Math.max(6, (vpW() - w) / 2); y = top;          // 窄屏：居中贴顶，够得着、看得见
+    } else {
+      try {                                               // 电脑：贴着手机悬浮球下方
+        var fr = fab.getBoundingClientRect();
+        x = Math.min(Math.max(8, fr.left), vpW() - w - 8);
+        y = Math.min(Math.max(8, fr.bottom + 10), Math.max(8, vpH() - 160));
+      } catch (e2) { x = vpW() - w - 12; y = 12; }
+    }
+    setClientPos(sp, x, y);
+  }
+  // 入口二：QR 栏 🎼 按钮开的独立小面板（手机没开也能放歌）
+  function toggleMusicPanel() {
+    var sp = DOC.getElementById('sbnyc-mu-panel');
+    if (sp) { sp.parentNode.removeChild(sp); return; }
+    sp = DOC.createElement('div');
+    sp.id = 'sbnyc-mu-panel';
+    if (panel.classList.contains('night')) sp.classList.add('night');
+    sp.innerHTML = '<div class="mu-bar" style="display:flex;align-items:center;justify-content:space-between;margin:-4px -4px 10px;padding:6px 4px;user-select:none;">' +
+      '<b style="color:#b89968;letter-spacing:1px;">🎼 音乐</b>' +
+      '<span class="mu-close" style="cursor:pointer;opacity:.5;padding:0 6px;">✕</span></div>' + muBodyHtml();
+    DOC.body.appendChild(sp);
+    placeMusicPanel(sp, true);
+    // 抓标题栏拖动（和手机面板同一个 makeDraggable：6px 内算点击、client 坐标系算完再换算回样式值、
+    // 位置存 localStorage）。⚠️ 把手只给标题栏那一条——整个面板当把手的话，
+    // 歌单滑不动、音量条也拖不了（手机上尤其明显）。
+    try {
+      var muBar = sp.querySelector('.mu-bar');
+      if (muBar) makeDraggable(sp, muBar, 'sbnyc_mu_pos');
+    } catch (e) {}
+    sp.querySelector('.mu-close').addEventListener('click', function (ev) { ev.stopPropagation(); toggleMusicPanel(); });
+    muBind(sp);
+    muLoad(false); muPaint();
+  }
+
   // ── 关掉脚本时把自己收干净（玩家反馈：关了脚本手机还在页面上赖着）──
   // 酒馆助手只自动卸载 eventOn 的监听；我们 appendChild 到 parent.document 的
   // 悬浮球/面板/style 它管不着。脚本跑在自己的 iframe 里，被关掉时这个 iframe
@@ -3405,13 +3912,19 @@
   function sbSelfCleanup() {
     try { clearInterval(_songTimer); } catch (e) {}
     try { clearTimeout(_kvTimer); } catch (e) {}
+    try { clearTimeout(_bubTimer); } catch (e) {}
+    try { if (_bubObs) _bubObs.disconnect(); } catch (e) {}                   // 气泡观察器：挂在 parent 的 DOM 上，必须自己断
+    try { if (muAudio) { muAudio.onended = null; muAudio.onerror = null; muAudio.pause(); muAudio.src = ''; muAudio = null; } } catch (e) {}   // 关了脚本还在后台放歌=最烦人的残留
     try { VIEW.removeEventListener('resize', keepInView); } catch (e) {}
     try { if (VIEW.visualViewport) VIEW.visualViewport.removeEventListener('resize', keepInView); } catch (e) {}
     try {
-      ['sbnyc-fab', 'sbnyc-panel', 'sbnyc-style'].forEach(function (id) {
+      ['sbnyc-fab', 'sbnyc-panel', 'sbnyc-style', 'sbnyc-extra-style', 'sbnyc-mu-panel'].forEach(function (id) {
         var el = DOC.getElementById(id);
         if (el && el.parentNode) el.parentNode.removeChild(el);
       });
+      if (DOC.body) DOC.body.classList.remove('sbnyc-night-doc');   // 挂到 body 上的类也是"挂出去的东西"，得自己摘
+    } catch (e) {}
+    try {
     } catch (e) {}
     try { console.log('[SB phone] 脚本关闭，悬浮手机已自我清理'); } catch (e) {}
   }
@@ -3431,9 +3944,14 @@
       }
     });
   } catch (e) {}
+  // 🎼 音乐（来自UWU）：QR 栏第二个按钮，手机没开也能放歌。
+  // 和 📱手机 那个保底按钮同一个用途——面板万一飘了/看不见了，再点一次就是重新按实测坐标摆一遍。
+  try { eventOn(getButtonEvent('🎼音乐'), function () { toggleMusicPanel(); }); } catch (e) {}
   // ⚙️ 设置 + 🌙 夜间：委托在 barEl 上，render() 重写 innerHTML 也不掉绑定
   function applyNight(on) {
     panel.classList.toggle('night', !!on);
+    // 正文里的聊天气泡也跟着切——它们是"手机截图"，手机黑了截图不该还是白的
+    try { if (DOC.body) DOC.body.classList.toggle('sbnyc-night-doc', !!on); } catch (e) {}
     try { VIEW.localStorage.setItem('sbnyc_night', on ? '1' : '0'); } catch (e) {}
     var b = DOC.getElementById('sbnyc-night'); if (b) b.textContent = on ? '☀️' : '🌙';
   }
@@ -3463,6 +3981,20 @@
         else { _msel.set[mk] = 1; mb.classList.add('sel'); }
         var db = chatEl.querySelector('.sb-mselbar .mdel');
         if (db) db.textContent = '🗑 删除选中（' + Object.keys(_msel.set).length + '）';
+      }
+      return;
+    }
+    // 🕵️ 档案卡上的两个动作
+    var dsrBtn = t && t.closest && t.closest('.sb-dsr-btn');
+    if (dsrBtn) {
+      var dsrN = dsrBtn.getAttribute('data-n') || '';
+      if (dsrBtn.getAttribute('data-dsr') === 'save') {
+        dsrBtn.textContent = '⏳ 存入中…';
+        SBemit('sb_save_dossier', { name: dsrN });
+      } else {
+        dsrBtn.textContent = '⏳ 重查中…';
+        setStatus('🕵️ S. 正在重查 ' + dsrN + '…');
+        SBemit('sb_request_dossier', { name: dsrN });
       }
       return;
     }
@@ -3646,6 +4178,12 @@
     }
   });
   // 📥 旧识背调结果：成功=直接把TA的聊天开出来等第一条私信；失败=复位导入页按钮（失败必出声铁律）
+  // 🕵️ 建档失败：必须出声（不然玩家点完等半天不知道发生了什么）；成功不用管——
+  // S. 会把档案卡发进聊天，sb_updated 自然重渲染
+  SBon('sb_dossier_failed', function (msg) {
+    toast('error', '🕵️ 建档没成：' + (msg || '未知原因'));
+    setStatus('⚠️ 建档失败');
+  });
   SBon('sb_import_done', function (p) {
     var nm = (p && p.name) || '';
     loadState();

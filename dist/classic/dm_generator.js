@@ -96,10 +96,35 @@ function notifyFail(msg) {
   console.warn('[SB-S v4] ' + msg);
 }
 
+// 折叠 key：去掉所有空白和分隔符、全角标点换半角、统一小写。
+// AI 在中文输入法下极容易写出「Ｓ．」「S ．」「管家 S.」这些看着一样、字节不同的名字，
+// 旧写法是一个个列举等值串，列漏一个就冒出第二个联系人（玩家报的「同时出现两个S」）。
+// 改成先折叠再比：以后再冒出什么写法都归得回去，别的 NPC 的昵称大小写不一致同理受益。
+function nameKey(s) {
+  return String(s || '')
+    .replace(/[\s\u3000·・、,，]/g, '')
+    .replace(/[．。｡]/g, '.')
+    .replace(/[Ａ-Ｚａ-ｚ]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+    .replace(/[™®]/g, '')
+    .toLowerCase();
+}
+var SE_KEYS = {};
+(function () {
+  var v = ['S.', 'S', '管家', '管家S.', '管家S', 'S管家', 'S.管家', 'SugarElite', 'SugarElite™', 'Elite', 'SE'];
+  for (var i = 0; i < v.length; i++) SE_KEYS[nameKey(v[i])] = 1;
+})();
+var _nameKeyMap = null;
 function normalizeName(name) {
   name = String(name || '').trim();
   if (NAME_MAP[name]) return NAME_MAP[name];
-  if (/^sugar\s*elite/i.test(name) || name === 'S' || name === '管家' || name === '管家S.' || name === '管家S') return 'SugarElite™';   // 双管家bug：任何写法的管家都折回正主
+  var k = nameKey(name);
+  if (!k) return name;
+  if (SE_KEYS[k] || /^sugarelite/.test(k)) return 'SugarElite™';   // 双管家bug：任何写法的管家都折回正主
+  if (!_nameKeyMap) {                                              // NAME_MAP 也走折叠 key 匹配一次（大小写/全角变体）
+    _nameKeyMap = {};
+    for (var kk in NAME_MAP) { if (NAME_MAP.hasOwnProperty(kk)) _nameKeyMap[nameKey(kk)] = NAME_MAP[kk]; }
+  }
+  if (_nameKeyMap[k]) return _nameKeyMap[k];
   return name;
 }
 // 启动时清一次重复联系人（历史bug：SugarElite™ 曾以不同写法建成两个人；昵称大小写不一致同理）
@@ -524,6 +549,7 @@ function describeState(sb) {
       var clip = ki < 3 ? 2000 : 300;   // 正在聊的人连长信都要给全——500字会把谢书砚的信砍一半，他自己都不记得写过什么
       for (var j = 0; j < recent.length; j++) {
         var m = recent[j];
+        if (m.type === 'dossier') continue;   // 档案卡是手机上的界面元件，不是对话——别喂给正文（会被当成S.说了一句人名）
         if (m.type === 'recall' && m.sender === 'USER') { known.push('    User: （发了一条又撤回——' + n.name + ' 看不到内容，只知道她撤回过，好奇/追问按人设）'); continue; }
         known.push('    ' + (m.sender === 'USER' ? 'User' : n.name) + ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '') + ': ' + String(m.content || '').substring(0, clip));
       }
@@ -669,9 +695,10 @@ function getApiCfg() {
   } catch (e) {}
   return null;
 }
-// 「手机对话写进正文」两个独立开关（都默认关，可同时开）：读手机设置里存的 parent localStorage 标记。
+// 「手机对话写进正文」三选一（互斥，手机设置里切；也可以三个都关）：读手机设置存的 parent localStorage 标记。
 // sbnyc_floorlog  = 旧式·私信摘要贴在正文最后一楼的尾巴上（引用块，最早那版，键名不变=老玩家设置直接沿用）
 // sbnyc_floorlog2 = 新式·独立「📱手机动态」折叠楼层（私信+消费全记）
+// sbnyc_floorlog3 = 气泡版（来自UWU）·私信以 ```chat 围栏写进正文，脚本渲染成聊天气泡。默认开。
 // 开哪个都不影响主线"知道"手机内容——那靠 syncInject/injectPrompts 隐形注入，和这些可见记录是两码事。
 function lsGet(k) {
   try {
@@ -681,7 +708,9 @@ function lsGet(k) {
 }
 function floorLogTail() { return lsGet('sbnyc_floorlog') === '1'; }
 function floorLogLayer() { return lsGet('sbnyc_floorlog2') === '1'; }
-function floorLogOn() { return floorLogTail() || floorLogLayer(); }
+function floorLogBubble() { return lsGet('sbnyc_floorlog3') !== '0'; }        // 默认开（没设过 = null = 开）
+function bubbleSyncOn() { return lsGet('sbnyc_floorlog3_sync') === '1'; }     // 反向同步默认关（它会真删手机记录）
+function floorLogOn() { return floorLogTail() || floorLogLayer() || floorLogBubble(); }
 function chatUrlOf(u) {
   u = String(u || '').trim().replace(/\/+$/, '');
   if (/\/chat\/completions$/.test(u)) return u;
@@ -1098,6 +1127,180 @@ async function appendNarrativeLog(lines) {
   } catch (e) { console.warn('[SB-S v4] appendNarrativeLog failed', e); }
 }
 
+// ── 气泡版「写进正文」（```chat 方案来自 UWU 老师） ──────────────────────────
+// 私信以 markdown 代码围栏 ```chat 写进正文楼层：AI 读到的是干净的 `名字: 内容` 纯文本行，
+// 玩家看到的是脚本渲染出来的聊天气泡（渲染在 phone_panel.js 的 renderChatBubbles）。
+// 为什么非得是 ```chat：UWU 试过一堆写法，只有 markdown 代码围栏既不会被正文 markdown 冲破，
+// 又能在同一条楼层里有好几块时全部渲染出来（别的写法第二块就哑了）。
+// 内容仍然 100% 是 dm_generator 生成的原文，一个字不经过正文 AI 的手。
+var CHAT_FENCE_RE = /```chat\n([\s\S]*?)```/g;
+function bubSafe(s) {
+  return String(s == null ? '' : s)
+    .replace(/```/g, "'''")          // 别让消息内容把围栏提前关掉
+    .replace(/[\r\n]+/g, ' / ');     // 一条消息占一行，内部换行压成分隔符
+}
+function bubName(s) { return bubSafe(s).replace(/:/g, '：'); }               // 名字里的半角冒号会撞上 `名字: 内容` 的分隔符
+function bubKey(who, text) { return bubName(who) + ' ' + bubSafe(text).substring(0, 120); }
+function bubBlock(groups) {
+  var out = [];
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    out.push('#' + bubSafe(g.time) + ' · 与 ' + bubSafe(g.name) + ' 的私信');   // # 开头 = 时间分割线
+    for (var j = 0; j < g.rows.length; j++) {
+      var r = g.rows[j];
+      if (!r.who) { out.push('· ' + bubSafe(r.text)); continue; }             // · 开头 = 系统行（撤回/从略）
+      out.push(bubName(r.who) + ': ' + bubSafe(r.text));
+    }
+  }
+  return out.join('\n');
+}
+async function appendChatBubbles(groups) {
+  if (!groups || !groups.length) return;
+  var body = bubBlock(groups);
+  if (!body) return;
+  try {
+    var lastId = await getLastMessageId();
+    if (lastId == null || lastId < 0) return;
+    var msgs = await getChatMessages(String(lastId));
+    if (!msgs || !msgs.length) return;
+    var m = msgs[0];
+    var txt = String(m.message || '');
+    if (m.role === 'assistant') {
+      if (txt.indexOf(body) !== -1) return;                                  // 一模一样的内容已在 → 防重复
+      var tail = txt.replace(/\s+$/, '');
+      var updated;
+      // 这层尾巴上已经有我们写的气泡块 → 并进同一个围栏，不叠第二个。
+      // 用下标定位最后一个围栏（不用正则跨整条消息匹配——正文里若还有别的代码块，
+      // 惰性量词会从第一个 ``` 一路吃到末尾，把中间的内容整段吞掉）
+      var open = tail.lastIndexOf('```chat\n');
+      if (open >= 0 && tail.slice(open + 8).lastIndexOf('```') === tail.length - open - 8 - 3) {
+        updated = tail.slice(0, tail.length - 3).replace(/\s+$/, '') + '\n' + body + '\n```';
+      } else {
+        updated = tail + '\n\n```chat\n' + body + '\n```';
+      }
+      await setChatMessages([{ message_id: m.message_id, message: updated }], { refresh: 'affected' });
+    } else {
+      // 最后一层是 User 说的话 → 另起一层放气泡，不动 User 的楼
+      await createChatMessages([{ role: 'assistant', message: '```chat\n' + body + '\n```', is_hidden: false }]);
+    }
+    await tagBubbled(groups);
+  } catch (e) { console.warn('[SB-S v4] appendChatBubbles failed', e); }
+}
+// 给刚落进气泡的那几条 dm_history 打代号（sb.bubGen 每写一次 +1）——反向同步靠它分 now/last/old：
+// 最新两代（now+last）才允许被删楼层带走，更早的算定案，改历史也不动它们。
+async function tagBubbled(groups) {
+  try {
+    await updateVariablesWith(function (v) {
+      if (!v.sb) return v;
+      var gen = (v.sb.bubGen || 0) + 1;
+      v.sb.bubGen = gen;
+      var np = v.sb.npcs || {};
+      for (var i = 0; i < groups.length; i++) {
+        var g = groups[i], n = np[g.name];
+        if (!n || !Array.isArray(n.dm_history)) continue;
+        for (var k = g.from; k < Math.min(g.to, n.dm_history.length); k++) {
+          if (n.dm_history[k]) n.dm_history[k]._bub = gen;
+        }
+      }
+      return v;
+    }, { type: 'chat' });
+  } catch (e) {}
+}
+
+// ── 反向同步（UWU 老师的点子，默认关，手机设置里开）：删掉/重roll 带气泡的楼层 →
+// 扫一遍还活着的楼层，气泡里已经没有的那几条私信，从手机记录里也删掉。
+// 「手机是正本、楼层是誊抄本」这条铁律在这里反过来用一次，所以给玩家一个开关自己决定要不要。
+var _bubSyncTimer = null;
+function scheduleBubbleSync() {
+  if (!bubbleSyncOn() || !floorLogBubble()) return;
+  clearTimeout(_bubSyncTimer);
+  _bubSyncTimer = setTimeout(function () { syncBubblesFromFloors(); }, 700);   // 删除/重roll 会连着来好几个事件，攒一下只跑一次
+}
+async function syncBubblesFromFloors() {
+  if (!bubbleSyncOn() || !floorLogBubble()) return;
+  try {
+    var alive = {};
+    var lastId = await getLastMessageId();
+    if (lastId != null && lastId >= 0) {
+      var from = Math.max(0, lastId - 40);
+      // include_swipes：每层的所有消息页都算"还活着"。
+      // 重roll 只是切到新的一页，旧页还在（玩家点回箭头就能找回来）——这种情况绝不能删手机记录，
+      // 否则随手翻两下 swipe 就把私信翻没了还找不回。真正触发删除的是"整层被删掉"。
+      var msgs = await getChatMessages(from + '-' + lastId, { include_swipes: true });
+      for (var i = 0; i < (msgs || []).length; i++) {
+        var m0 = msgs[i] || {};
+        var pages = (Array.isArray(m0.swipes) && m0.swipes.length) ? m0.swipes : [m0.message];
+        for (var s = 0; s < pages.length; s++) {
+          var txt = String(pages[s] || '');
+          if (txt.indexOf('```chat') === -1) continue;
+          var mm; CHAT_FENCE_RE.lastIndex = 0;
+          while ((mm = CHAT_FENCE_RE.exec(txt))) {
+            var ls = mm[1].split('\n');
+            for (var j = 0; j < ls.length; j++) {
+              var line = ls[j];
+              if (!line || line.charAt(0) === '#' || line.charAt(0) === '·') continue;
+              var c = line.indexOf(': ');
+              if (c < 0) continue;
+              alive[line.slice(0, c) + ' ' + line.slice(c + 2).substring(0, 120)] = true;
+            }
+          }
+        }
+      }
+    }
+    var removed = 0;
+    await updateVariablesWith(function (v) {
+      if (!v.sb || !v.sb.npcs) return v;
+      var gen = v.sb.bubGen || 0;
+      for (var nm in v.sb.npcs) {
+        if (!v.sb.npcs.hasOwnProperty(nm)) continue;
+        var n = v.sb.npcs[nm];
+        if (!Array.isArray(n.dm_history)) continue;
+        var kept = [];
+        for (var k = 0; k < n.dm_history.length; k++) {
+          var e = n.dm_history[k] || {};
+          // 只碰最近两代落过气泡的；撤回存根永远留着（它在气泡里长的是另一副样子，比不上）
+          if (e._bub && e._bub >= gen - 1 && e.type !== 'recall') {
+            var who = e.sender === 'USER' ? 'User' : nm;
+            if (!alive[bubKey(who, fmtDmLine(e.type, e.content))]) { removed++; continue; }
+          }
+          kept.push(n.dm_history[k]);
+        }
+        if (kept.length !== n.dm_history.length) {
+          n.dm_history = kept;
+          if ((n._floorMark || 0) > kept.length) n._floorMark = kept.length;
+          var lastMsg = null;
+          for (var q = kept.length - 1; q >= 0; q--) { if (kept[q] && kept[q].sender !== 'USER') { lastMsg = kept[q]; break; } }
+          n.last_message = lastMsg ? String(fmtDmLine(lastMsg.type, lastMsg.content)).substring(0, 60) : '';
+        }
+      }
+      return v;
+    }, { type: 'chat' });
+    if (removed) {
+      try { eventEmit('sb_updated'); } catch (e) {}
+      try { if (typeof toastr !== 'undefined') toastr.info('🗑️ 楼层删了 → 手机里同步撤掉 ' + removed + ' 条私信', 'SugarOS'); } catch (e) {}
+      console.log('[SB-S v4] bubble reverse-sync removed ' + removed + ' dm(s)');
+      syncInject();
+    }
+  } catch (e) { console.warn('[SB-S v4] syncBubblesFromFloors failed', e); }
+}
+
+// 气泡块的擦除：一个 ```chat 围栏里可能有好几个人的段落，按 # 时间分割线切开，
+// 只摘掉标题写着 TA 的那几段；一段不剩就把整个围栏拆了。
+function scrubBubbleBlocks(txt, needle) {
+  CHAT_FENCE_RE.lastIndex = 0;
+  return txt.replace(CHAT_FENCE_RE, function (all, inner) {
+    var lines = inner.split('\n');
+    var kept = [], dropping = false;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      if (line.charAt(0) === '#') dropping = line.indexOf(needle) !== -1;   // 新段落开始 → 重新判断这段留不留
+      if (!dropping) kept.push(line);
+    }
+    var body = kept.join('\n').replace(/^\s+|\s+$/g, '');
+    return body ? '```chat\n' + body + '\n```' : '';
+  });
+}
+
 // ── 楼层擦除器（玩家提议：手机是正本、楼层是誊抄本——正本删了誊抄本必须跟着擦） ──
 // 手机里删消息/撤回/编辑/删整段聊天时，面板发 sb_scrub_floor → 把这个人的注入行从最近40层楼里抹掉，
 // 水位线归零 → 她下次回复时按修正后的记录整段重新誊入。AI 的"楼层记忆"从此可被改写。
@@ -1110,15 +1313,23 @@ async function scrubNpcFloor(name) {
       var msgs = await getChatMessages(from + '-' + lastId);
       var updates = [];
       var re = /(<details data-sb(?:phone|tail)><summary>[^<]*<\/summary><div>)([\s\S]*?)(<\/div><\/details>)/g;
+      var bubNeedle = '与 ' + name + ' 的私信';            // 气泡块是纯文本，不转义
       for (var i = 0; i < (msgs || []).length; i++) {
         var m = msgs[i];
         var txt = String(m.message || '');
-        if (txt.indexOf('data-sb') === -1 || txt.indexOf(needle) === -1) continue;
-        var out = txt.replace(re, function (all, p1, body, p3) {
-          var kept = body.split('<br>').filter(function (l) { return l.indexOf(needle) === -1; });
-          if (!kept.length) return '';                    // 整块只剩TA → 连折叠块一起摘
-          return p1 + kept.join('<br>') + p3;
-        }).replace(/\n{3,}/g, '\n\n');
+        var hasFold = txt.indexOf('data-sb') !== -1 && txt.indexOf(needle) !== -1;
+        var hasBub = txt.indexOf('```chat') !== -1 && txt.indexOf(bubNeedle) !== -1;
+        if (!hasFold && !hasBub) continue;
+        var out = txt;
+        if (hasFold) {
+          out = out.replace(re, function (all, p1, body, p3) {
+            var kept = body.split('<br>').filter(function (l) { return l.indexOf(needle) === -1; });
+            if (!kept.length) return '';                  // 整块只剩TA → 连折叠块一起摘
+            return p1 + kept.join('<br>') + p3;
+          });
+        }
+        if (hasBub) out = scrubBubbleBlocks(out, bubNeedle);
+        out = out.replace(/\n{3,}/g, '\n\n');
         if (out !== txt) updates.push({ message_id: m.message_id, message: out });
       }
       if (updates.length) {
@@ -1146,6 +1357,7 @@ async function appendPhoneLog(dms) {
   var names = {};
   for (var i = 0; i < dms.length; i++) names[dms[i].name] = true;
   var lines = [];
+  var groups = [];      // 气泡版用的结构化数据：[{name, time, rows:[{who,text}]}]
   var marks = {};
   try {
     var vv = getVariables({ type: 'chat' });
@@ -1159,22 +1371,36 @@ async function appendPhoneLog(dms) {
       var engaged = seg.some(function (m) { return m.sender === 'USER'; });
       if (!engaged) continue;                                     // User 没搭理过 → 不注入（推销电话不记进日记）
       var segLines = [];
-      if (seg.length > 30) { seg = seg.slice(-30); segLines.push('（更早的往来从略）'); }   // 水位线归零后的重誊别一口气抄两百条
+      var rows = [];
+      var segStart = mark;                                        // 真正落进正文的第一条在 dm_history 里的下标（气泡版反向同步要拿它定位）
+      if (seg.length > 30) {                                      // 水位线归零后的重誊别一口气抄两百条
+        segStart = mark + (seg.length - 30); seg = seg.slice(-30);
+        segLines.push('（更早的往来从略）'); rows.push({ who: '', text: '更早的往来从略' });
+      }
       for (var j = 0; j < seg.length; j++) {
         var m = seg[j];
+        if (m.type === 'dossier') continue;   // 档案卡不落正文（它是手机界面上的卷宗，不是他俩说的话）
         // 撤回的内容双向都不落楼层——楼层玩家看得见，撤回就要真"看不见"
-        if (m.type === 'recall') { segLines.push((m.sender === 'USER' ? 'User' : nm) + '（撤回了一条消息）'); continue; }
-        segLines.push((m.sender === 'USER' ? 'User' : nm) + '：' + String(fmtDmLine(m.type, m.content)).substring(0, 4000));
+        if (m.type === 'recall') {
+          segLines.push((m.sender === 'USER' ? 'User' : nm) + '（撤回了一条消息）');
+          rows.push({ who: '', text: (m.sender === 'USER' ? 'User' : nm) + ' 撤回了一条消息' });
+          continue;
+        }
+        var body = String(fmtDmLine(m.type, m.content)).substring(0, 4000);
+        segLines.push((m.sender === 'USER' ? 'User' : nm) + '：' + body);
+        rows.push({ who: m.sender === 'USER' ? 'User' : nm, text: body });
       }
       if (!segLines.length) continue;
       lines.push('📩〔' + nowTime() + '〕与 ' + nm + ' 的私信：' + segLines.join(' ⇢ '));
+      groups.push({ name: nm, time: nowTime(), rows: rows, from: segStart, to: h.length });
       marks[nm] = h.length;
     }
   } catch (e) {}
   if (!lines.length) return;
-  // 两个开关各走各的（可同时开）：旧式=贴在正文楼尾（最早那版），新式=独立「📱手机动态」折叠层
+  // 三选一（手机设置里互斥切换）：旧式=贴正文楼尾、新式=独立折叠层、气泡版=```chat 围栏渲染成聊天气泡（UWU）
   if (floorLogTail()) await appendNarrativeLog(lines);
   if (floorLogLayer()) await appendPhoneFloor(lines);
+  if (floorLogBubble()) await appendChatBubbles(groups);
   // 已注入的推水位线，下轮不重复
   try {
     await updateVariablesWith(function (v) {
@@ -1233,6 +1459,7 @@ function buildDigest(sb) {
     for (var i = 0; i < recent.length; i++) {
       var m = recent[i];
       var who = m.sender === 'USER' ? 'User' : npc.name;
+      if (m.type === 'dossier') continue;   // 档案卡不进注入（同 describeState）
       // User 撤回的消息：对方（和正文）永远看不到内容，只知道她撤回过——好奇/追问按人设
       if (m.type === 'recall' && m.sender === 'USER') { lines.push('   User: （发了一条消息又撤回了——' + npc.name + ' 看不到内容，只知道她撤回过）'); continue; }
       var tag = (m.type && m.type !== 'text') ? '[' + m.type + ']' : '';
@@ -1377,7 +1604,7 @@ async function maybeAutoStranger() {
 
 // ── 正文 swipe 回退：同一 message_id 第二次触发 = 玩家重roll了，先撤销上一版的钱包/衣橱变动再处理新标记 ──
 var _lastMainMsgId = null;
-var _lastMainEffects = { walletOps: [], closetAdds: [] };
+var _lastMainEffects = { walletOps: [], closetAdds: [], days: 0 };
 
 async function onMainMessage(message_id) {
   try {
@@ -1391,7 +1618,7 @@ async function onMainMessage(message_id) {
       try { await maybeAutoStranger(); } catch (e) { console.warn('[SB-S v4] auto-stranger check failed', e); }
     }
     // ── swipe 检测：同一 message_id 第二次进来 = 玩家重新生成了，先回退上一版的财务影响 ──
-    if (isSwipe && (_lastMainEffects.walletOps.length || _lastMainEffects.closetAdds.length)) {
+    if (isSwipe && (_lastMainEffects.walletOps.length || _lastMainEffects.closetAdds.length || _lastMainEffects.days)) {
       await updateVariablesWith(function (v) {
         if (!v.sb) return v;
         var w = v.sb.wallet;
@@ -1418,10 +1645,21 @@ async function onMainMessage(message_id) {
             v.sb._closetDedup = v.sb._closetDedup.filter(function (d) { return d.k !== ck; });
           }
         }
+        // 回退过天（玩家报的 bug）：上一版正文推过的天数重roll 后必须退回去——
+        // 否则反复重roll 一楼，房租倒计时会一次次往前跑，advanceDays 本身是可逆的
+        if (_lastMainEffects.days > 0 && v.sb.game) {
+          var dBack = _lastMainEffects.days;
+          v.sb.game.day = Math.max(1, (v.sb.game.day || 1) - dBack);
+          var rbills = (v.sb.wallet && v.sb.wallet.bills) || [];
+          for (var rk = 0; rk < rbills.length; rk++) {
+            rbills[rk].days_left = (rbills[rk].days_left != null ? rbills[rk].days_left : 30) + dBack;
+            if (rbills[rk].days_left > 5) rbills[rk].urgent = false;
+          }
+        }
         return v;
       }, { type: 'chat' });
-      try { if (typeof toastr !== 'undefined') toastr.info('↩️ 检测到正文重新生成，已回退上一版的钱包/衣橱变动', 'SugarOS'); } catch (e) {}
-      console.log('[SB-S v4] swipe rollback: wallet×' + _lastMainEffects.walletOps.length + ' closet×' + _lastMainEffects.closetAdds.length);
+      try { if (typeof toastr !== 'undefined') toastr.info('↩️ 检测到正文重新生成，已回退上一版的钱包/衣橱/过天', 'SugarOS'); } catch (e) {}
+      console.log('[SB-S v4] swipe rollback: wallet×' + _lastMainEffects.walletOps.length + ' closet×' + _lastMainEffects.closetAdds.length + ' days×' + _lastMainEffects.days);
     }
     var text = m.message || '';
     // ── 论坛发帖检测（独立于标记处理）：正文描述 User 发帖 → 自动触发一批匹配 XP 的陌生人私信 ──
@@ -1478,7 +1716,8 @@ async function onMainMessage(message_id) {
     var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // [TIME:14:30|4/16] 或 [TIME:14:30]
     var newTime = timeM ? timeM[1] : null;
     var newDate = (timeM && timeM[2]) ? timeM[2].trim() : null;
-    if (!found.length && !items.length && !newTime) { _lastMainMsgId = msgIdStr; _lastMainEffects = { walletOps: [], closetAdds: [] }; return; }
+    if (!found.length && !items.length && !newTime) { _lastMainMsgId = msgIdStr; _lastMainEffects = { walletOps: [], closetAdds: [], days: 0 }; return; }
+    var _daysThisPass = 0;   // 本轮真正推过的天数（重roll 时要原数退回去）
     var credited = [];   // 只有真入账的才进成功toast——被去重闸拦下的那笔有自己的⛔警告，别再报"已入账"
     var addedCloset = [];
     await updateVariablesWith(function (v) {
@@ -1497,6 +1736,28 @@ async function onMainMessage(message_id) {
         var passed = 0;
         var pd = parseDate(newDate);
         if (pd) {
+          // ── 重roll 了"当初定下起始日期"的那一楼 → 起始日期必须作废重captured（玩家报的 bug，2026-07-29）──
+          // 症状：第一版正文写 1号 → epoch 锁成 1号；重roll 出 5号 → epoch 还锁着 1号，
+          //      于是 5号 被当成"开局第5天"，白跳 4 天：房租倒计时提前、日程全串。
+          //      更绕的是接着手动把起始日改成 5号，因为 day 还是 5，显示又变成 9号（5号+4天）。
+          // 判据用**持久化的楼层号**而不是内存里的 swipe 标记：玩家刷新页面后再重roll 也照样能纠正。
+          // 归位不只是解锁——还要把 day 退回这一楼处理前的样子，否则重captured 完 day 仍然是脏的。
+          if (g.epochLocked && g.epochFrom != null && String(g.epochFrom) === msgIdStr) {
+            var wasDay = g.day || 1;
+            g.epochLocked = false;
+            g.day = g.epochDay || 1;
+            g.date = ''; g.time = '';
+            var backBills = (v.sb.wallet && v.sb.wallet.bills) || [];
+            for (var rb = 0; rb < backBills.length; rb++) {           // 白跳的那几天从账单倒计时里还回去
+              var back = wasDay - g.day;
+              if (back > 0) {
+                backBills[rb].days_left = (backBills[rb].days_left != null ? backBills[rb].days_left : 30) + back;
+                if (backBills[rb].days_left > 5) backBills[rb].urgent = false;
+              }
+            }
+            console.log('[SB-S v4] epoch message rerolled (#' + msgIdStr + ') → unlock + day ' + wasDay + '→' + g.day);
+            try { if (typeof toastr !== 'undefined') toastr.info('📅 重roll 了定起始日期那一楼 → 起始日期按新日期重新认（账单倒计时也退回去了）', 'SugarOS'); } catch (e) {}
+          }
           // 首次 TIME 捕捉（UWU）：从正文第一次输出 TIME 时自动推导 epoch，有且只这一次，后续 TIME 无法再改
           if (!g.epochLocked) {
             var capturedYear = (new Date()).getFullYear();   // 年份从现实年推断（剧情不跨年太长）
@@ -1510,6 +1771,8 @@ async function onMainMessage(message_id) {
             var dd = String(epochD.getDate()).padStart(2, '0');
             g.epoch = yyyy + '-' + mm + '-' + dd;
             g.epochLocked = true;
+            g.epochFrom = msgIdStr;      // 哪一楼定的（这楼被重roll就得重新认）
+            g.epochDay = g.day || 1;     // 定的时候是第几天（重roll归位时退回这个值）
             try { if (typeof toastr !== 'undefined') toastr.info('📅 起始日期已从正文自动捕获：' + g.epoch + '（已锁定，后续 TIME 不再修改）', 'SugarOS'); } catch (e) {}
             console.log('[SB-S v4] epoch auto-captured from TIME: ' + g.epoch + ' (locked)');
           }
@@ -1526,7 +1789,7 @@ async function onMainMessage(message_id) {
             if (tN >= 0 && tO >= 0 && tN < tO - 240) passed = 1;
           }
         }
-        if (passed > 0 && passed <= 30) advanceDays(v.sb, passed);   // 30天上限：防日期解析出错一次性跳过几年
+        if (passed > 0 && passed <= 30) { advanceDays(v.sb, passed); _daysThisPass = passed; }   // 30天上限：防日期解析出错一次性跳过几年
         g.time = newTime;
         if (newDate) g.date = newDate;
       }
@@ -1535,7 +1798,8 @@ async function onMainMessage(message_id) {
     _lastMainMsgId = msgIdStr;
     _lastMainEffects = {
       walletOps: credited.map(function (f) { return { dir: f.dir, amount: f.amount }; }),
-      closetAdds: addedCloset.map(function (x) { return { name: x.name }; })
+      closetAdds: addedCloset.map(function (x) { return { name: x.name }; }),
+      days: _daysThisPass
     };
     var stripped = text.replace(new RegExp(WALLET_RE_SRC, 'g'), '').replace(new RegExp(CLOSET_RE_SRC, 'g'), '').replace(/\[TIME:[^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '');
     await setChatMessages([{ message_id: m.message_id, message: stripped }], { refresh: 'affected' });
@@ -1842,11 +2106,12 @@ async function handleAdComments(p) {
       '禁止礼貌客套、禁止"姐妹抱抱""祝你好运"式空评论、禁止说教。\n' +
       '【输出格式】5-7条，每条占一行：昵称|评论内容(40字内)。昵称要有圈内味（CBD_巨鲸/验资侠/Salt雷达探测器/老城区姐姐/凌晨四点的出租车 这种，现编别重复）。除这些行外绝不输出任何其他文字。';
     var sys = isGossip ? sysGossip :
-      '你是 S市 sugar 圈地下论坛 SugarSecret™ 招聘版的评论区。一个女孩(User)刚挂了一条帖子，生成网友评论。\n' +
-      '【评论区生态，混着来】油腻或高冷的金主搭讪 / 毒舌姐妹拉踩吃瓜传经验 / Salt白嫖怪抬杠 / 路人抖机灵 / 拿版规开玩笑的老哥；' +
+      '你是 S市 sugar 圈地下论坛 SugarSecret™ 招聘版的评论区。一个女孩(User)刚挂了一条自荐帖，生成网友评论。\n' +
+      '【第一原则】评论区是生意场不是吐槽大会：自荐帖挂出来=来了新面孔，大部分人是冲着人来的。**冷嘲热讽/抖机灵全场最多 1-2 条**，其余必须是真围观真生意：' +
+      '金主搭讪表诚意（"条件合适，已私信，记得看"）/ 金主冲着条件问细节谈价（"PPM还是月度""周末有档期吗"）/ 姐妹传经验提醒避雷 / 吃瓜路人 / 拿版规开玩笑的老哥；' +
       '偶尔可以出现闺蜜 Akuma（论坛人气王，茶里茶气地损她一句，透着熟）。\n' +
-      '【腔调铁律】损要损得好笑，调戏可以直白发荤，人身攻击当玩笑开——但绝无真恶意、绝不苦情说教；' +
-      '每条都必须真的呼应帖子内容：帖子写得认真就冲着条件砍价/挑刺/搭讪，帖子是句废话（比如只有一句"喵喵喵哦"）就就着废话接梗玩她。' +
+      '【腔调铁律】损要损得好笑，调戏可以直白发荤——但绝无真恶意、绝不苦情说教；' +
+      '每条都必须真的呼应帖子内容：帖子写得认真就认真接生意（搭讪的是真想约，谈价的是真想成交），只有帖子是句废话（比如只有一句"喵喵喵哦"）才允许全场就着废话接梗玩她。' +
       '禁止礼貌客套、禁止"祝你好运"式空评论、禁止重复同一个梗。\n' +
       '腔调示例（帖子只有"喵喵喵哦"时的评论区，学腔调别照抄）："坏猫，喵什么？回去就收拾你" / "猫的花语是手慢无，跟我回家，项圈都备好了" / ' +
       '"别占用公共资源了，拉去广场法办" / "你以为你很可爱吗？好吧确实很可爱，宝宝戴尾巴好不好？"\n' +
@@ -2131,6 +2396,72 @@ async function callImportLLM(sys, instr) {
   return typeof raw === 'string' ? raw : (raw && raw.content) || '';
 }
 var _importBusy = false;
+// ── 蒸馏提示词的两块共用料（旧识背调 / S.建档 共用，改一处两边都跟着变）──
+// 第一部分＝本卡的写卡方法论（调色盘/三面性/二次解释/NSFW写"为什么做"/八股禁令），
+// 第三部分＝输出字段规格。中间的第二部分各自不同：旧识是"从别人的世界书迁移"，
+// 建档是"从已经发生过的私信和正文里归纳"——所以留在各自的 handler 里。
+// ⚠️ 这两块是两个功能的共同底座：只在这里改，别在 handler 里复制一份改。
+var DISTILL_METHOD = [
+    '════ 第一部分：怎么写人设（这是本卡的写法，必须照这个来）════',
+    '【性格调色盘】人的性格像调色盘，由多种性格衍生组合才是活生生的人：',
+    '· 底色＝最深层基调，始终在但不一定最明显（如"温柔"）',
+    '· 主色调＝第一印象、日常最多，1-2个（如"清醒""偏爱"）',
+    '· 点缀＝只在特定人/特定场景才浮现的隐藏性格，往往最真实最脆弱（如"幻想""倔强"）',
+    '· 衍生＝每个性格在**具体场景里的行为**，不是定义。每个性格2-3条，每条给一个带动作和物理事实的画面。',
+    '  格式示例：「温柔衍生一：动作先行——她的温柔总是动作先到，声音随后才来。看到围巾没围好，手已经伸过去替他压好松开的地方，话还没出口。」',
+    '· ⭐衍生的命门：**允许跨性格关联、允许自相矛盾**——"叛逆的衍生里出现依赖的影子"。逻辑自洽的性格是资料库，自相矛盾才是活人。找到TA身上互相打架的两股劲，把它们贴进同一个动作里。',
+    '【三面性】只有当TA在不同压力场景下行为**根本性切换**（伪装/创伤/不同关系定位）时才写；找不出两个以上"压力性质截然不同"的场景就留空——硬写会把连贯角色切成几块演。写就给每张面：触发条件/能量状态/身体行为模式/功能(在保护什么)/语料。只写"怎么运作"，不写"为什么"（为什么是二次解释的活）。',
+    '【二次解释】作者的终极注释，专堵AI乱补全的口子。格式：「关于XX：真正是什么／不是什么／什么时候出现什么时候不出现／和别的性格什么关系」。挑TA身上最容易被写歪的2-3个点写。',
+    '【NSFW底色】写"为什么做"不写"做什么"——亲密行为是性格在身体层面的延续（依赖的人床上也依赖，怕被抛弃的人床上也怕）。',
+    '  ❌"她喜欢骑乘位"（AI只会机械执行） ✅"她需要控制节奏才有安全感，所以即使被压在身下腿也会缠紧对方的腰"（AI懂动机，任何情境都能延续）',
+    '  禁止"敏感部位：耳朵脖子"这种清单。原文的癖好/危险性/背德感直白保留，不洗白不道德化不加清醒旁白。',
+    '【说话方式】靠可演的**例句**装性格，不靠标签规定性格。给2-3句TA的原话或贴着原文语气改写的句子，标注"腔调参考，禁照抄"。',
+    '【八股禁令】禁模糊词(似乎/仿佛/宛如)、劣质比喻(像小兽/心湖涟漪)、微表情(嘴角上扬/指尖泛白)、语气描写(带着xx口吻)、极端情绪词、**否定转折句(不是…而是…)**、大段心理分析。情绪从动作和物理事实里长出来，不要罗列"她悲伤、温柔、痛苦"。',
+    '',
+];
+
+var DISTILL_OUTPUT = [
+    '════ 第三部分：输出格式 ════',
+    '只输出一个合法 JSON 对象（不要Markdown、不要代码块、不要任何解释），字段：',
+    '  character_name: 联系人名，用玩家填的名字',
+    '  tag: 2-6字中文标签，格式 身份·性格（如 画廊主·毒舌）',
+    '  summary: 60-120字，TA是谁+和User什么关系，手机联系人预览用',
+    '  identity: 100-250字身份档案——S市身份/地位/外形里能认出本人的特征/住哪/怎么和User搭上线/联系习惯',
+    '  palette: 400-900字性格调色盘——先列「底色/主色调/点缀」，再逐条写衍生（每条带标题+具体画面）。这是整份档案的肉，写足',
+    '  three_faces: 三面性；原文支持才写(200-500字)，不支持写空字符串""',
+    '  speech: 150-350字说话方式+2-3句例句（标注"腔调参考，禁照抄"）',
+    '  relationship: 150-350字——和User的关系起点、互动模式、核心张力（TA身上哪两股劲在打架）',
+    '  nsfw: 100-300字NSFW底色，写"为什么做"；原文完全没有性相关内容就写""',
+    '  boundary: 50-150字认知边界——TA知道什么、不知道什么（TA看不到User的手机、不知道User和别人聊了什么）',
+    '  secondary: 150-400字二次解释，堵AI乱补全的口子',
+    '  voice: 150-300字私信声音卡——句式特征+绝不做的事+收尾习惯+2-3句原话例句。**这条决定TA发消息像不像TA本人**，没有它TA会和通讯录里所有人一个腔',
+    '  dm_style: 两三句——TA会主动私信聊什么、第一条消息通常怎么开口',
+    '  warnings: 字符串数组，没有就 []',
+];
+
+// 建档/旧识写出去的世界书叫什么名字（玩家在世界书列表里靠它认人）。
+// 规矩：**前缀和卡自带的世界书完全一样** → 两本在列表里紧挨着排，一眼看出是同一张卡的东西；
+// 然后是「旧识」、这个人的名字、日期。前缀不写死：读卡绑的那本书的名字、去掉尾巴上的版本号，
+// 以后改卡名/改版本，这里自动跟着变，不会再对不上。
+// ⚠️ 一个聊天只能绑一本世界书，所以名字里的 NPC 是**第一个被建档的人**；
+//    后面再建档的人进同一本，靠条目名（旧识-XX / 档案-XX）区分——存完的 toast 会告诉玩家进了哪本。
+async function dossierBookName(npcName) {
+  var prefix = '';
+  try {
+    var names = await getCharWorldbookNames('current');
+    var primary = names && names.primary;
+    // 去掉 " · World 1.1.6" / " World 0.1.0" 这类版本尾巴，只留可读的卡世界名
+    if (primary) prefix = String(primary).replace(/\s*·?\s*World\s*[\d.]+\s*$/i, '').trim();
+  } catch (e) {}
+  if (!prefix) prefix = '纸醉金迷';   // 兜底：拉不到就用卡的世界名，总比拿时间戳当书名强
+  var stamp = '';
+  try {
+    var d = new Date();
+    stamp = (d.getMonth() + 1) + '/' + d.getDate();
+  } catch (e2) {}
+  return (prefix + ' · 旧识 · ' + String(npcName || '').slice(0, 20) + (stamp ? ' · ' + stamp : '')).slice(0, 80);
+}
+
 async function handleImport(p) {
   var wbName = String((p && p.worldbook) || '').trim();
   var charName = String((p && p.name) || '').trim().slice(0, 24);
@@ -2147,22 +2478,7 @@ async function handleImport(p) {
     var sys = [
       '你是「纸醉金迷」（2026年S市 sugar 圈生活模拟）的角色移植师。玩家要把TA在别的故事里认识的一个角色请进这部卡：既进手机当可私聊的联系人，也进主线当真实存在的人。你的任务是把来源世界书里的这个角色，提炼成一份和本卡原生NPC同等密度的完整档案。',
       '',
-      '════ 第一部分：怎么写人设（这是本卡的写法，必须照这个来）════',
-      '【性格调色盘】人的性格像调色盘，由多种性格衍生组合才是活生生的人：',
-      '· 底色＝最深层基调，始终在但不一定最明显（如"温柔"）',
-      '· 主色调＝第一印象、日常最多，1-2个（如"清醒""偏爱"）',
-      '· 点缀＝只在特定人/特定场景才浮现的隐藏性格，往往最真实最脆弱（如"幻想""倔强"）',
-      '· 衍生＝每个性格在**具体场景里的行为**，不是定义。每个性格2-3条，每条给一个带动作和物理事实的画面。',
-      '  格式示例：「温柔衍生一：动作先行——她的温柔总是动作先到，声音随后才来。看到围巾没围好，手已经伸过去替他压好松开的地方，话还没出口。」',
-      '· ⭐衍生的命门：**允许跨性格关联、允许自相矛盾**——"叛逆的衍生里出现依赖的影子"。逻辑自洽的性格是资料库，自相矛盾才是活人。找到TA身上互相打架的两股劲，把它们贴进同一个动作里。',
-      '【三面性】只有当TA在不同压力场景下行为**根本性切换**（伪装/创伤/不同关系定位）时才写；找不出两个以上"压力性质截然不同"的场景就留空——硬写会把连贯角色切成几块演。写就给每张面：触发条件/能量状态/身体行为模式/功能(在保护什么)/语料。只写"怎么运作"，不写"为什么"（为什么是二次解释的活）。',
-      '【二次解释】作者的终极注释，专堵AI乱补全的口子。格式：「关于XX：真正是什么／不是什么／什么时候出现什么时候不出现／和别的性格什么关系」。挑TA身上最容易被写歪的2-3个点写。',
-      '【NSFW底色】写"为什么做"不写"做什么"——亲密行为是性格在身体层面的延续（依赖的人床上也依赖，怕被抛弃的人床上也怕）。',
-      '  ❌"她喜欢骑乘位"（AI只会机械执行） ✅"她需要控制节奏才有安全感，所以即使被压在身下腿也会缠紧对方的腰"（AI懂动机，任何情境都能延续）',
-      '  禁止"敏感部位：耳朵脖子"这种清单。原文的癖好/危险性/背德感直白保留，不洗白不道德化不加清醒旁白。',
-      '【说话方式】靠可演的**例句**装性格，不靠标签规定性格。给2-3句TA的原话或贴着原文语气改写的句子，标注"腔调参考，禁照抄"。',
-      '【八股禁令】禁模糊词(似乎/仿佛/宛如)、劣质比喻(像小兽/心湖涟漪)、微表情(嘴角上扬/指尖泛白)、语气描写(带着xx口吻)、极端情绪词、**否定转折句(不是…而是…)**、大段心理分析。情绪从动作和物理事实里长出来，不要罗列"她悲伤、温柔、痛苦"。',
-      '',
+    ].concat(DISTILL_METHOD, [
       '════ 第二部分：迁移规则 ════',
       '【只提炼一个人】来源世界书可能写了很多角色：只提炼「指定角色名」那一个，绝不混入其他角色的人设、关系和口吻。没有精确同名就找最明显的别名/同一人条目，判断依据写进 warnings；实在认不出目标也在 warnings 说明，再按最接近的那个提炼。',
       '【读取范围】读全部条目，不只读激活的、不只读标题像"人设"的。原文里的角色基础、调色盘、混色、三面性、作者二次解释、语料、关系设定，全部纳入判断。',
@@ -2178,23 +2494,7 @@ async function handleImport(p) {
       '【不得改写】不得把TA写成普通恋爱模板、不得写成只围绕User成立的工具人、不得为了本卡降低TA的人格完整度、不得把TA写浅写坏写蠢写轻浮。TA不必是金主——按TA本来的样子进入User的生活。',
       '【写正文不写报告】所有字段都是**直接投喂给生成器演的人设正文**，禁止"建议保留/应该压缩/可以改写"这类元指令，禁止写成迁移报告。',
       '',
-      '════ 第三部分：输出格式 ════',
-      '只输出一个合法 JSON 对象（不要Markdown、不要代码块、不要任何解释），字段：',
-      '  character_name: 联系人名，用玩家填的名字',
-      '  tag: 2-6字中文标签，格式 身份·性格（如 画廊主·毒舌）',
-      '  summary: 60-120字，TA是谁+和User什么关系，手机联系人预览用',
-      '  identity: 100-250字身份档案——S市身份/地位/外形里能认出本人的特征/住哪/怎么和User搭上线/联系习惯',
-      '  palette: 400-900字性格调色盘——先列「底色/主色调/点缀」，再逐条写衍生（每条带标题+具体画面）。这是整份档案的肉，写足',
-      '  three_faces: 三面性；原文支持才写(200-500字)，不支持写空字符串""',
-      '  speech: 150-350字说话方式+2-3句例句（标注"腔调参考，禁照抄"）',
-      '  relationship: 150-350字——和User的关系起点、互动模式、核心张力（TA身上哪两股劲在打架）',
-      '  nsfw: 100-300字NSFW底色，写"为什么做"；原文完全没有性相关内容就写""',
-      '  boundary: 50-150字认知边界——TA知道什么、不知道什么（TA看不到User的手机、不知道User和别人聊了什么）',
-      '  secondary: 150-400字二次解释，堵AI乱补全的口子',
-      '  voice: 150-300字私信声音卡——句式特征+绝不做的事+收尾习惯+2-3句原话例句。**这条决定TA发消息像不像TA本人**，没有它TA会和通讯录里所有人一个腔',
-      '  dm_style: 两三句——TA会主动私信聊什么、第一条消息通常怎么开口',
-      '  warnings: 字符串数组，没有就 []',
-    ].join('\n');
+    ], DISTILL_OUTPUT).join('\n');
     var instr = [
       '【玩家的要求】',
       '要导入的角色名：' + charName,
@@ -2282,9 +2582,7 @@ async function handleImport(p) {
     //    （2026-07-16 Fan 实测"世界书没有新条目"＝条目在，但藏在时间戳名的书里）。带上聊天文件名=每局一本、互不串。
     // 写失败不挡导入——手机侧靠npc记录照常工作，但必须出声（铁律）。成功也要出声：告诉玩家写进了哪本书。
     try {
-      var wbTitle = '纸醉金迷 · 旧识';
-      try { var cd = await getCharData('current'); if (cd && cd.chat) wbTitle += ' · ' + String(cd.chat).slice(0, 40); } catch (eN) {}
-      var chatWb = await getOrCreateChatWorldbook('current', wbTitle);
+      var chatWb = await getOrCreateChatWorldbook('current', await dossierBookName(name));
       await deleteWorldbookEntries(chatWb, function (en) { return !!(en && en.extra && en.extra.sb_import === name); });   // 二次导入=旧条目先拆
       await createWorldbookEntries(chatWb, [{
         name: '旧识-' + name,
@@ -2319,6 +2617,249 @@ async function handleImport(p) {
   } finally { _importBusy = false; }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// 🕵️ S. 调查建档：把这局里跑出来的人立成正式档案，存进世界书
+// ══════════════════════════════════════════════════════════════════════
+// 和旧识背调是同一台机器、两个进料口：旧识读"别人的世界书"，建档读"已经发生过的私信+正文"。
+// 写卡方法论和输出规格共用 DISTILL_METHOD / DISTILL_OUTPUT，中间那段规则各自不同。
+// 人设上完全立得住：S. 本来就是唯一看得到 User 手机全部内容的人（见 VOICE_SE），
+// "我让人查了一下这位"就是他的业务范围。
+var _dossierBusy = false;
+var SE_NAME = 'SugarElite™';
+
+// 私信记录 → 喂给蒸馏的素材（最多 8000 字，从最近往前取：近的更能反映TA现在是谁）
+function serializeDmFor(name, npc) {
+  var h = (npc && npc.dm_history) || [];
+  var out = [], used = 0;
+  for (var i = h.length - 1; i >= 0; i--) {
+    var m = h[i] || {};
+    if (m.type === 'recall') continue;                       // 撤回的不算证据
+    var who = m.sender === 'USER' ? 'User' : name;
+    var line = '[' + (m.time || '') + '] ' + who + '：' + String(fmtDmLine(m.type, m.content)).slice(0, 600);
+    if (used + line.length > 8000) break;
+    out.unshift(line); used += line.length;
+  }
+  return { text: out.join('\n'), total: h.length, used: out.length };
+}
+
+// 建档专用的正文通读。⚠️ 不能用 recentPlot()——那是**日常私信生成**的预算（默认8层≈7200字），
+// 拿它建档等于只读手机，会写出一个"只会打字的人"：她和 TA 线下发生的一切全在正文里。
+// 这里通读全部楼层，挑出提到 TA 的那些（连同紧跟的下一层——一场戏里名字往往只在开头出现一次，
+// 后面全是"他"），再加最近几层交代此刻处境。建档是玩家主动点的一次性重活，可以奢侈。
+async function deepPlotFor(name, budget) {
+  budget = budget || 26000;
+  try {
+    var arr = await getChatMessages('0-{{lastMessageId}}');
+    if (!arr || !arr.length) return { text: '', hits: 0, scanned: 0, used: 0 };
+    var keys = [String(name).toLowerCase()];
+    var bare = String(name).replace(/[.．。·\s]+$/, '').toLowerCase();      // "S." → "s"：正文里常写成没那个点的样子
+    if (bare && bare !== keys[0]) keys.push(bare);
+    var take = {};
+    for (var t = Math.max(0, arr.length - 6); t < arr.length; t++) take[t] = 1;   // 最近6层无条件收（此刻的处境）
+    var hits = 0;
+    for (var i = arr.length - 1; i >= 0; i--) {
+      var hay = String((arr[i] && arr[i].message) || '').toLowerCase();
+      var found = false;
+      for (var k = 0; k < keys.length; k++) { if (hay.indexOf(keys[k]) !== -1) { found = true; break; } }
+      if (!found) continue;
+      hits++;
+      take[i] = 1;
+      if (i + 1 < arr.length) take[i + 1] = 1;
+    }
+    // 从新往旧填预算，最后按楼层顺序输出——时间顺序读下来才是一个人的轨迹，倒着读不是
+    var idxs = Object.keys(take).map(Number).sort(function (a, b) { return a - b; });
+    var picked = [], used = 0;
+    for (var j = idxs.length - 1; j >= 0; j--) {
+      var m = arr[idxs[j]];
+      var body = cleanProse(m && m.message);
+      if (!body) continue;
+      if (body.length > 1800) body = body.slice(0, 1800) + '…';
+      var line = '〔第' + (idxs[j] + 1) + '楼' + (m && m.role === 'user' ? ' · User' : '') + '〕' + body;
+      if (used + line.length > budget) break;
+      picked.unshift(line); used += line.length;
+    }
+    return { text: picked.join('\n\n'), hits: hits, scanned: arr.length, used: picked.length };
+  } catch (e) { console.warn('[SB-S v4] deepPlotFor failed', e); return { text: '', hits: 0, scanned: 0, used: 0 }; }
+}
+
+async function handleDossier(p) {
+  var name = String((p && p.name) || '').trim();
+  if (!name) { try { eventEmit('sb_dossier_failed', '没说给谁建档'); } catch (e0) {} return; }
+  if (_dossierBusy) { try { eventEmit('sb_dossier_failed', '上一份档案还没写完，稍等'); } catch (e0) {} return; }
+  var vv = getVariables({ type: 'chat' }) || {};
+  var npc = vv.sb && vv.sb.npcs && vv.sb.npcs[name];
+  if (!npc) { try { eventEmit('sb_dossier_failed', '通讯录里没有 ' + name); } catch (e0) {} return; }
+  _dossierBusy = true;
+  try {
+    try { eventEmit('sb_status', '🕵️ S. 正在调 ' + name + ' 的档…'); } catch (eS) {}
+    var src = serializeDmFor(name, npc);
+    var pl = await deepPlotFor(name);
+    // 两路料合起来够不够写出一个人：私信和正文哪边厚都算。
+    // 只在两边都薄的时候拦——与其让模型编一份八股档案，不如直说。
+    if (src.used + pl.hits < 6 || (src.text.length + pl.text.length) < 1200) {
+      throw new Error('料还太少（私信 ' + src.used + ' 条、正文里出现 ' + pl.hits + ' 次）——再多相处几场让 S. 去查，不然查出来的是编的');
+    }
+    console.log('[SB-S v4] dossier source: dm ' + src.used + '/' + src.total + ' msgs (' + src.text.length +
+      ' chars) + plot ' + pl.used + ' floors of ' + pl.scanned + ', ' + pl.hits + ' name hits (' + pl.text.length + ' chars)');
+    var sys = [
+      '你是「纸醉金迷」（2026年S市 sugar 圈生活模拟）的角色档案师。User 在这局游戏里遇到了一个有意思的人，现在要把 TA 立成一份正式档案永久存进世界书——从此主线永远记得 TA，TA 私信也会照这份档案说话。你的任务是把手机私信和正文里**已经发生过的一切**，提炼成一份和本卡原生NPC同等密度的完整档案。',
+      '',
+    ].concat(DISTILL_METHOD, [
+      '════ 第二部分：归档规则（素材是既成事实，不是别人的设定稿）════',
+      '【素材来源·两路都要读】下面给你的是两份料：①User 和 TA 在手机上的私信往来 ②正文里所有和 TA 有关的场次（已按楼层顺序排好，中间跳号是无关的楼层）。这些都是**已经发生的事实**。',
+      '⭐**正文那份是主料，不是补充**：私信只是 TA 打字的样子，TA 真正是谁全在线下——TA 怎么进门、怎么点单、被冒犯时脸色怎么变、走的时候有没有回头。只照私信写会得到一个"只会发消息的人"。',
+      'TA 说过的每句话就是 TA 的语料，TA 做过的每件事就是 TA 的行为证据。私信和正文对不上的时候（人前一套人后一套），**那个落差本身就是这个人最值得写的东西**，写进调色盘或三面性，别抹平。',
+      '【⭐归纳，不是发明】这是给一个已经活过的人立档：',
+      '· 每一条衍生都必须能在记录里找到根据——指得出是哪句话、哪个动作',
+      '· 记录里没体现的地方**宁可少写，也不要补一个泛泛的AI八股性格**。写不满的字段就短一点，不许拿套话填满',
+      '· 但**允许合理归纳**：TA 三次都在同一件事上让步，那就是一条底色，不必等 TA 自己说出来',
+      '· TA 的原话直接进 speech 的例句——这是最硬的语料，比你改写的强',
+      '【别把 User 写进 TA】记录里 User 说的话、User 的性格、User 的处境，一个字都不是 TA 的人设。只有 TA 对这些的**反应**才是 TA 的。',
+      '【TA 已经在S市了】不用换舞台、不用找等价身份——TA 本来就活在这个世界里。身份照记录里已经成立的那个写，记录没明说的按已有细节推，别推翻已经发生的事。',
+      '【关系是既成事实】和 User 的关系不是设计出来的：怎么认识的、走到哪一步了、谁欠谁、有没有过节，照记录写。别擅自升级成恋爱也别降级成陌生人。',
+      '【写人设不写聊天总结】⛔ 禁止写成"两人于X日约在Y地"这种大事记。所有字段都是**直接投喂给生成器演的人设正文**——要的是"这个人是谁"，不是"这个人干过什么"。经历只在解释性格时出现。',
+      '【留住 TA 最像 TA 的地方】记录里最能体现"这个人就是这个人"的画面、口头习惯、硬约束，必须带进档案。存下来以后 TA 会照它说话——写歪了 TA 就变成别人。',
+      '',
+    ], DISTILL_OUTPUT).join('\n');
+    var instr = [
+      '【要建档的人】' + name + (npc.archetype ? '（手机里现在的标签：' + npc.archetype + '）' : ''),
+      npc.bio ? '【手机里现有的一句话简介】' + String(npc.bio).slice(0, 300) : '',
+      '',
+      '【本卡背景】2026年S市。User 是 sugar baby，手机是圈内邀请制私信App（上了平台的人都知道彼此是干嘛的，私信里敢说真话）。这份档案有两个用途：生成TA发给User的私信；主线正文提到TA时照这份档案演TA。所以密度要够——本卡原生NPC的档案都在两三千字以上，你写的这份是TA在这个世界里的全部依据。',
+      '',
+      '【料一 · 手机私信往来】共 ' + src.total + ' 条，下面是最近 ' + src.used + ' 条：',
+      src.text || '（没有私信——这个人几乎只活在线下，档案就全靠下面那份正文）',
+      '',
+      '【料二 · 正文里和 TA 有关的场次】通读了 ' + pl.scanned + ' 层楼，TA 的名字出现 ' + pl.hits + ' 次，取回 ' + pl.used + ' 层（按时间先后排，跳号=与TA无关的楼层）：',
+      pl.text || '（正文里没找到TA——这个人目前只活在手机上）',
+    ].filter(function (x) { return x !== ''; }).join('\n');
+
+    var raw = await callImportLLM(sys, instr);
+    var d = null, tag = '', dossierText = '', badWhy = '';
+    var sec = function (title, body, cap) {
+      body = String(body || '').trim();
+      return body ? '\n\n【' + title + '】\n' + body.slice(0, cap) : '';
+    };
+    // 质量闸和旧识那边同一套：模型偷工（只写职业经历不写调色盘）算"这一发不合格"，塞回原因重写
+    for (var att = 0; att < 3; att++) {
+      if (att > 0) {
+        console.warn('[SB-S v4] dossier attempt ' + att + ' rejected: ' + badWhy);
+        try { eventEmit('sb_status', '🕵️ 档案不合格，重写中…(' + (att + 1) + '/3)'); } catch (eS2) {}
+        raw = await callImportLLM(sys, '【上一次输出不合格：' + badWhy + '。重写一份，只输出一个合法JSON对象，' +
+          'palette 必须写足：先列底色/主色调/点缀，再逐条写带具体画面的衍生，每条都要能在私信记录里找到根据】\n' + instr);
+      }
+      d = null;
+      try { d = parseImportJson(raw); }
+      catch (e1) { badWhy = 'JSON解析失败(' + ((e1 && e1.message) || e1) + ')'; console.warn('[SB-S v4] ' + badWhy, String(raw).slice(0, 200)); continue; }
+      tag = String(d.tag || npc.archetype || '旧识').replace(/\|/g, '·').slice(0, 12);
+      dossierText = (
+        '角色：' + name + '（' + tag + '）——User 在这座城市里真实交往过的人' +
+        sec('身份档案', d.identity, 700) +
+        sec('性格调色盘', d.palette, 2200) +
+        sec('三面性', d.three_faces, 1400) +
+        sec('说话方式', d.speech, 900) +
+        sec('和User的关系', d.relationship, 900) +
+        sec('NSFW 底色（为什么做，不是做什么）', d.nsfw, 800) +
+        sec('认知边界', d.boundary, 400) +
+        sec('二次解释（防AI乱补全）', d.secondary, 1000)
+      ).trim();
+      if (String(d.palette || '').trim().length < 150) { badWhy = '性格调色盘没写或太短（档案会只剩职业和经历）'; d = null; continue; }
+      if (!String(d.voice || '').trim()) { badWhy = '没写声音卡（TA会和通讯录里所有人一个腔）'; d = null; continue; }
+      if (dossierText.length < 600) { badWhy = '整份档案只有' + dossierText.length + '字，太单薄'; d = null; continue; }
+      break;
+    }
+    if (!d) throw new Error('建档质量不合格：' + badWhy + '。换个模型或让 S. 再查一次');
+    console.log('[SB-S v4] dossier distilled: ' + name + ' (' + dossierText.length + ' chars)');
+
+    // 存草稿 + 让 S. 把档案卡发过来（草稿存 npc 上，重查覆盖同一份，不占聊天记录）
+    var draft = {
+      tag: tag, bio: String(d.summary || '').slice(0, 300),
+      dossier: dossierText.slice(0, 9000),
+      voice: String(d.voice || '').slice(0, 600),
+      dm_style: String(d.dm_style || '').slice(0, 300),
+      ts: Date.now(), v: 1,
+    };
+    await updateVariablesWith(function (v) {
+      if (!v.sb || !v.sb.npcs || !v.sb.npcs[name]) return v;
+      v.sb.npcs[name]._draft = draft;
+      var se = v.sb.npcs[SE_NAME];
+      if (se) {
+        if (!Array.isArray(se.dm_history)) se.dm_history = [];
+        // 同一个人的旧档案卡先摘掉——"再查一次"不该在 S. 的聊天里堆一叠卡
+        se.dm_history = se.dm_history.filter(function (m) { return !(m && m.type === 'dossier' && m.content === name); });
+        se.dm_history.push({
+          sender: 'THEM', time: nowTime(), ts: Date.now(), type: 'dossier',
+          content: name, note: draft.tag, zh: '', gameDay: (v.sb.game && v.sb.game.day) || 1,
+        });
+        se.last_contact = nowTime(); se.last_ts = Date.now();
+        se.last_message = '给你调了 ' + name + ' 的档案';
+        se.unread = (se.unread || 0) + 1;
+      }
+      return v;
+    }, { type: 'chat' });
+    try { eventEmit('sb_updated'); } catch (e2) {}
+    try { if (typeof toastr !== 'undefined') toastr.success('🕵️ S. 把 ' + name + ' 的档案送来了（' + dossierText.length + ' 字）——去 S. 的聊天里看', 'SugarOS'); } catch (e3) {}
+  } catch (e) {
+    console.warn('[SB-S v4] dossier failed', e);
+    try { eventEmit('sb_dossier_failed', (e && e.message) || String(e)); } catch (e4) {}
+  } finally { _dossierBusy = false; }
+}
+
+// 玩家在档案卡上点「存进世界书」→ 落盘。走的是旧识那条验证过的路：
+// 聊天世界书（整卡更新冲不掉）＋书名显式给（不给酒馆会拿时间戳当书名，玩家在列表里认不出来）
+// ＋二次存先拆旧条目 ＋ 成败都出声。顺带把档案回填到 npc 上——TA 以后发私信照这份声音卡说话。
+async function saveDossier(p) {
+  var name = String((p && p.name) || '').trim();
+  if (!name) return;
+  var vv = getVariables({ type: 'chat' }) || {};
+  var npc = vv.sb && vv.sb.npcs && vv.sb.npcs[name];
+  var draft = npc && npc._draft;
+  if (!draft || !draft.dossier) { try { if (typeof toastr !== 'undefined') toastr.warning('这份档案已经过期了，让 S. 再查一次', 'SugarOS'); } catch (e) {} return; }
+  try {
+    var chatWb = await getOrCreateChatWorldbook('current', await dossierBookName(name));
+    await deleteWorldbookEntries(chatWb, function (en) { return !!(en && en.extra && en.extra.sb_dossier === name); });
+    await createWorldbookEntries(chatWb, [{
+      name: '档案-' + name,
+      enabled: true,
+      strategy: { type: 'selective', keys: [name], keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
+      position: { type: 'before_character_definition', role: 'system', depth: 0, order: 100 },
+      content: draft.dossier + '\n\n【声音（TA开口必须贴这个腔调）】\n' + draft.voice,
+      probability: 100,
+      recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+      effect: { sticky: null, cooldown: null, delay: null },
+      extra: { sb_dossier: name },
+    }]);
+    await updateVariablesWith(function (v) {
+      var n = v.sb && v.sb.npcs && v.sb.npcs[name];
+      if (!n) return v;
+      n.dossier = draft.dossier; n.voice = draft.voice;         // 回填：TA 以后发私信照这份档案说话（随机NPC的声音从此不再是通用腔）
+      n.dm_style = draft.dm_style || n.dm_style;
+      n.bio = draft.bio || n.bio;
+      n.archetype = n.archetype || draft.tag;
+      n.pinned = true;                                          // 立了档的人别被自动清理带走
+      n.dossier_saved = Date.now();
+      delete n._draft;
+      var se = v.sb.npcs[SE_NAME];
+      if (se && Array.isArray(se.dm_history)) {
+        for (var i = 0; i < se.dm_history.length; i++) {
+          if (se.dm_history[i] && se.dm_history[i].type === 'dossier' && se.dm_history[i].content === name) se.dm_history[i].note = (draft.tag || '') + ' · 已存档';
+        }
+      }
+      return v;
+    }, { type: 'chat' });
+    console.log('[SB-S v4] dossier worldbook entry written: 「档案-' + name + '」(' + draft.dossier.length + ' chars) → ' + chatWb);
+    try { if (typeof toastr !== 'undefined') toastr.success('📖 ' + name + ' 的档案已存进世界书「' + chatWb + '」——正文提到TA名字时主线自动认得，TA以后也照这份档案说话', 'SugarOS'); } catch (e5) {}
+    try { eventEmit('sb_updated'); } catch (e6) {}
+    syncInject();
+  } catch (eWb) {
+    console.warn('[SB-S v4] dossier worldbook write failed', eWb);
+    try { if (typeof toastr !== 'undefined') toastr.error('世界书写入失败(' + ((eWb && eWb.message) || eWb) + ')——档案还在，可以再点一次存', 'SugarOS'); } catch (e7) {}
+  }
+}
+
+eventOn('sb_request_dossier', handleDossier);
+eventOn('sb_save_dossier', saveDossier);
+
 eventOn('sb_seed_dm', seedDMs);
 
 // 关掉脚本时撤掉注入主线的私信摘要：injectPrompts 不随脚本关闭消失，
@@ -2326,6 +2867,7 @@ eventOn('sb_seed_dm', seedDMs);
 try {
   window.addEventListener('pagehide', function () {
     try { uninjectPrompts(['sbnyc-dm-digest']); } catch (e) {}
+    try { clearTimeout(_bubSyncTimer); } catch (e) {}      // 攒着没跑的反向同步别在脚本关掉后才动手
   });
 } catch (e) {}
 // 兜底：开场白挂 _wantSeed 旗标后就发事件，但脚本本体是从 CDN 拉下来再 eval 的——
@@ -2350,6 +2892,9 @@ eventOn('sb_request_dm', syncInject);                       // 玩家刚在手�
 eventOn('sb_updated', syncInject);                          // NPC 回了消息 → 同步
 try { eventOn(tavern_events.GENERATION_AFTER_COMMANDS, syncInject); } catch (e) {}  // 每次主线生成前兜底刷新
 try { eventOn(tavern_events.MESSAGE_RECEIVED, onMainMessage); } catch (e) {}        // 正文钱包标记入账
+// 气泡反向同步（来自UWU，默认关）：删楼层/重roll → 扫剩下的楼层，气泡里没了的私信手机里也撤掉
+try { eventOn(tavern_events.MESSAGE_DELETED, scheduleBubbleSync); } catch (e) {}
+try { eventOn(tavern_events.MESSAGE_SWIPED, scheduleBubbleSync); } catch (e) {}
 syncInject();
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
 console.log('[SB-S v4] dm_generator ready (generateRaw/独立API + digest inject + wallet autoledger + UWU: gameDay/academic/tax/time-guard)');
