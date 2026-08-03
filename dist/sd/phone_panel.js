@@ -1299,7 +1299,8 @@
       for (var j = reps.length - 1; j >= 0; j--) rH += '<div class="sb-cmt"><b>@' + esc(reps[j].handle || '???') + '</b>' + esc(reps[j].content || '') + '</div>';
       rH += '<div class="sb-cmt-pull sb-greply" data-gid="' + p.id + '">💬 回一句</div>';
       var ofc = (_akOfficial && p.id === _akOfficial.id) ? _akOfficial : null;   // 这一楼被后台指认为官方帖
-      var imgH = (ofc && ofc.img) ? '<img class="pimg" src="' + esc(ofc.img) + '" alt="" loading="lazy">' : '';
+      // 官方帖配图：抄 AI 生图的成熟写法（内联样式+onerror隐藏），不用 lazy——国内网络到存储桶本来就慢，lazy 再拖一步；占位底色防"空边框壳"
+      var imgH = (ofc && ofc.img) ? '<img src="' + esc(ofc.img) + '" alt="" referrerpolicy="no-referrer" style="display:block;width:100%;max-height:400px;object-fit:cover;border-radius:10px;margin-top:8px;background:var(--paper-3);min-height:120px;" onload="this.style.minHeight=\'0\'" onerror="this.style.display=\'none\'">' : '';
       h += '<div class="sb-post"><b>' + (ofc ? '👑' : '🌍') + ' @' + esc(p.handle || '???') + (ofc ? ' <span style="color:var(--gold);">✔ 官方认证</span>' : '') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div>' + imgH + '<div class="pm">' + (ofc ? '本人 · 认证帖' : '全服真人') + ' · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
     }
     return h;
