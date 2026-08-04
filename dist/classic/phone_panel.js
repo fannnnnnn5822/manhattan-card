@@ -2026,7 +2026,8 @@
       });
       if (state) { if (!Array.isArray(state.myAds)) state.myAds = []; state.myAds.push({ text: txt, ts: adTs, comments: [] }); }
       var oneLine = txt.replace(/\s+/g, ' ');
-      SBemit('sb_request_dm', { reason: '有金主在招聘版看到了 User 挂出的自荐帖，主动私信找上门——只生成 1 个全新陌生金主的开场，他的开场白要直接呼应帖子内容、点出他被哪一句/哪个条件吸引，像真的读过这条广告。她的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: '1' });
+      var recruitN = 3 + Math.floor(Math.random() * 3);   // 3~5 个金主来私信（原来只有 1 个，玩家抱怨招不到人）
+      SBemit('sb_request_dm', { reason: '招聘版有新帖：User 刚挂了自荐帖，生成 ' + recruitN + ' 个全新陌生金主的开场，主动私信找上门。每个金主都从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**——他们拿着自己本来的条件来对这条自荐：看中的会直接问约；条件不完全吻合的照样来，砍价、挑剔、"你条件不错但我预算只有这个数"；真抽到完美匹配的，必然有特殊要求或者排他条款。每个人的开场白都要让人看出真读过帖子。她的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: String(recruitN) });
       SBemit('sb_request_ad_comments', { ts: adTs, text: txt });   // 评论区同步开盖：发完帖过一会儿就有人来围观起哄
       toast('success', '📋 挂出去了——评论和私信马上就来');
       openBoard('recruit');
