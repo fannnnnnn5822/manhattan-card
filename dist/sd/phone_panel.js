@@ -1293,7 +1293,10 @@
     if (_akTried) return; _akTried = true;
     try {
       var rows = await srvFetch('sb_config?key=eq.sd_akuma_post&select=value');
-      if (rows && rows[0] && rows[0].value) _akOfficial = JSON.parse(rows[0].value);
+      if (rows && rows[0] && rows[0].value) {
+        var ov = JSON.parse(rows[0].value);
+        _akOfficial = Array.isArray(ov) ? ov : [ov];   // 兼容单帖对象和多帖数组——公告和自拍帖可以同时戴👑
+      }
     } catch (e) { console.warn('[SD-S v4] official post cfg fetch failed（没配/联机关了都正常）', e); }
   }
   async function fetchGlobalPosts(force) {
@@ -1325,7 +1328,8 @@
       var rH = '';
       for (var j = reps.length - 1; j >= 0; j--) rH += '<div class="sb-cmt"><b>@' + esc(reps[j].handle || '???') + '</b>' + esc(reps[j].content || '') + '</div>';
       rH += '<div class="sb-cmt-pull sb-greply" data-gid="' + p.id + '">💬 回一句</div>';
-      var ofc = (_akOfficial && p.id === _akOfficial.id) ? _akOfficial : null;   // 这一楼被后台指认为官方帖
+      var ofc = null;   // 这一楼被后台指认为官方帖（config 单对象=一楼，数组=多楼同时认证）
+      if (_akOfficial) for (var oi = 0; oi < _akOfficial.length; oi++) { if (_akOfficial[oi] && p.id === _akOfficial[oi].id) { ofc = _akOfficial[oi]; break; } }
       // 官方帖配图：jsDelivr 三域备胎（和脚本加载器同款——Supabase 存储路径国内会选择性抽风，玩家能拉到脚本就一定能拉到 jsDelivr 的图）。
       // config 里只填一个 jsDelivr 图 url，这里自动展开三个域轮着试，全挂才隐藏；非 jsDelivr 的 url 原样单发。
       var ofcImgs = [];
@@ -1649,7 +1653,7 @@
       body += '<div style="display:flex;margin:0 12px 10px;"><button class="sb-abtn" id="sbnyc-rank-up" style="flex:1;">⬆ 更新我的排名（按累计出手上榜）</button></div>';
       for (var i2 = 0; i2 < l2.length; i2++) {
         var d = l2[i2];
-        body += '<div class="sb-rank"><span class="rn">' + (i2 === 0 ? '🥇' : (i2 + 1)) + '</span><div class="rb"><b>' + esc(d.name) + '</b><small>' + esc(d.blurb || '') + '</small></div><span class="ra" style="color:var(--gold);font-size:11px;">' + esc(d.style || '') + '</span></div>';
+        body += '<div class="sb-rank' + (d.you ? ' you' : '') + '"><span class="rn">' + (i2 === 0 ? '🥇' : (i2 + 1)) + '</span><div class="rb"><b>' + esc(d.name) + (d.you ? ' ✦' : '') + (d.live ? ' <span class="sb-live">LIVE</span>' : '') + '</b><small>' + esc(d.blurb || '') + '</small></div><span class="ra">' + fmtCNY(d.amount || 0) + '</span></div>';
       }
     } else if (key === 'gossip') {
       title = '☕ Community Gossip'; sub = 'spill it · SugarSecret™';
