@@ -1881,7 +1881,7 @@
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">你在别的世界书里认识的人也能进这部手机——搜TA的世界书，平台做一次背调，TA就带着自己的脾气出现在通讯录里。</div>';
     // 🕵️ 调查建档：紧跟在「旧识」下面——旧识是"从外面请人进来"，建档是"把已经在这儿的人留下"，一进一出凑成一对
     h += '<div style="display:flex;margin:10px 14px 6px;"><button class="sb-abtn" id="sbnyc-dossier-go" style="flex:1;">🕵️ 让 S. 给这局里的人建档</button></div>';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">这局里跑出来的人，S. 可以读你和TA的全部私信＋正文里所有和TA有关的场次，写成一份正式档案（性格调色盘/三面性/说话方式/NSFW底色全套），发到你和他的聊天里让你过目。存进世界书后主线永远认得TA，TA也会照档案里的腔调说话——<b>你就拥有了一个属于自己的角色</b>，那条世界书条目能带去别的卡。</div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px;">这局里跑出来的人，S. 可以读你和TA的全部私信＋正文里所有和TA有关的场次，写成一份正式档案（性格调色盘/三面性/说话方式/NSFW底色全套），发到你和她的聊天里让你过目。存进世界书后主线永远认得TA，TA也会照档案里的腔调说话——<b>你就拥有了一个属于自己的角色</b>，那条世界书条目能带去别的卡。</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
@@ -2349,7 +2349,7 @@
       // 表现就是"点了没反应"（血泪教训 #2，🔗 转发那个按钮早就踩过一次）
       ev.stopPropagation();
       pickContact(function (who) {
-        toast('info', '🕵️ S. 去查 ' + who + ' 了——查完他会把档案发到你和他的聊天里');
+        toast('info', '🕵️ S. 去查 ' + who + ' 了——查完她会把档案发到你和她的聊天里');
         setStatus('🕵️ S. 正在查 ' + who + '…');
         SBemit('sb_request_dossier', { name: who });
       }, {
