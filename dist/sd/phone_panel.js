@@ -921,6 +921,7 @@
       SBemit('sb_request_playlist');
     }
     fetchPool();   // 橱窗池顺手保鲜（10分钟节流，关联机则直接返回）
+    fetchBanned();   // 封禁名单顺手保鲜（5分钟节流；本机被封则当场落锁）
     if (!state) {
       root.innerHTML = '<div class="sb-wait">⏳ 等待游戏数据<br>先在开场消息里填表并提交<br><span style="font-size:10px">（提交后金主们的第一批私信会自动进来）</span></div>';
       return;
@@ -937,6 +938,7 @@
   }
 
   function render() {
+    if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }
     if (!state) return;
     var game = state.game || {}; var wallet = state.wallet || {}; var npcs = state.npcs || {};
     barEl.innerHTML = '<span>5G</span><span class="sb-bar-time" id="sb-bar-time-click" style="cursor:pointer;" title="点击校准游戏时间">' + esc(game.time || nowT()) + '</span><span>76% <span class="sb-gear" id="sbnyc-night" title="夜间/白天">' + (panel.classList.contains('night') ? '☀️' : '🌙') + '</span> <span class="sb-gear" id="sbnyc-gear" title="手机设置">⚙</span></span>';   // ⏱ 时间可点校准（UWU）
@@ -1167,6 +1169,30 @@
     return txt ? JSON.parse(txt) : null;
   }
 
+  // ── 🚷 封禁名单（banned_tokens 表：全员可读，写权只在后台 Table Editor）──
+  // 真拦截在服务器 RLS：被封 token 的发帖/上榜会被数据库直接拒收，客户端怎么改都绕不过。
+  // 这里是体验层：①被封的马甲手机开机即锁 ②他已发的帖和榜从全服渲染里消失。
+  // 名单拉不到（没建表/断网/关联机）一律当没封——绝不把无辜玩家锁在网络故障里。
+  var _banned = null, _bannedAt = 0;
+  function isBanned(tok) { return !!(tok && _banned && _banned.indexOf(tok) !== -1); }
+  function renderBanScreen() {
+    try { chatEl.style.display = 'none'; } catch (e) {}
+    currentPage = null; currentChatName = null;
+    root.innerHTML = '<div class="sb-wait">🚷 该马甲已被管理员停用<br><span style="font-size:11px">因违反社区规则，此马甲的联机身份已被封禁。<br>本机已锁定。</span></div>';
+  }
+  async function fetchBanned(force) {
+    if (onlineCfg().off) return;
+    if (!force && _banned && Date.now() - _bannedAt < 5 * 60 * 1000) return;
+    _bannedAt = Date.now();
+    try {
+      var rows = await srvFetch('banned_tokens?select=token');
+      if (Array.isArray(rows)) {
+        _banned = rows.map(function (r) { return r.token; });
+        if (isBanned(onlineCfg().token)) renderBanScreen();   // 名单到货时人还开着手机 → 当场落锁
+      }
+    } catch (e) { console.warn('[SD-S v4] ban list fetch failed（表没建/联机关了都正常）', e); }
+  }
+
   // 橱窗池：User 在服务器囤货，每个玩家在自己的时刻捞到（漂流瓶制，不是广播）
   var _pool = null, _poolAt = 0, _windfall = 0;
   async function fetchPool(force) {
@@ -1277,6 +1303,7 @@
     if (!force && _gposts && Date.now() - _gpostsAt < 20 * 1000) return;
     _gpostsAt = Date.now();
     await fetchOfficialPost();   // 只真正拉一次（_akTried），之后是空调用；放 posts 前=首屏就带认证标
+    await fetchBanned();   // 名单和帖子一起保鲜（5分钟节流），保证过滤用的是新名单
     try {
       var rows = await srvFetch('sd_posts?order=created_at.desc&limit=200');   // 楼太热，60条只够顶楼10个瓜（Akuma的帖被顶没了群众有意见）
       if (Array.isArray(rows)) {
@@ -1289,12 +1316,12 @@
     if (onlineCfg().off) return '';
     var h = '<div class="sb-sec" style="margin:16px 20px 6px;">🌍 全服姐妹楼 · 真人</div>';
     if (!_gposts) return h + '<div class="sb-empty">📡 拉取中…（一直空着=全服楼还没开张）</div>';
-    var tops = _gposts.filter(function (x) { return !x.parent_id; }).slice(0, 30);   // 顶楼 10 → 30
+    var tops = _gposts.filter(function (x) { return !x.parent_id && !isBanned(x.token); }).slice(0, 30);   // 顶楼 10 → 30；被封者的楼对全服隐身
     if (!tops.length) return h + '<div class="sb-empty">全服楼还空着——第一个吃螃蟹的可以是你（发帖时选「全服」）</div>';
     var meTok = onlineCfg().token;
     for (var i = 0; i < tops.length; i++) {
       var p = tops[i];
-      var reps = _gposts.filter(function (x) { return x.parent_id === p.id; });
+      var reps = _gposts.filter(function (x) { return x.parent_id === p.id && !isBanned(x.token); });
       var rH = '';
       for (var j = reps.length - 1; j >= 0; j--) rH += '<div class="sb-cmt"><b>@' + esc(reps[j].handle || '???') + '</b>' + esc(reps[j].content || '') + '</div>';
       rH += '<div class="sb-cmt-pull sb-greply" data-gid="' + p.id + '">💬 回一句</div>';
@@ -1587,6 +1614,7 @@
   }
 
   function openBoard(key) {
+    if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }
     currentPage = 'board:' + key;
     var mag = magOf() || {};
     var body = '', title = '', sub = '';
@@ -1612,7 +1640,7 @@
       fetchRank();   // 异步拉真人榜，到货自动重画本页
       var l2 = (mag.sdRank || []).map(function (x) { return { name: x.name, blurb: x.blurb, amount: x.amount || 0 }; });
       var meTok2 = onlineCfg().token;
-      var live2 = (_rank || []).filter(function (x) { return x.token !== meTok2; });
+      var live2 = (_rank || []).filter(function (x) { return x.token !== meTok2 && !isBanned(x.token); });
       for (var lv = 0; lv < live2.length; lv++) l2.push({ name: live2[lv].handle || '???', amount: live2[lv].amount || 0, blurb: (live2[lv].blurb && String(live2[lv].blurb).trim()) ? live2[lv].blurb : '全服玩家 · 真的在花', live: true });
       var meName2 = (state && state.profile && (state.profile.name_cn || state.profile.name_en)) || 'You';
       var myBlurb2 = String(onlineCfg().blurb || '').trim();
@@ -2969,6 +2997,7 @@
   }
 
   function openChat(name, npc) {
+    if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }
     currentChatName = name;
     currentPage = null;
     _msel = null;   // 重渲染会把选中态和底部条一起冲掉，模式标记也必须归零（不然点什么都变勾选）
