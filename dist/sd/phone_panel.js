@@ -2123,7 +2123,7 @@
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px 10px;">吐槽男人、避雷、求助、炫耀都行。马甲发布——正文里的人可能刷到这条帖子并对号入座，但没人能确定是你（除非你自己认）。发出去以后评论区自动开盖。</div>';
     h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-gossip-text" rows="6" name="sbnyc-gossip" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：😡 见面只肯给500车马费还想牵手，让他滚了。姐妹们避雷 CBD 某自称私募合伙人的秃头，表是真的，人是假的。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
     h += '<div style="display:flex;gap:8px;margin:8px 14px;"><button class="sb-abtn" id="sbnyc-gossip-local" style="flex:1;">📤 发出去（仅本体）</button><button class="sb-abtn" id="sbnyc-gossip-global" style="flex:1;">🌍 发出去 + 全服可见</button></div>';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">「仅本体」＝只存在你的游戏里，NPC 来评论。「全服」＝同时挂到官方服的姐妹楼，其他玩家看得到、能回你（署你的排行榜马甲）。⚠️ 全服帖覆水难收：本体的删帖只删你这边，服务器那份删不掉，骂真人请三思。</div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">「仅本体」＝只存在你的游戏里，NPC 来评论。「全服」＝同时挂到官方服的姐妹楼，其他玩家看得到、能回你（署你的排行榜马甲）。⚠️ 全服帖覆水难收：本体的删帖只删你这边，服务器那份删不掉，骂真人请三思。另：辱骂 Akuma＝当场停机拉黑。判定标准：作者心情。申诉渠道：无。</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(function () { openBoard('gossip'); });
