@@ -1654,7 +1654,7 @@ async function onMainMessage(message_id) {
       try {
         if (/(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(text)) {
           var forumSnippet = text.slice(0, 800);
-          var forumN = 2 + Math.floor(Math.random() * 3);
+          var forumN = 3 + Math.floor(Math.random() * 3);   // 3~5（原 2~4，和按钮侧对齐）
           eventEmit('sb_request_dm', {
             reason: '论坛发帖后自动响应：User 刚在 SugarRank 论坛发了招聘/召集帖，生成 ' + forumN + ' 个全新陌生人来私信搭讪应聘。' +
               '每个人的癖好/XP 必须匹配 User 帖子里写的偏好（从正文推断）。质量参差——有认真感兴趣的大鱼、有还行的、有一看就是 Splenda 或 Salt 的，给玩家挑选余地。' +
