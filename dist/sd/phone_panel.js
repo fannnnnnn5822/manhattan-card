@@ -2108,7 +2108,8 @@
       });
       if (state) { if (!Array.isArray(state.myAds)) state.myAds = []; state.myAds.push({ text: txt, ts: adTs, comments: [] }); }
       var oneLine = txt.replace(/\s+/g, ' ');
-      SBemit('sb_request_dm', { reason: '有 SB 在招聘版看到了 User（金主）挂出的招聘帖，主动私信应聘——只生成 1 个全新陌生SB的开场。这个女孩从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**：她拿着自己本来的条件来接这条招聘——符合的地方她会强调，不符合的地方她会绕开、嘴硬、或者讨价还价（"我虽然不是学生，但是…"）；万一真抽到完美符合的，就让她贵、或者带一个帖子里没提的特殊要求。开场白要让人看出她真读过帖子。他的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: '1' });
+      var recruitN = 3 + Math.floor(Math.random() * 3);   // 3~5 个应聘者（原来只有 1 个，玩家抱怨招不到人）
+      SBemit('sb_request_dm', { reason: '招聘版有新帖：User（金主）刚挂了招聘帖，生成 ' + recruitN + ' 个全新陌生SB的开场，来私信应聘。每个女孩都从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**——她们拿着自己本来的条件来对这条招聘：符合的强调；不符合的照样来，嘴硬、砍价、"你要的我没有但我有别的"；真抽到完美符合的，必然贵、或者带一个帖子里没提的特殊要求。每个人的开场白都要让人看出真读过帖子。他的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: String(recruitN) });
       SBemit('sb_request_ad_comments', { ts: adTs, text: txt });   // 评论区同步开盖：发完帖过一会儿就有人来围观起哄
       toast('success', '📋 挂出去了——评论和私信马上就来');
       openBoard('recruit');

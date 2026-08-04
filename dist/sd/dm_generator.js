@@ -1681,7 +1681,7 @@ async function onMainMessage(message_id) {
       try {
         if (/(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(text)) {
           var forumSnippet = text.slice(0, 800);
-          var forumN = 2 + Math.floor(Math.random() * 3);
+          var forumN = 3 + Math.floor(Math.random() * 3);   // 3~5（原 2~4，和按钮侧对齐）
           eventEmit('sb_request_dm', {
             reason: '论坛发帖后自动响应：User（金主）刚在论坛发了招聘/征人帖，生成 ' + forumN + ' 个全新陌生SB的开场，来私信应聘。' +
               '每个女孩都从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**——她们拿着自己本来的条件来对这条招聘：符合的强调；不符合的照样来，嘴硬、砍价、"你要的我没有但我有别的"；真抽到完美符合的，必然贵、或者带一个帖子里没提的特殊要求。每个人的开场白都要让人看出真读过帖子。' +
