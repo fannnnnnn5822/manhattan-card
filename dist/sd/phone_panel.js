@@ -1658,8 +1658,8 @@
     } else if (key === 'gossip') {
       title = '☕ Community Gossip'; sub = 'spill it · SugarSecret™';
       fetchGlobalPosts();   // 异步拉全服姐妹楼，到货自动重画本页
-      // ✍️ 发帖吐槽（女性向的孪生按钮是"骂男人"版——这张卡玩家自己就是金主，别教他骂自己）
-      body += '<div style="display:flex;margin:0 12px 10px;"><button class="sb-abtn" id="sbnyc-gossip-post" style="flex:1;">✍️ 发帖吐槽（避雷 / 炫耀 / 今天的怨气）</button></div>';
+      // ✍️ 发帖（女性向的孪生按钮是"骂男人"吐槽版——这张卡玩家是金主，Fan 定调 love und peace：分享框不是吐槽框）
+      body += '<div style="display:flex;margin:0 12px 10px;"><button class="sb-abtn" id="sbnyc-gossip-post" style="flex:1;">✍️ 发帖（炫耀 / 分享 / 随便聊聊）</button></div>';
       // 永久置顶：黑话扫盲（不吃AI生成，永远在）——聊天栏🔗按钮转发的就是这篇
       body += '<div class="sb-post" style="border-color:var(--gold);"><b>📌 黑话扫盲：进圈先读这篇</b><div class="pb">' + esc(SLANG_TERMS) + '</div><div class="pm">@SugarSecret官方 · 永久置顶 · 聊天页输入栏点 🔗 可一键甩给不懂行话的人</div></div>';
       // 我的吐槽帖（可删；评论区可反复钓）
@@ -1670,7 +1670,7 @@
         var gH = '';
         for (var gj = 0; gj < gcms.length; gj++) gH += '<div class="sb-cmt"><b>@' + esc(gcms[gj].n) + '</b>' + esc(gcms[gj].t) + '</div>';
         gH += '<div class="sb-cmt-pull sb-gpull" data-ts="' + gp.ts + '">💬 ' + (gcms.length ? '再钓一波评论' : '引一波围观') + '</div>';
-        body += '<div class="sb-post" style="border-color:var(--gold);"><b>🗣️ 我的吐槽帖' + (gp.global ? ' <span class="sb-live">全服</span>' : '') + '</b><div class="pb">' + esc(gp.text) + '</div>' +
+        body += '<div class="sb-post" style="border-color:var(--gold);"><b>🗣️ 我的帖子' + (gp.global ? ' <span class="sb-live">全服</span>' : '') + '</b><div class="pb">' + esc(gp.text) + '</div>' +
           '<div class="pm">@你的马甲 · ' + (gcms.length ? gcms.length + ' 条评论' : '刚挂出去') + ' · <span class="sb-postdel" data-ts="' + gp.ts + '" style="cursor:pointer;color:var(--red);">🗑 删帖</span></div>' + gH + '</div>';
       }
       var l3 = mag.gossip || [];
@@ -2118,10 +2118,10 @@
   // ── 🗣️ 发帖吐槽（八卦版）：匿名马甲发牢骚 → 评论区自动开盖 + 注入正文（圈内人可能刷到）；可选同步全服 ──
   function openGossipCompose() {
     currentPage = 'gossip-compose';
-    var h = pageHeader('✍️ 发帖吐槽', '匿名马甲 · 想骂谁骂谁', false);
+    var h = pageHeader('✍️ 发帖', '匿名马甲 · 想聊什么聊什么', false);
     h += '<div class="sb-msgs" style="display:block;padding-top:14px;">';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px 10px;">吐槽、避雷、求鉴定、炫耀战利品都行——被鸽了、被当提款机了、或者今天她真的很乖。马甲发布——正文里的人可能刷到这条帖子并对号入座，但没人能确定是你（除非你自己认）。发出去以后评论区自动开盖。</div>';
-    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-gossip-text" rows="6" name="sbnyc-gossip" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：😡 嘴上说只谈感情不谈钱，第二天购物车链接就发过来了，让她滚了。兄弟们避雷静安某自称从不收礼物的钢琴老师——琴是真的，从不收礼物是假的。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px 10px;">炫耀、分享、求鉴定、随便聊聊都行——她今天真的很乖、新入的表要不要戴去见她、或者就是想找个懂的人说说话。马甲发布——正文里的人可能刷到这条帖子并对号入座，但没人能确定是你（除非你自己认）。发出去以后评论区自动开盖。</div>';
+    h += '<div class="sb-frow" style="margin:0 14px;"><textarea id="sbnyc-gossip-text" rows="6" name="sbnyc-gossip" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="例：💸 她随口提过一次的包，我提前三周托人订到了。今天拆盒的时候，她眼睛比包还亮。不知道跟谁说，就发在这吧。" style="width:100%;border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.7;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);resize:vertical;"></textarea></div>';
     h += '<div style="display:flex;gap:8px;margin:8px 14px;"><button class="sb-abtn" id="sbnyc-gossip-local" style="flex:1;">📤 发出去（仅本体）</button><button class="sb-abtn" id="sbnyc-gossip-global" style="flex:1;">🌍 发出去 + 全服可见</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">「仅本体」＝只存在你的游戏里，NPC 来评论。「全服」＝同时挂到官方服的姐妹楼，其他玩家看得到、能回你（署你的排行榜马甲）。⚠️ 全服帖覆水难收：本体的删帖只删你这边，服务器那份删不掉，骂真人请三思。另：辱骂 Akuma＝当场停机拉黑。判定标准：作者心情。申诉渠道：无。</div>';
     h += '</div>';
@@ -2130,7 +2130,7 @@
     function submitGossip(isGlobal) {
       var ta = chatEl.querySelector('#sbnyc-gossip-text');
       var txt = ((ta && ta.value) || '').trim();
-      if (txt.length < 5) { toast('warning', '多写两句——怨气要具体才有人接'); return; }
+      if (txt.length < 5) { toast('warning', '多写两句——太短没人接得住'); return; }
       txt = txt.slice(0, 400);
       var pTs = Date.now();
       SBupdate(function (v) {
