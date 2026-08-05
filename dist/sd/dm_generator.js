@@ -2903,47 +2903,53 @@ try { eventOn(tavern_events.MESSAGE_RECEIVED, onMainMessage); } catch (e) {}    
 syncInject();
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
 
-// ── 🔭 跨卡足迹彩蛋（Akuma 专属，一辈子只炸一次）──
-// 每次脚本启动看一眼酒馆角色列表的 date_last_chat：谁比上次扫描更新，就是"User 离开这个世界去见的人"。
-// 静默攒着不出声——单次说出来只吓一跳，攒够 5 条一次性亮牌才有分量。数据存全局变量（跨聊天存续）。
+// ── 🔭 跨卡足迹彩蛋（Akuma 专属，100楼+200楼各触发一次，共两次）──
+// 启动时一次读完 characters 数组的 date_last_chat，列出最近有活动的别的角色——即时版，不用攒。
+// 门槛：聊天楼层 ≥100 且有 ≥2 张别的卡最近聊过。100楼第一次、200楼第二次，之后封存。
 // 拿不到 date_last_chat（旧版酒馆）= 整个功能静默不存在，彩蛋没有报错的权利。
-var XCARD_KEY = 'xcard_sd_v1';
-var XCARD_FIRE_AT = 5;
 async function xcardScan() {
   try {
     var ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
-    if (!ctx || !Array.isArray(ctx.characters)) return;
+    if (!ctx || !Array.isArray(ctx.characters) || !Array.isArray(ctx.chat)) return;
+    var msgCount = ctx.chat.length;
+    var v = getVariables({ type: 'chat' });
+    var xfired = (v && v.sb && v.sb._xcard_fired) || 0;
+    var threshold = xfired === 0 ? 100 : xfired === 1 ? 200 : Infinity;
+    if (msgCount < threshold) return;
     var meIdx = Number(ctx.characterId);
-    var g = getVariables({ type: 'global' }) || {};
-    var st = g[XCARD_KEY] || { log: [], last_scan: 0, fired: false };
-    if (st.fired) return;
-    // 只取"上次扫描之后最近聊过的那一个别的角色"——一次回归最多记一笔，刷新页面不重复记
-    var newest = null;
+    var now = Date.now();
+    var twoWeeks = 14 * 86400000;
+    var others = [];
     for (var i = 0; i < ctx.characters.length; i++) {
       if (i === meIdx) continue;
       var c = ctx.characters[i];
       var t = Number(c && c.date_last_chat) || 0;
-      if (t > st.last_scan && (!newest || t > newest.ts)) newest = { n: String((c && c.name) || '').slice(0, 30), ts: t };
+      if (t > 0 && (now - t) < twoWeeks) others.push({ n: String((c && c.name) || '').slice(0, 30), ts: t });
     }
-    var changed = false;
-    if (newest && newest.n) { st.log.push(newest); if (st.log.length > 8) st.log = st.log.slice(-8); changed = true; }
-    st.last_scan = Date.now();
-    var fire = st.log.length >= XCARD_FIRE_AT;
-    if (fire) st.fired = true;
-    await Promise.resolve(updateVariablesWith(function (v) { v[XCARD_KEY] = st; return v; }, { type: 'global' }));
-    if (!fire) { if (changed) console.log('[SD-S v4] xcard: noted (' + st.log.length + '/' + XCARD_FIRE_AT + ')'); return; }
-    var lines = st.log.map(function (e) {
+    if (others.length < 2) return;
+    others.sort(function (a, b) { return b.ts - a.ts; });
+    if (others.length > 8) others = others.slice(0, 8);
+    var lines = others.map(function (e) {
       var d = new Date(e.ts);
       var wk = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
       return '· ' + (d.getMonth() + 1) + '月' + d.getDate() + '日（' + wk + '）：「' + e.n + '」';
     }).join('\n');
-    console.log('[SD-S v4] xcard: firing Akuma reveal (' + st.log.length + ' entries)');
+    await Promise.resolve(updateVariablesWith(function (vv) {
+      if (!vv.sb) vv.sb = defaultState();
+      vv.sb._xcard_fired = (xfired || 0) + 1;
+      return vv;
+    }, { type: 'chat' }));
+    var isSecond = xfired === 1;
+    console.log('[SD-S v4] xcard: firing Akuma reveal #' + (xfired + 1) + ' at msg ' + msgCount + ' (' + others.length + ' others)');
     handleRequest({
-      reason: 'Akuma 老师不知从哪里搞到了 User 最近的行踪账本——User 每次离开这个世界去别处（别的故事、别的人）她都记着一笔。今天她决定让 User 知道她知道。名单如下（名字原样引用，别改写）：\n' + lines + '\n用 Akuma 自己的方式发几条私信：茶里茶气、甜、盘账式——她在乎的不是感情是钱包份额（你的预算流去了别人家）。点出具体日期和名字，绝不下结论、绝不点破、绝不解释她怎么知道的，更不吃醋（她的操作系统里没装这个）。落点收在各取所需、姐好心肠。只让 Akuma 一个人出现，别的角色不要说话。',
+      reason: (isSecond
+        ? 'Akuma 老师又来了。上次她盘过一次 User 的行踪账——User 以为她说完就忘了。Akuma 老师不忘账。名单更新了。'
+        : 'Akuma 老师不知从哪里搞到了 User 最近的行踪账本——User 每次离开这个世界去别处（别的故事、别的人）她都记着一笔。今天她决定让 User 知道她知道。'
+      ) + '名单如下（名字原样引用，别改写）：\n' + lines + '\n用 Akuma 自己的方式发几条私信：茶里茶气、甜、盘账式——她在乎的不是感情是钱包份额（你的预算流去了别人家）。点出具体日期和名字，绝不下结论、绝不点破、绝不解释她怎么知道的，更不吃醋（她的操作系统里没装这个）。落点收在各取所需、姐好心肠。只让 Akuma 一个人出现，别的角色不要说话。',
       n: '1-2',
     });
   } catch (e) { console.warn('[SD-S v4] xcard scan skipped', e); }
 }
-setTimeout(function () { xcardScan(); }, 9000);   // 等开机潮过去再扫，别跟启动生成抢道
+setTimeout(function () { xcardScan(); }, 9000);
 
 console.log('[SD-S v4] dm_generator ready (generateRaw/独立API + digest inject + wallet autoledger + UWU: gameDay/academic/tax/time-guard)');
