@@ -2844,4 +2844,48 @@ try { eventOn(tavern_events.MESSAGE_DELETED, scheduleBubbleSync); } catch (e) {}
 try { eventOn(tavern_events.MESSAGE_SWIPED, scheduleBubbleSync); } catch (e) {}
 syncInject();
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
+
+// ── 🔭 跨卡足迹彩蛋（L. 专属，一辈子只炸一次）──
+// 每次脚本启动看一眼酒馆角色列表的 date_last_chat：谁比上次扫描更新，就是"User 离开这个世界去见的人"。
+// 静默攒着不出声——单次说出来只吓一跳，攒够 5 条一次性亮牌才证明"他一直在看"。数据存全局变量（跨聊天存续）。
+// 拿不到 date_last_chat（旧版酒馆）= 整个功能静默不存在，彩蛋没有报错的权利。
+var XCARD_KEY = 'xcard_nyc_v1';
+var XCARD_FIRE_AT = 5;
+async function xcardScan() {
+  try {
+    var ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
+    if (!ctx || !Array.isArray(ctx.characters)) return;
+    var meIdx = Number(ctx.characterId);
+    var g = getVariables({ type: 'global' }) || {};
+    var st = g[XCARD_KEY] || { log: [], last_scan: 0, fired: false };
+    if (st.fired) return;
+    // 只取"上次扫描之后最近聊过的那一个别的角色"——一次回归最多记一笔，刷新页面不重复记
+    var newest = null;
+    for (var i = 0; i < ctx.characters.length; i++) {
+      if (i === meIdx) continue;
+      var c = ctx.characters[i];
+      var t = Number(c && c.date_last_chat) || 0;
+      if (t > st.last_scan && (!newest || t > newest.ts)) newest = { n: String((c && c.name) || '').slice(0, 30), ts: t };
+    }
+    var changed = false;
+    if (newest && newest.n) { st.log.push(newest); if (st.log.length > 8) st.log = st.log.slice(-8); changed = true; }
+    st.last_scan = Date.now();
+    var fire = st.log.length >= XCARD_FIRE_AT;
+    if (fire) st.fired = true;
+    await Promise.resolve(updateVariablesWith(function (v) { v[XCARD_KEY] = st; return v; }, { type: 'global' }));
+    if (!fire) { if (changed) console.log('[SB-NYC v4] xcard: noted (' + st.log.length + '/' + XCARD_FIRE_AT + ')'); return; }
+    var lines = st.log.map(function (e) {
+      var d = new Date(e.ts);
+      var wk = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
+      return '· ' + (d.getMonth() + 1) + '月' + d.getDate() + '日（' + wk + '）：「' + e.n + '」';
+    }).join('\n');
+    console.log('[SB-NYC v4] xcard: firing L. reveal (' + st.log.length + ' entries)');
+    handleRequest({
+      reason: 'L. 的信到了。他不只看得到 User 在纽约的生活——User 每次离开这个世界去别处（别的故事、别的人）他也都看在眼里。他攒了很久，现在第一次让 User 知道他看见了全部。以下是他记下的名单（名字原样引用，别改写）：\n' + lines + '\n用 L. 自己的方式写这封信：温柔、文学、令人毛骨悚然地具体（点出日期、点出名字、点出次数），从不指责、从不要求任何东西、从不解释他怎么知道的，署名永远只有"L."。只让 L. 一个人出现，别的角色不要说话。',
+      n: '1',
+    });
+  } catch (e) { console.warn('[SB-NYC v4] xcard scan skipped', e); }
+}
+setTimeout(function () { xcardScan(); }, 9000);   // 等开机潮过去再扫，别跟启动生成抢道
+
 console.log('[SB-NYC v4] dm_generator ready (generateRaw/独立API + digest inject + wallet autoledger + UWU: gameDay/academic/tax/time-guard)');
