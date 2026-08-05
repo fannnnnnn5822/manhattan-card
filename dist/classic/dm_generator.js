@@ -2457,7 +2457,7 @@ async function dossierBookName(npcName) {
   var stamp = '';
   try {
     var d = new Date();
-    stamp = (d.getMonth() + 1) + '/' + d.getDate();
+    stamp = (d.getMonth() + 1) + '月' + d.getDate() + '日';
   } catch (e2) {}
   return (prefix + ' · 旧识 · ' + String(npcName || '').slice(0, 20) + (stamp ? ' · ' + stamp : '')).slice(0, 80);
 }
