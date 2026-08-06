@@ -2370,12 +2370,12 @@
     var h = pageHeader('SugarElite™', 'members only', false);
     h += '<div class="sb-msgs" style="display:block;">';
     h += '<div class="sb-paywall"><h3>SUGARELITE™</h3><p>会员制管家。知道所有你该去的地方，<br>和所有你不该问的事。</p>' +
-      '<div class="tier"><b>MEMBERSHIP — ￥20,000/月</b><br>本期会刊 · 上流讲解 · 精选目录 · 管家代订 · 私密情报<br><small>一价全包，没有更贵的档——你要的他全知道</small></div>' +
+      '<div class="tier"><b>MEMBERSHIP — ￥5,000/月</b><br>本期会刊 · 上流讲解 · 精选目录 · 管家代订 · 私密情报<br><small>一价全包，没有更贵的档——你要的她全知道</small></div>' +
       '<div style="margin-top:8px;"><button class="sb-abtn" id="sbnyc-sub" style="width:100%;">订阅 SugarElite™</button></div></div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
-    chatEl.querySelector('#sbnyc-sub').addEventListener('click', function () { subscribeElite(20000); });   // 和付费墙写的 ￥20,000/月 对齐（3000 是美元时代的遗留）
+    chatEl.querySelector('#sbnyc-sub').addEventListener('click', function () { subscribeElite(5000); });
   }
 
   function subscribeElite(price) {
