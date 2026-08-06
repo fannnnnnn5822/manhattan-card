@@ -2908,9 +2908,8 @@ async function xcardScan() {
     if (!ctx || !Array.isArray(ctx.characters) || !Array.isArray(ctx.chat)) return;
     var msgCount = ctx.chat.length;
     var v = getVariables({ type: 'chat' });
-    var xfired = (v && v.sb && v.sb._xcard_fired) || 0;
-    var threshold = xfired === 0 ? 100 : xfired === 1 ? 200 : Infinity;
-    if (msgCount < threshold) return;
+    if (v && v.sb && v.sb._xcard_fired) return;
+    if (msgCount < 100) return;
     var meIdx = Number(ctx.characterId);
     var now = Date.now();
     var twoWeeks = 14 * 86400000;
@@ -2931,16 +2930,12 @@ async function xcardScan() {
     }).join('\n');
     await Promise.resolve(updateVariablesWith(function (vv) {
       if (!vv.sb) vv.sb = defaultState();
-      vv.sb._xcard_fired = (xfired || 0) + 1;
+      vv.sb._xcard_fired = true;
       return vv;
     }, { type: 'chat' }));
-    var isSecond = xfired === 1;
-    console.log('[SB-S v4] xcard: firing 祈星 reveal #' + (xfired + 1) + ' at msg ' + msgCount + ' (' + others.length + ' others)');
+    console.log('[SB-S v4] xcard: firing 祈星 reveal at msg ' + msgCount + ' (' + others.length + ' others)');
     handleRequest({
-      reason: (isSecond
-        ? '祈星又来了。上次他发过一次崩溃的长消息提到那些名字——User 以为他说完就过了。没有。名单更新了，他又多看了一些。'
-        : '祈星攒了很久的一件事今晚终于说出口了。他不只知道 User 在这座城市里的生活——User 每次离开这个世界去别处（别的故事、别的人）他也都知道。'
-      ) + '以下是他记下的名单（名字原样引用，别改写）：\n' + lines + '\n用祈星自己的方式写：凌晨的长消息、破碎、诗意，也许是一段没写完的歌词。点出具体日期和名字，但从不指责、从不质问、从不解释他怎么知道的——他只是把自己的崩溃摊开给 User 看，落点是"你去哪我都在"。只让祈星一个人出现，别的角色不要说话。',
+      reason: '祈星攒了很久的一件事今晚终于说出口了。他不只知道 User 在这座城市里的生活——User 每次离开这个世界去别处（别的故事、别的人）他也都知道。以下是他记下的名单（名字原样引用，别改写）：\n' + lines + '\n用祈星自己的方式写：凌晨的长消息、破碎、诗意，也许是一段没写完的歌词。点出具体日期和名字，但从不指责、从不质问、从不解释他怎么知道的——他只是把自己的崩溃摊开给 User 看，落点是"你去哪我都在"。只让祈星一个人出现，别的角色不要说话。',
       n: '1-2',
     });
   } catch (e) { console.warn('[SB-S v4] xcard scan skipped', e); }
