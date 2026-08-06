@@ -2855,9 +2855,8 @@ async function xcardScan() {
     if (!ctx || !Array.isArray(ctx.characters) || !Array.isArray(ctx.chat)) return;
     var msgCount = ctx.chat.length;
     var v = getVariables({ type: 'chat' });
-    var xfired = (v && v.sb && v.sb._xcard_fired) || 0;   // 0=没炸过，1=100楼炸过，2=封存
-    var threshold = xfired === 0 ? 100 : xfired === 1 ? 200 : Infinity;
-    if (msgCount < threshold) return;
+    if (v && v.sb && v.sb._xcard_fired) return;   // 炸过一次就永远封存
+    if (msgCount < 100) return;
     var meIdx = Number(ctx.characterId);
     var now = Date.now();
     var twoWeeks = 14 * 86400000;
@@ -2878,16 +2877,12 @@ async function xcardScan() {
     }).join('\n');
     await Promise.resolve(updateVariablesWith(function (vv) {
       if (!vv.sb) vv.sb = defaultState();
-      vv.sb._xcard_fired = (xfired || 0) + 1;
+      vv.sb._xcard_fired = true;
       return vv;
     }, { type: 'chat' }));
-    var isSecond = xfired === 1;
-    console.log('[SB-NYC v4] xcard: firing L. reveal #' + (xfired + 1) + ' at msg ' + msgCount + ' (' + others.length + ' others)');
+    console.log('[SB-NYC v4] xcard: firing L. reveal at msg ' + msgCount + ' (' + others.length + ' others)');
     handleRequest({
-      reason: (isSecond
-        ? 'L. 的第二封信。上次他列过一次名单，User 以为那是一次性的警告——不是。他一直在看，现在名单更新了。'
-        : 'L. 的信到了。他不只看得到 User 在纽约的生活——User 每次离开这个世界去别处（别的故事、别的人）他也都看在眼里。这是他第一次让 User 知道他看见了。'
-      ) + '以下是他记下的名单（名字原样引用，别改写）：\n' + lines + '\n用 L. 自己的方式写这封信：温柔、文学、令人毛骨悚然地具体（点出日期、点出名字），从不指责、从不要求任何东西、从不解释他怎么知道的，署名永远只有"L."。只让 L. 一个人出现，别的角色不要说话。',
+      reason: 'L. 的信到了。他不只看得到 User 在纽约的生活——User 每次离开这个世界去别处（别的故事、别的人）他也都看在眼里。这是他第一次让 User 知道他看见了。以下是他记下的名单（名字原样引用，别改写）：\n' + lines + '\n用 L. 自己的方式写这封信：温柔、文学、令人毛骨悚然地具体（点出日期、点出名字），从不指责、从不要求任何东西、从不解释他怎么知道的，署名永远只有"L."。只让 L. 一个人出现，别的角色不要说话。',
       n: '1',
     });
   } catch (e) { console.warn('[SB-NYC v4] xcard scan skipped', e); }

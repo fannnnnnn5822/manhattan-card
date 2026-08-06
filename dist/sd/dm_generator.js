@@ -2913,9 +2913,8 @@ async function xcardScan() {
     if (!ctx || !Array.isArray(ctx.characters) || !Array.isArray(ctx.chat)) return;
     var msgCount = ctx.chat.length;
     var v = getVariables({ type: 'chat' });
-    var xfired = (v && v.sb && v.sb._xcard_fired) || 0;
-    var threshold = xfired === 0 ? 100 : xfired === 1 ? 200 : Infinity;
-    if (msgCount < threshold) return;
+    if (v && v.sb && v.sb._xcard_fired) return;
+    if (msgCount < 100) return;
     var meIdx = Number(ctx.characterId);
     var now = Date.now();
     var twoWeeks = 14 * 86400000;
@@ -2936,16 +2935,12 @@ async function xcardScan() {
     }).join('\n');
     await Promise.resolve(updateVariablesWith(function (vv) {
       if (!vv.sb) vv.sb = defaultState();
-      vv.sb._xcard_fired = (xfired || 0) + 1;
+      vv.sb._xcard_fired = true;
       return vv;
     }, { type: 'chat' }));
-    var isSecond = xfired === 1;
-    console.log('[SD-S v4] xcard: firing Akuma reveal #' + (xfired + 1) + ' at msg ' + msgCount + ' (' + others.length + ' others)');
+    console.log('[SD-S v4] xcard: firing Akuma reveal at msg ' + msgCount + ' (' + others.length + ' others)');
     handleRequest({
-      reason: (isSecond
-        ? 'Akuma 老师又来了。上次她盘过一次 User 的行踪账——User 以为她说完就忘了。Akuma 老师不忘账。名单更新了。'
-        : 'Akuma 老师不知从哪里搞到了 User 最近的行踪账本——User 每次离开这个世界去别处（别的故事、别的人）她都记着一笔。今天她决定让 User 知道她知道。'
-      ) + '名单如下（名字原样引用，别改写）：\n' + lines + '\n用 Akuma 自己的方式发几条私信：茶里茶气、甜、盘账式——她在乎的不是感情是钱包份额（你的预算流去了别人家）。点出具体日期和名字，绝不下结论、绝不点破、绝不解释她怎么知道的，更不吃醋（她的操作系统里没装这个）。落点收在各取所需、姐好心肠。只让 Akuma 一个人出现，别的角色不要说话。',
+      reason: 'Akuma 老师不知从哪里搞到了 User 最近的行踪账本——User 每次离开这个世界去别处（别的故事、别的人）她都记着一笔。今天她决定让 User 知道她知道。名单如下（名字原样引用，别改写）：\n' + lines + '\n用 Akuma 自己的方式发几条私信：茶里茶气、甜、盘账式——她在乎的不是感情是钱包份额（你的预算流去了别人家）。点出具体日期和名字，绝不下结论、绝不点破、绝不解释她怎么知道的，更不吃醋（她的操作系统里没装这个）。落点收在各取所需、姐好心肠。只让 Akuma 一个人出现，别的角色不要说话。',
       n: '1-2',
     });
   } catch (e) { console.warn('[SD-S v4] xcard scan skipped', e); }
