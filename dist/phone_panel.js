@@ -1240,12 +1240,25 @@
   }
   // 全服姐妹楼（sb_posts 表，动森论坛同款零后端）：楼主帖 + 回帖(parent_id)，读匿名，写用马甲
   var _gposts = null, _gpostsAt = 0;
+  // 👑 官方帖（Akuma 发自拍这种）：sb_config.akuma_post 指认哪一楼是官方的，值是 [{"id":楼层id,"img":"图片url"}]。
+  var _akOfficial = null, _akTried = false;
+  async function fetchOfficialPost() {
+    if (_akTried) return; _akTried = true;
+    try {
+      var rows = await srvFetch('sb_config?key=eq.akuma_post&select=value');
+      if (rows && rows[0] && rows[0].value) {
+        var ov = JSON.parse(rows[0].value);
+        _akOfficial = Array.isArray(ov) ? ov : [ov];
+      }
+    } catch (e) { console.warn('[SB-NYC v4] official post cfg fetch failed', e); }
+  }
   async function fetchGlobalPosts(force) {
     if (onlineCfg().off) return;
     // 节流 20s：够短=每次开楼基本都拉到最新（原本 5min，别人发的新帖要等五分钟才看得见）；
     // 又必须 >0=拉完会回调 openBoard('gossip')，而 openBoard 又调本函数，节流就是这条回环唯一的刹车。别改成 force。
     if (!force && _gposts && Date.now() - _gpostsAt < 20 * 1000) return;
     _gpostsAt = Date.now();
+    await fetchOfficialPost();
     try {
       var rows = await srvFetch('sb_posts?order=created_at.desc&limit=200');   // 楼太热，60条只够顶楼10个瓜（Akuma的帖被顶没了群众有意见）
       if (Array.isArray(rows)) {
@@ -1267,7 +1280,15 @@
       var rH = '';
       for (var j = reps.length - 1; j >= 0; j--) rH += '<div class="sb-cmt"><b>@' + esc(reps[j].handle || '???') + '</b>' + esc(reps[j].content || '') + '</div>';
       rH += '<div class="sb-cmt-pull sb-greply" data-gid="' + p.id + '">💬 回一句</div>';
-      h += '<div class="sb-post"><b>🌍 @' + esc(p.handle || '???') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div><div class="pm">全服真人 · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
+      var ofc = null;
+      if (_akOfficial) for (var oi = 0; oi < _akOfficial.length; oi++) { if (_akOfficial[oi] && p.id === _akOfficial[oi].id) { ofc = _akOfficial[oi]; break; } }
+      var ofcImgs = [];
+      if (ofc && ofc.img) {
+        var jm = String(ofc.img).match(/^https?:\/\/[^/]*jsdelivr\.net(\/gh\/.+)$/);
+        ofcImgs = jm ? ['https://testingcf.jsdelivr.net' + jm[1], 'https://fastly.jsdelivr.net' + jm[1], 'https://cdn.jsdelivr.net' + jm[1]] : [String(ofc.img)];
+      }
+      var imgH = ofcImgs.length ? '<img src="' + esc(ofcImgs[0]) + '" data-alts="' + esc(ofcImgs.slice(1).join('|')) + '" alt="" referrerpolicy="no-referrer" style="display:block;width:100%;max-height:400px;object-fit:cover;border-radius:10px;margin-top:8px;background:var(--paper-3);min-height:120px;" onload="this.style.minHeight=\'0\'" onerror="var a=(this.getAttribute(\'data-alts\')||\'\').split(\'|\').filter(Boolean);if(a.length){this.setAttribute(\'data-alts\',a.slice(1).join(\'|\'));this.src=a[0];}else{this.style.display=\'none\';}">' : '';
+      h += '<div class="sb-post"><b>' + (ofc ? '👑' : '🌍') + ' @' + esc(p.handle || '???') + (ofc ? ' <span style="color:var(--gold);">✔ 官方认证</span>' : '') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div>' + imgH + '<div class="pm">' + (ofc ? '本人 · 认证帖' : '全服真人') + ' · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
     }
     return h;
   }
