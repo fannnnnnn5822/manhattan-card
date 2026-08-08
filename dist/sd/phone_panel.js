@@ -1412,7 +1412,7 @@
   // 系统权威扣款（买东西/订阅走这里，不靠主线 LLM 记账；主线消息里注明"已付款"防止它再补记）
   function debit(amount, what, channel) {
     var bal = (state && state.wallet && state.wallet.balance) || 0;
-    if (amount > bal) { toast('warning', '💸 余额不够（' + fmtCNY(bal) + '）——先去挣'); return false; }
+    if (amount > bal) { toast('warning', '💸 余额不够（' + fmtCNY(bal) + '）——这笔先放放，或者等回款'); return false; }   // 翻面残留：原文是"先去挣"（SB 视角）
     SBupdate(function (v) {
       if (!v.sb) return v;
       if (!v.sb.wallet) v.sb.wallet = { balance: 500000, bills: [], transactions: [] };
@@ -1617,6 +1617,11 @@
     }
   }
 
+  // 评论区每条后面挂的「💌 私信」：只带下标（帖子ts + 第几条），名字里有引号也弄不坏 attribute
+  function cmtDmBtn(kind, ts, ci) {
+    return '<span class="sb-cmtdm" data-kind="' + kind + '" data-ts="' + ts + '" data-ci="' + ci + '" ' +
+      'style="cursor:pointer;margin-left:6px;color:var(--gold);opacity:.85;white-space:nowrap;font-size:10.5px;" title="私信这个人">💌 私信</span>';
+  }
   function openBoard(key) {
     if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }
     currentPage = 'board:' + key;
@@ -1668,7 +1673,7 @@
         var gp = mineG[gm2];
         var gcms = gp.comments || [];
         var gH = '';
-        for (var gj = 0; gj < gcms.length; gj++) gH += '<div class="sb-cmt"><b>@' + esc(gcms[gj].n) + '</b>' + esc(gcms[gj].t) + '</div>';
+        for (var gj = 0; gj < gcms.length; gj++) gH += '<div class="sb-cmt"><b>@' + esc(gcms[gj].n) + '</b>' + esc(gcms[gj].t) + cmtDmBtn('gossip', gp.ts, gj) + '</div>';
         gH += '<div class="sb-cmt-pull sb-gpull" data-ts="' + gp.ts + '">💬 ' + (gcms.length ? '再钓一波评论' : '引一波围观') + '</div>';
         body += '<div class="sb-post" style="border-color:var(--gold);"><b>🗣️ 我的帖子' + (gp.global ? ' <span class="sb-live">全服</span>' : '') + '</b><div class="pb">' + esc(gp.text) + '</div>' +
           '<div class="pm">@你的马甲 · ' + (gcms.length ? gcms.length + ' 条评论' : '刚挂出去') + ' · <span class="sb-postdel" data-ts="' + gp.ts + '" style="cursor:pointer;color:var(--red);">🗑 删帖</span></div>' + gH + '</div>';
@@ -1676,7 +1681,8 @@
       var l3 = mag.gossip || [];
       for (var i3 = 0; i3 < l3.length; i3++) {
         var g = l3[i3];
-        body += '<div class="sb-post"><b>' + esc(g.title) + '</b><div class="pb">' + esc(g.body) + '</div><div class="pm">@' + esc(g.author) + ' · ' + (9 + i3 * 17) + ' replies</div></div>';
+        body += '<div class="sb-post"><b>' + esc(g.title) + '</b><div class="pb">' + esc(g.body) + '</div><div class="pm">@' + esc(g.author) + ' · ' + (9 + i3 * 17) + ' replies</div>' +
+          '<div class="sb-cmt-pull sb-gdm" data-gi="' + i3 + '">💌 私信 @' + esc(g.author || '楼主') + '</div></div>';
       }
       body += renderGlobalPosts();
     } else if (key === 'trend') {
@@ -1702,7 +1708,7 @@
         var ad = mine[rm];
         var cms = ad.comments || [];
         var cH = '';
-        for (var cj = 0; cj < cms.length; cj++) cH += '<div class="sb-cmt"><b>@' + esc(cms[cj].n) + '</b>' + esc(cms[cj].t) + '</div>';
+        for (var cj = 0; cj < cms.length; cj++) cH += '<div class="sb-cmt"><b>@' + esc(cms[cj].n) + '</b>' + esc(cms[cj].t) + cmtDmBtn('ad', ad.ts, cj) + '</div>';
         // 💬 拉评论：没评论=引一波围观；有了=再钓一波新的（每次都是现生成，不会重复老梗）
         cH += '<div class="sb-cmt-pull" data-ts="' + ad.ts + '">💬 ' + (cms.length ? '再钓一波评论' : '引一波围观') + '</div>';
         body += '<div class="sb-post" style="border-color:var(--gold);"><b>💼 我的招聘帖</b><div class="pb">' + esc(ad.text) + '</div><div class="pm">@你 · 已挂出 · ' + (cms.length ? cms.length + ' 条评论' : '等人来应聘') + ' · <span class="sb-addel" data-ts="' + ad.ts + '" style="cursor:pointer;color:var(--red);">🗑 删帖</span></div>' + cH + '</div>';
@@ -1732,7 +1738,7 @@
     var gpost = chatEl.querySelector('#sbnyc-gossip-post');
     if (gpost) gpost.addEventListener('click', openGossipCompose);
     // 💬 拉评论按钮（我的招聘帖下面；:not 把八卦版和全服楼的同类按钮让出去，各归各的处理器）
-    var pulls = chatEl.querySelectorAll('.sb-cmt-pull:not(.sb-apply):not(.sb-gpull):not(.sb-greply)');
+    var pulls = chatEl.querySelectorAll('.sb-cmt-pull:not(.sb-apply):not(.sb-gpull):not(.sb-greply):not(.sb-gdm)');
     for (var pk = 0; pk < pulls.length; pk++) {
       (function (b) {
         b.addEventListener('click', function () {
@@ -1830,6 +1836,38 @@
           if (list[ri]) contactFromRecruit(list[ri]);
         });
       })(applies[ak]);
+    }
+    // 💌 私信评论区里的人（我的招聘帖 / 我的吐槽帖底下冒泡的那些）：TA 说过的那句 + 你的帖子一起进 bio 当上下文
+    var cdms = chatEl.querySelectorAll('.sb-cmtdm');
+    for (var cd = 0; cd < cdms.length; cd++) {
+      (function (b) {
+        b.addEventListener('click', function () {
+          var kind = b.getAttribute('data-kind');
+          var ts = parseInt(b.getAttribute('data-ts'), 10);
+          var ci = parseInt(b.getAttribute('data-ci'), 10);
+          var arr = (state && (kind === 'gossip' ? state.myPosts : state.myAds)) || [];
+          for (var ai2 = 0; ai2 < arr.length; ai2++) {
+            if (arr[ai2].ts !== ts) continue;
+            var c = (arr[ai2].comments || [])[ci];
+            if (!c) return;
+            contactFromComment(c.n, c.t, arr[ai2].text, kind);
+            return;
+          }
+        });
+      })(cdms[cd]);
+    }
+    // 💌 私信八卦版楼主（AI 生成的帖子）：帖子原文当 TA 的来路
+    var gdms = chatEl.querySelectorAll('.sb-gdm');
+    for (var gd = 0; gd < gdms.length; gd++) {
+      (function (b) {
+        b.addEventListener('click', function () {
+          var gi = parseInt(b.getAttribute('data-gi'), 10);
+          var gl2 = (magOf() && magOf().gossip) || [];
+          var g2 = gl2[gi];
+          if (!g2) return;
+          contactFromComment(g2.author || '匿名', String(g2.title || '') + '。' + String(g2.body || ''), '', 'gauthor');
+        });
+      })(gdms[gd]);
     }
     bindBuyButtons(chatEl, 'Trend拔草');
     bindFwdButtons(chatEl);
@@ -2081,6 +2119,47 @@
       else if (!state.npcs[name].bio) state.npcs[name].bio = bio;
     }
     toast('info', isSD ? '💬 去会会同行——也可能是抢人的对手' : '💬 去谈——条件写在她帖子里，价格当面聊');
+    openChat(name, state.npcs[name]);
+  }
+
+  // ── 💌 从评论区开私信：在你帖子底下冒过泡的人，点一下就进通讯录 ──
+  // 上下文怎么带走：全塞进 bio。生成器的联系人摘要会把 bio 原样喂给私信副轨
+  //（"TA的已知背景，身份/条件/语气以此为准"），所以 TA 回话时既记得自己那句评论，也知道你帖子写了什么——
+  // 不用另外往注入层加东西，也不会把整个论坛灌进每一次生成。
+  // 再往对话里补一条灰色系统行：玩家自己也看得见"这人是从哪冒出来的"，隔三天回来不会一脸茫然。
+  // kind：'ad'=我的招聘帖评论 / 'gossip'=我的吐槽帖评论 / 'gauthor'=八卦版楼主（帖子不是我发的）
+  function contactFromComment(name, cmt, postText, kind) {
+    name = String(name || '').trim().slice(0, 24) || '匿名';
+    var isAuthor = kind === 'gauthor';
+    var where = isAuthor ? '八卦版' : (kind === 'gossip' ? '你在八卦版发的帖子' : '你挂在招聘版的招聘帖');
+    var oneLine = String(postText || '').replace(/\s+/g, ' ').slice(0, 160);
+    var bio = isAuthor
+      ? 'SugarSecret™ 论坛上的人。TA 在八卦版发过一条帖子：「' + String(cmt || '').replace(/\s+/g, ' ').slice(0, 200) + '」。' +
+        '现在是 User（一个圈内金主）看了帖子直接私信过来了——TA 记得自己发过这条帖子，语气接着帖子里那个人往下演；' +
+        '被陌生人私信是什么反应（警惕/来劲/顺杆爬）按 TA 帖子里透出来的性格定，别当客服。'
+      : 'SugarSecret™ 论坛上的人。TA 在' + where + '「' + oneLine + '」底下公开评论过：「' + String(cmt || '').slice(0, 120) + '」。' +
+        '现在是 User（金主）顺着这条评论私信过来了——TA 记得自己写过什么、也记得帖子里的条件，语气接着那条评论往下演，别当第一次见面。';
+    var sysLine = { sender: 'THEM', time: nowT(), ts: Date.now(), type: 'system',
+      content: isAuthor
+        ? '（从八卦版的帖子点进来的——TA 发的那条：「' + String(cmt || '').replace(/\s+/g, ' ').slice(0, 60) + '」）'
+        : '（从' + where + '的评论区点进来的——TA 在下面说过：「' + String(cmt || '').slice(0, 60) + '」）',
+      note: '', zh: '', gameDay: (state && state.game && state.game.day) || 1 };
+    var fresh = {
+      name: name, archetype: kind === 'ad' ? '论坛·应聘' : '论坛·吃瓜群众', persistent: false, engaged: false,
+      total_transfers: 0, relationship: 0, unlocked: true,
+      last_contact: nowT(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [sysLine], bio: bio,
+    };
+    SBupdate(function (v) {
+      if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
+      if (!v.sb.npcs[name]) v.sb.npcs[name] = fresh;
+      else if (!v.sb.npcs[name].bio) v.sb.npcs[name].bio = bio;   // 重名的老联系人：不动TA的聊天记录，只补这段来路
+      return v;
+    });
+    if (state) {
+      if (!state.npcs) state.npcs = {};
+      if (!state.npcs[name]) state.npcs[name] = fresh;
+      else if (!state.npcs[name].bio) state.npcs[name].bio = bio;
+    }
     openChat(name, state.npcs[name]);
   }
 

@@ -401,7 +401,7 @@ function creditWallet(sb, dir, amount, counterparty, channel) {
   var key = dir + String(amount);
   for (var di = 0; di < w._dedup.length; di++) {
     if (w._dedup[di].k === key) {
-      try { if (typeof toastr !== 'undefined') toastr.warning('⛔ 拦下一笔疑似重复记账：' + dir + '$' + amount.toLocaleString() + (counterparty ? '（' + counterparty + '）' : '') + '——10分钟内已记过同方向同金额的一笔。真是新的一笔的话，过几分钟再转或换个金额。', 'SugarOS 钱包'); } catch (e) {}
+      try { if (typeof toastr !== 'undefined') toastr.warning('⛔ 拦下一笔疑似重复记账：' + dir + '¥' + amount.toLocaleString() + (counterparty ? '（' + counterparty + '）' : '') + '——10分钟内已记过同方向同金额的一笔。真是新的一笔的话，过几分钟再转或换个金额。', 'SugarOS 钱包'); } catch (e) {}
       console.warn('[SD-S v4] wallet dedup blocked: ' + key + ' ' + (counterparty || ''));
       return false;
     }
@@ -550,7 +550,9 @@ function describeState(sb) {
     if (ki < 12) {
       known.push('- ' + n.name + (n.persistent ? '(固定)' : '(' + (n.archetype || '陌生') + ')') + '，关系度' + (n.relationship || 0));
       // 带简历的联系人（招聘版帖子原文/玩家新建时写的备注）：TA是谁以此为准，回话贴着演
-      if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio).substring(0, 300) + '）');
+      // 420 而不是 300：bio 最长的一种是"论坛来的人"（你的帖子原文 + TA 那条评论 + 怎么演），
+      // 300 会正好把末尾的演技交代砍掉，只剩两段引文 = TA 不知道该拿这些干嘛
+      if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio).substring(0, 420) + '）');
       var h = n.dm_history || [];
       // 正在聊的前3人给整段历史（不截条数、不截字数）——防"只看到最后几条→已读乱回"；其余给最近8条
       var recent = ki < 3 ? h : h.slice(-8);
@@ -1548,7 +1550,18 @@ function syncInject() {
 // 这里入账后把标记从消息里删掉（防重复计 + 玩家看不到格式）。LLM 忘了写 = 不入账，啥也不坏。
 // 容错版（外部审计立功）：LLM 降智爱在冒号旁加空格、金额里塞逗号/带￥——[WALLET: +￥3,000 : 纪司柏] 也要认得
 // v5（UWU）：WALLET 金额可以为 0——别人买单时 User 花了 0 块，但 CLOSET 照常入橱（价格记为实价）
-var WALLET_RE_SRC = '\\[WALLET:\\s*([+-]?)\\s*\\$?\\s*([\\d,]+(?:\\.\\d+)?)\\s*:\\s*([^\\]]*)\\]';
+// ⚠️ 男性向翻面漏网之鱼（2026-08-08 修）：这条正则是从女性向纽约卡（美元）抄来的，只认 $。
+// 而本卡是人民币，世界书 04 和注入提示词教 LLM 写的全是 [WALLET:-¥8000:苏念PPM] / [WALLET:-￥45000:...]——
+// ¥ 卡在 [\d,] 前面，整条匹配失败 ⇒ 正文花的每一分钱都不入账、慷慨榜恒为 0、标记还原样漏在正文里给玩家看见。
+// 现在币种符号（$ ¥ ￥ RMB）、后缀（元/块）、量词（万/千/k/w）、全角冒号、竖线分隔、备注省略 一律认。
+var WALLET_RE_SRC = '\\[WALLET\\s*[:：]\\s*([+-]?)\\s*(?:\\$|¥|￥|RMB|rmb)?\\s*([\\d,]+(?:\\.\\d+)?)\\s*(万|萬|千|[wWkK])?\\s*(?:元|块|圆|RMB|rmb)?\\s*(?:[:：|]\\s*([^\\]]*))?\\]';
+// 量词换算：[WALLET:-5万:x] = 50000。LLM 写中文金额时很爱用万，不认就会把 5 万记成 5 块
+function walletUnitMul(u) {
+  u = String(u || '');
+  if (u === '万' || u === '萬' || u === 'w' || u === 'W') return 10000;
+  if (u === '千' || u === 'k' || u === 'K') return 1000;
+  return 1;
+}
 // 衣橱标记：正文里 User 买到/收到实物 → [CLOSET:+品名] 入橱；卖掉/失去 → [CLOSET:-品名] 出橱
 // 价格用 | 分隔（和备注区分）：[CLOSET:+品名|$价格] 或 [CLOSET:+品名|价格]；不带价=0元购，靠同条WALLET对账
 // 竖线后面既可能是价格（[CLOSET:+连衣裙|3200]），也可能是收礼人（[CLOSET:栀子花一束|苏念]，世界书教的写法）。
@@ -1701,8 +1714,8 @@ async function onMainMessage(message_id) {
     var re = new RegExp(WALLET_RE_SRC, 'g');
     var found = [], match;
     while ((match = re.exec(text)) !== null) {
-      var amt = parseFloat(String(match[2]).replace(/,/g, '')) || 0;   // "3,000" 直接 parseFloat 会变成 3
-      found.push({ dir: match[1] === '-' ? '-' : '+', amount: amt, note: match[3].trim() });   // amt 可以为 0（他人买单）
+      var amt = (parseFloat(String(match[2]).replace(/,/g, '')) || 0) * walletUnitMul(match[3]);   // "3,000" 直接 parseFloat 会变成 3；"5万"要乘回去
+      found.push({ dir: match[1] === '-' ? '-' : '+', amount: amt, note: String(match[4] || '').trim() });   // amt 可以为 0（他人买单）；备注可省略
     }
     // ② 衣橱标记
     var cre = new RegExp(CLOSET_RE_SRC, 'g');
@@ -1829,7 +1842,7 @@ async function onMainMessage(message_id) {
     try { eventEmit('sb_updated'); } catch (e) {}
     try {
       var toast = [];
-      if (credited.length) toast.push('💳 ' + credited.map(function (f) { return f.dir + '$' + f.amount.toLocaleString() + ' ' + f.note; }).join('，'));
+      if (credited.length) toast.push('💳 ' + credited.map(function (f) { return f.dir + '¥' + f.amount.toLocaleString() + ' ' + f.note; }).join('，'));
       var into = addedCloset;
       if (into.length) toast.push('👗 入橱 ' + into.map(function (x) { return x.name; }).join('、'));
       if (toast.length && typeof toastr !== 'undefined') toastr.success(toast.join(' ｜ '), 'SugarOS');
