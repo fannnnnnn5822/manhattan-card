@@ -2132,12 +2132,14 @@
     name = String(name || '').trim().slice(0, 24) || '匿名';
     var isAuthor = kind === 'gauthor';
     var where = isAuthor ? '八卦版' : (kind === 'gossip' ? '你在八卦版发的帖子' : '你挂在招聘版的招聘帖');
-    var oneLine = String(postText || '').replace(/\s+/g, ' ').slice(0, 160);
+    // 帖子原文给全（发帖框上限就是 500）——TA 要照着上面的条件/预算/时间谈生意，砍成 160 就只剩个开头，
+    // 一砍等于让 TA 隔着毛玻璃应聘。摘要那头前3人给到 900，容得下
+    var oneLine = String(postText || '').replace(/\s+/g, ' ').slice(0, 500);
     var bio = isAuthor
-      ? 'SugarSecret™ 论坛上的人。TA 在八卦版发过一条帖子：「' + String(cmt || '').replace(/\s+/g, ' ').slice(0, 200) + '」。' +
+      ? 'SugarSecret™ 论坛上的人。TA 在八卦版发过一条帖子：「' + String(cmt || '').replace(/\s+/g, ' ').slice(0, 400) + '」。' +
         '现在是 User（一个圈内金主）看了帖子直接私信过来了——TA 记得自己发过这条帖子，语气接着帖子里那个人往下演；' +
         '被陌生人私信是什么反应（警惕/来劲/顺杆爬）按 TA 帖子里透出来的性格定，别当客服。'
-      : 'SugarSecret™ 论坛上的人。TA 在' + where + '「' + oneLine + '」底下公开评论过：「' + String(cmt || '').slice(0, 120) + '」。' +
+      : 'SugarSecret™ 论坛上的人。TA 在' + where + '「' + oneLine + '」底下公开评论过：「' + String(cmt || '').slice(0, 160) + '」。' +
         '现在是 User（金主）顺着这条评论私信过来了——TA 记得自己写过什么、也记得帖子里的条件，语气接着那条评论往下演，别当第一次见面。';
     var sysLine = { sender: 'THEM', time: nowT(), ts: Date.now(), type: 'system',
       content: isAuthor
