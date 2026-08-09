@@ -1212,8 +1212,14 @@
     if (!force && _exps && Date.now() - _expsAt < 10 * 60 * 1000) return;
     _expsAt = Date.now();
     try {
-      var rows = await srvFetch('sd_experiences?active=eq.true&order=created_at.desc&limit=40');
-      if (Array.isArray(rows)) { _exps = rows; console.log('[SD-S v4] experiences: ' + rows.length); }
+      // limit 300 = 把整张表拉下来当抽奖池。原本 limit=40 + created_at.desc：
+      // 表里一百多条，永远只有最新那 40 条有机会露面，剩下的作者写的全埋在土里，玩家每次进来看到的还是同一批。
+      var rows = await srvFetch('sd_experiences?active=eq.true&order=created_at.desc&limit=300');
+      if (Array.isArray(rows)) {
+        _exps = rows; console.log('[SD-S v4] experiences: ' + rows.length);
+        // 首屏是兜底那六条撑的，服务器货到了要就地重抽一手（Elite 页开着才管）
+        if (currentPage === 'elite') { _expShow = []; openElite(); }
+      }
     } catch (e) { console.warn('[SD-S v4] experiences fetch failed', e); }
   }
   // 服务器空/离线时的内置兜底（三条，保证功能永远能演示）——字段和服务器表一致
@@ -1243,6 +1249,18 @@
     var all = (_exps && _exps.length) ? _exps : EXP_FALLBACK;
     var seen = seenExp();
     return all.filter(function (x) { return seen.indexOf(String(x.id)) === -1; });   // 体验过的不再出现
+  }
+  // 橱窗当前摆出来的这一手（随机 EXP_SHOW 条）。必须存下来：渲染和绑按钮读的得是同一份，
+  // 现抽两次下标就会错位——点「直升机看日出」结果下单成「安缦包场」，钱还照扣。
+  var EXP_SHOW = 5;
+  var _expShow = [];
+  function rollExperiences() {
+    var cand = expPool().slice();
+    for (var i = cand.length - 1; i > 0; i--) {   // Fisher-Yates 洗牌（sort(()=>Math.random()-0.5) 的分布是歪的，头几位偏心）
+      var j = Math.floor(Math.random() * (i + 1)), t = cand[i]; cand[i] = cand[j]; cand[j] = t;
+    }
+    _expShow = cand.slice(0, EXP_SHOW);
+    return _expShow;
   }
 
   function seenLux() { try { var r = VIEW.localStorage.getItem('sbnyc_lux_seen'); return r ? JSON.parse(r) : []; } catch (e) { return []; } }
@@ -1494,6 +1512,7 @@
     if (!ok) return;
     if (price > 0 && !debit(price, exp.title, 'SugarElite体验')) return;
     markExpSeen(String(exp.id));   // 体验过 → 从橱窗消失
+    _expShow = _expShow.filter(function (x) { return String(x.id) !== String(exp.id); });   // 摆出来的这一手也得撤，不然重渲染还能再买一次
     toast('success', '✨ 体验已开启 · ' + (price > 0 ? '-' + fmtCNY(price) : '免费'));
     SBemit('sb_updated');
     // 注入输入框（不代发）：留一个"和谁去"的空让玩家自己填——带某个 SB / 带朋友 / 一个人去都行
@@ -2327,6 +2346,9 @@
   function openElite() {
     var se = (state && state.sugarelite) || {};
     if (!se.subscribed) return openPaywall();
+    // 「这是新的一次逛」还是「原地重渲染」：钱包一变/私信一到就会重调本函数，那种时候橱窗不能重洗，
+    // 不然正看着的那条会在眼皮底下换掉。只有从别的页进来（或还没抽过）才重新抽一手。
+    var freshVisit = (currentPage !== 'elite') || !_expShow.length;
     currentPage = 'elite';
     fetchPool();   // 池子保鲜（本次没到货下次开就有）
     fetchExperiences();   // 体验橱窗保鲜（服务器 sd_experiences）
@@ -2354,9 +2376,9 @@
         markLuxSeen(treats.map(function (x) { return x.id; }));
       }
       // ✨ 奢华体验橱窗（作者填的剧本种子，下单即注入正文让主线写整段旅程）
-      var exps = expPool();
+      var exps = freshVisit ? rollExperiences() : _expShow;
       if (exps.length) {
-        h += '<div class="sb-sec">✨ Signature Experiences · 奢华体验</div>';
+        h += '<div class="sb-sec">✨ Signature Experiences · 奢华体验<span id="sd-exp-roll" style="float:right;cursor:pointer;opacity:.75;font-weight:400;">⟳ 换一批</span></div>';
         for (i = 0; i < exps.length; i++) {
           g = exps[i];
           h += '<div class="sb-lux sb-exp">' +
@@ -2407,9 +2429,19 @@
       })(btns[k]);
     }
     bindFwdButtons(scope);
+    // ⟳ 换一批：不想要这五条就现场重洗（不花钱、不调 AI，纯本地抽）
+    var rollBtn = scope.querySelector('#sd-exp-roll');
+    if (rollBtn) rollBtn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      rollExperiences();
+      var sc = chatEl.querySelector('.sb-msgs');
+      var keep = sc ? sc.scrollTop : 0;   // 换完别把她弹回页首（滚动条在 .sb-msgs 上，整块会被重画）
+      openElite();
+      try { var sc2 = chatEl.querySelector('.sb-msgs'); if (sc2) sc2.scrollTop = keep; } catch (e) {}
+    });
     // ✨ 奢华体验的开启按钮（下单即注入剧本种子）
     var ebtns = scope.querySelectorAll('.sb-startexp');
-    var expsNow = expPool();
+    var expsNow = _expShow;   // 必须是渲染时那一份，不能再抽一次（下标要对得上）
     for (var e2 = 0; e2 < ebtns.length; e2++) {
       (function (b) {
         b.addEventListener('click', function () {
@@ -3622,7 +3654,7 @@
   // FAB：点=开关手机，按住拖=移动
   makeDraggable(fab, fab, 'sbnyc_fab_pos', function () {
     var open = panel.classList.toggle('open');
-    if (open) { lockPanelHeight(); refreshView(); }
+    if (open) { _expShow = []; lockPanelHeight(); refreshView(); }   // 掏一次手机=逛一次橱窗：奢华体验重抽一手
   });
   // 手机面板：抓灵动岛或状态栏拖动
   makeDraggable(panel, panel.querySelector('.sb-island'), 'sbnyc_panel_pos');
@@ -3852,6 +3884,7 @@
       defaultFabPos();
       var open = panel.classList.toggle('open');
       if (open) {
+        _expShow = [];   // 同上：重新掏出手机=橱窗重抽
         defaultPanelPos();
         lockPanelHeight();
         refreshView();
