@@ -441,15 +441,19 @@
 
   // ── 样式（全部锚在 #sbnyc-panel / #sbnyc-fab 下，不污染酒馆页面） ──
   var CSS = [
-    '#sbnyc-fab{position:fixed;right:14px;bottom:120px;width:52px;height:52px;border-radius:50%;z-index:2147483600;',
-    '  background:linear-gradient(135deg,#e8dfcf,#b89968);box-shadow:0 6px 20px rgba(26,42,58,.35);cursor:pointer;',
-    '  display:flex;align-items:center;justify-content:center;font-size:24px;user-select:none;border:1px solid rgba(255,255,255,.4);}',
-    '#sbnyc-fab:hover{transform:scale(1.06);}',
+    '#sbnyc-fab{position:fixed;right:14px;bottom:120px;width:52px;height:52px;z-index:2147483600;',
+    '  background:none;border:none;box-shadow:none;cursor:pointer;user-select:none;',
+    '  filter:drop-shadow(0 6px 14px rgba(6,10,20,.55));transition:transform .2s cubic-bezier(.2,.8,.25,1);}',
+    '#sbnyc-fab svg{display:block;width:100%;height:100%;overflow:visible;animation:sbFabFloat 4.8s ease-in-out infinite;}',
+    '#sbnyc-fab .sbnychl{animation:sbFabHalo 3.9s ease-in-out infinite;transform-origin:32px 32px;}',
+    '@keyframes sbFabFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}',
+    '@keyframes sbFabHalo{0%,100%{opacity:.72;transform:scale(1)}50%{opacity:1;transform:scale(1.06)}}',
+    '#sbnyc-fab:hover{transform:scale(1.09) rotate(-3deg);}',
     '#sbnyc-fab .fab-badge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;border-radius:10px;background:#9a1b29;color:#fff;',
     '  font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 5px;font-family:Georgia,serif;}',
     // 📳 悬浮球发光动画（UWU：新消息时金圈扩散三下）
     '#sbnyc-fab.glow{animation:sbfabglow 0.6s ease-out 3;}',
-    '@keyframes sbfabglow{0%{box-shadow:0 6px 20px rgba(26,42,58,.35),0 0 0 0 rgba(184,153,104,.6);}50%{box-shadow:0 6px 20px rgba(26,42,58,.35),0 0 0 12px rgba(184,153,104,0);}100%{box-shadow:0 6px 20px rgba(26,42,58,.35),0 0 0 0 rgba(184,153,104,0);}}',
+    '@keyframes sbfabglow{0%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 0 rgba(201,165,102,.9));}50%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 11px rgba(201,165,102,.95));}100%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 0 rgba(201,165,102,0));}}',
     // 📳 面板抖动（UWU：纯 CSS 动画，手机电脑都有"震感"）
     '@keyframes sbShake{0%{transform:translateX(0);}15%{transform:translateX(-3px);}30%{transform:translateX(3px);}45%{transform:translateX(-3px);}60%{transform:translateX(3px);}75%{transform:translateX(-2px);}100%{transform:translateX(0);}}',
     '#sbnyc-panel.sb-shake{animation:sbShake 0.2s ease-in-out;}',
@@ -726,7 +730,8 @@
   var fab = DOC.createElement('div');
   fab.id = 'sbnyc-fab';
   fab.title = 'SugarOS 手机';
-  fab.innerHTML = '📱<span class="fab-badge" id="sbnyc-fab-badge"></span>';
+  // 悬浮球四件套第4条：不是圆片+emoji，是一部画出来的手机（午夜蓝+发丝金边+极简锁屏）
+  fab.innerHTML = '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'+'<defs>'+'<linearGradient id="sbnycbd" x1=".15" y1="0" x2=".85" y2="1"><stop offset="0" stop-color="#2e3a52"/><stop offset=".55" stop-color="#16203a"/><stop offset="1" stop-color="#0b1120"/></linearGradient>'+'<linearGradient id="sbnycsc" x1="0" y1="0" x2=".6" y2="1"><stop offset="0" stop-color="#1a2438"/><stop offset="1" stop-color="#0a0f1c"/></linearGradient>'+'<linearGradient id="sbnycgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".32"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/></linearGradient>'+'<radialGradient id="sbnycha"><stop offset=".3" stop-color="#8aa2cf" stop-opacity=".4"/><stop offset=".72" stop-color="#8aa2cf" stop-opacity=".14"/><stop offset="1" stop-color="#8aa2cf" stop-opacity="0"/></radialGradient>'+'</defs>'+'<circle class="sbnychl" cx="32" cy="32" r="31" fill="url(#sbnycha)"/>'+'<g transform="rotate(-8 32 32)">'+'<rect x="17" y="6" width="30" height="52" rx="7" fill="url(#sbnycbd)" stroke="#c9a566" stroke-width=".8"/>'+'<rect x="20" y="10.2" width="24" height="43.6" rx="4.2" fill="url(#sbnycsc)"/>'+'<rect x="27.8" y="7.7" width="8.4" height="1.5" rx=".75" fill="#c9a566" opacity=".7"/>'+'<rect x="24.5" y="18" width="15" height="1.9" rx=".95" fill="#e3cd9a" opacity=".85"/><rect x="27.5" y="22.4" width="9" height="1.5" rx=".75" fill="#e3cd9a" opacity=".45"/><rect x="23" y="31" width="18" height="7.4" rx="3.2" fill="#e3cd9a" opacity=".16"/><circle cx="27" cy="34.7" r="1.9" fill="#e3cd9a" opacity=".8"/><rect x="30.6" y="33.2" width="8" height="1.4" rx=".7" fill="#e3cd9a" opacity=".5"/><rect x="30.6" y="35.9" width="5.4" height="1.3" rx=".65" fill="#e3cd9a" opacity=".3"/>'+'<rect x="27.4" y="54.9" width="9.2" height="1.6" rx=".8" fill="#c9a566" opacity=".75"/>'+'<path d="M20 14.5 L44 10.2 v6.2 L20 26 Z" fill="url(#sbnycgl)"/>'+'</g></svg>' + '<span class="fab-badge" id="sbnyc-fab-badge"></span>';
   DOC.body.appendChild(fab);
 
   var panel = DOC.createElement('div');
