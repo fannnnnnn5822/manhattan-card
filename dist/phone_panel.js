@@ -441,19 +441,39 @@
 
   // ── 样式（全部锚在 #sbnyc-panel / #sbnyc-fab 下，不污染酒馆页面） ──
   var CSS = [
-    '#sbnyc-fab{position:fixed;right:14px;bottom:120px;width:52px;height:52px;z-index:2147483600;',
-    '  background:none;border:none;box-shadow:none;cursor:pointer;user-select:none;',
-    '  filter:drop-shadow(0 6px 14px rgba(6,10,20,.55));transition:transform .2s cubic-bezier(.2,.8,.25,1);}',
-    '#sbnyc-fab svg{display:block;width:100%;height:100%;overflow:visible;animation:sbFabFloat 4.8s ease-in-out infinite;}',
-    '#sbnyc-fab .sbnychl{animation:sbFabHalo 3.9s ease-in-out infinite;transform-origin:32px 32px;}',
+    // ── 悬浮球 = 一部香槟白手机壳（2026-08-29 重画，学 UWU 小手机那颗：手机比例的长方形、浅色、DOM 元素叠 class 切状态，不是一坨 SVG）
+    '#sbnyc-fab{position:fixed;right:14px;bottom:120px;width:38px;height:62px;z-index:2147483600;box-sizing:border-box;',
+    '  border-radius:10px;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:none;',
+    '  background:linear-gradient(160deg,#fbf7ee,#efe5d0 58%,#e2d2b4);border:1.5px solid rgba(201,165,102,.85);',
+    '  box-shadow:0 10px 26px rgba(6,10,20,.45),inset 0 1px 0 rgba(255,255,255,.95),inset 0 0 0 2.5px #eadfc8;',
+    '  animation:sbFabFloat 4.8s ease-in-out infinite;transition:box-shadow .25s ease;will-change:transform;}',
+    '#sbnyc-fab::before{content:"";position:absolute;top:3px;left:50%;transform:translateX(-50%);width:5px;height:5px;border-radius:50%;background:#7a6a4a;box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);z-index:3;pointer-events:none;}',   // 摄像头
+    '#sbnyc-fab .fab-screen{position:absolute;left:5px;right:5px;top:10px;bottom:10px;border-radius:5px;overflow:hidden;',
+    '  background:linear-gradient(170deg,#1d2740,#0d1425 65%,#080d18);box-shadow:inset 0 0 0 1px rgba(201,165,102,.35);transition:background .35s ease,box-shadow .35s ease;}',
+    '#sbnyc-fab .fab-time{position:absolute;left:0;right:0;top:6px;text-align:center;font:600 7px/1 Georgia,serif;letter-spacing:.5px;color:rgba(227,205,154,.85);transition:opacity .3s;}',
+    '#sbnyc-fab .fab-apps{position:absolute;left:0;right:0;bottom:6px;display:grid;grid-template-columns:repeat(3,4px);gap:3px;justify-content:center;transition:opacity .3s;}',
+    '#sbnyc-fab .fab-apps i{display:block;width:4px;height:4px;border-radius:1.2px;background:rgba(227,205,154,.55);}',
+    '#sbnyc-fab .fab-ini{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:700 17px/1 Georgia,"Times New Roman",serif;color:#1b2237;opacity:0;transform:scale(.7);transition:opacity .3s,transform .3s;pointer-events:none;}',
+    '#sbnyc-fab .fab-home{position:absolute;left:50%;bottom:4px;width:12px;height:2px;margin-left:-6px;border-radius:1px;background:rgba(201,165,102,.8);}',
+    '#sbnyc-fab .fab-ring{position:absolute;left:50%;top:50%;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;border:2px solid rgba(201,165,102,.6);opacity:0;pointer-events:none;}',
     '@keyframes sbFabFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}',
-    '@keyframes sbFabHalo{0%,100%{opacity:.72;transform:scale(1)}50%{opacity:1;transform:scale(1.06)}}',
-    '#sbnyc-fab:hover{transform:scale(1.09) rotate(-3deg);}',
-    '#sbnyc-fab .fab-badge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;border-radius:10px;background:#9a1b29;color:#fff;',
-    '  font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 5px;font-family:Georgia,serif;}',
+    '@keyframes sbFabRing{0%,100%{transform:scale(1);opacity:.25}50%{transform:scale(1.1);opacity:.8}}',
+    '#sbnyc-fab:hover{box-shadow:0 14px 32px rgba(6,10,20,.5),inset 0 1px 0 rgba(255,255,255,.95),inset 0 0 0 2.5px #eadfc8;}',
+    '#sbnyc-fab:active{animation:none;transform:scale(.96);}',
+    // 状态①有未读：屏幕亮成香槟金，浮出最新来信人的首字
+    '#sbnyc-fab.lit .fab-screen{background:linear-gradient(165deg,#f4e4c1,#dcbf86 55%,#c9a566);box-shadow:inset 0 0 10px rgba(255,240,210,.55),inset 0 0 0 1px rgba(255,255,255,.35);}',
+    '#sbnyc-fab.lit .fab-time,#sbnyc-fab.lit .fab-apps{opacity:0;}',
+    '#sbnyc-fab.lit .fab-ini{opacity:1;transform:scale(1);}',
+    '#sbnyc-fab.lit .fab-ring{animation:sbFabRing 2.5s ease-in-out infinite;}',
+    // 状态②手机拿在手里（面板开着）：壳上的屏幕熄了
+    '#sbnyc-fab.open{animation:none;}',
+    '#sbnyc-fab.open .fab-screen{background:#05080f;box-shadow:inset 0 0 0 1px rgba(201,165,102,.18);}',
+    '#sbnyc-fab.open .fab-time,#sbnyc-fab.open .fab-apps,#sbnyc-fab.open .fab-ini{opacity:0;}',
+    '#sbnyc-fab .fab-badge{position:absolute;top:-6px;right:-8px;min-width:18px;height:18px;border-radius:9px;background:#9a1b29;color:#fff;box-shadow:0 0 0 2px #fbf7ee;',
+    '  font-size:10px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 4px;font-family:Georgia,serif;z-index:4;}',
     // 📳 悬浮球发光动画（UWU：新消息时金圈扩散三下）
     '#sbnyc-fab.glow{animation:sbfabglow 0.6s ease-out 3;}',
-    '@keyframes sbfabglow{0%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 0 rgba(201,165,102,.9));}50%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 11px rgba(201,165,102,.95));}100%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 0 rgba(201,165,102,0));}}',
+    '@keyframes sbfabglow{0%{box-shadow:0 10px 26px rgba(6,10,20,.45),0 0 0 0 rgba(201,165,102,.9);}50%{box-shadow:0 10px 26px rgba(6,10,20,.45),0 0 0 9px rgba(201,165,102,0);}100%{box-shadow:0 10px 26px rgba(6,10,20,.45),0 0 0 0 rgba(201,165,102,0);}}',
     // 📳 面板抖动（UWU：纯 CSS 动画，手机电脑都有"震感"）
     '@keyframes sbShake{0%{transform:translateX(0);}15%{transform:translateX(-3px);}30%{transform:translateX(3px);}45%{transform:translateX(-3px);}60%{transform:translateX(3px);}75%{transform:translateX(-2px);}100%{transform:translateX(0);}}',
     '#sbnyc-panel.sb-shake{animation:sbShake 0.2s ease-in-out;}',
@@ -726,8 +746,17 @@
   var fab = DOC.createElement('div');
   fab.id = 'sbnyc-fab';
   fab.title = 'SugarOS 手机';
-  // 悬浮球四件套第4条：不是圆片+emoji，是一部画出来的手机（午夜蓝+发丝金边+极简锁屏）
-  fab.innerHTML = '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'+'<defs>'+'<linearGradient id="sbnycbd" x1=".15" y1="0" x2=".85" y2="1"><stop offset="0" stop-color="#2e3a52"/><stop offset=".55" stop-color="#16203a"/><stop offset="1" stop-color="#0b1120"/></linearGradient>'+'<linearGradient id="sbnycsc" x1="0" y1="0" x2=".6" y2="1"><stop offset="0" stop-color="#1a2438"/><stop offset="1" stop-color="#0a0f1c"/></linearGradient>'+'<linearGradient id="sbnycgl" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".32"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/></linearGradient>'+'<radialGradient id="sbnycha"><stop offset=".3" stop-color="#8aa2cf" stop-opacity=".4"/><stop offset=".72" stop-color="#8aa2cf" stop-opacity=".14"/><stop offset="1" stop-color="#8aa2cf" stop-opacity="0"/></radialGradient>'+'</defs>'+'<circle class="sbnychl" cx="32" cy="32" r="31" fill="url(#sbnycha)"/>'+'<g transform="rotate(-8 32 32)">'+'<rect x="17" y="6" width="30" height="52" rx="7" fill="url(#sbnycbd)" stroke="#c9a566" stroke-width=".8"/>'+'<rect x="20" y="10.2" width="24" height="43.6" rx="4.2" fill="url(#sbnycsc)"/>'+'<rect x="27.8" y="7.7" width="8.4" height="1.5" rx=".75" fill="#c9a566" opacity=".7"/>'+'<rect x="24.5" y="18" width="15" height="1.9" rx=".95" fill="#e3cd9a" opacity=".85"/><rect x="27.5" y="22.4" width="9" height="1.5" rx=".75" fill="#e3cd9a" opacity=".45"/><rect x="23" y="31" width="18" height="7.4" rx="3.2" fill="#e3cd9a" opacity=".16"/><circle cx="27" cy="34.7" r="1.9" fill="#e3cd9a" opacity=".8"/><rect x="30.6" y="33.2" width="8" height="1.4" rx=".7" fill="#e3cd9a" opacity=".5"/><rect x="30.6" y="35.9" width="5.4" height="1.3" rx=".65" fill="#e3cd9a" opacity=".3"/>'+'<rect x="27.4" y="54.9" width="9.2" height="1.6" rx=".8" fill="#c9a566" opacity=".75"/>'+'<path d="M20 14.5 L44 10.2 v6.2 L20 26 Z" fill="url(#sbnycgl)"/>'+'</g></svg>' + '<span class="fab-badge" id="sbnyc-fab-badge"></span>';
+  // 悬浮球 = 香槟白手机壳，三种脸：待机（暗屏+时间+app 格）/ lit 有未读（屏亮成金，浮出来信人首字）/ open 拿在手里（屏熄）
+  // 全是 DOM 小元素 + class 切换（学 UWU 小手机那颗），加一个状态 = 加一个 class，不重画
+  fab.innerHTML =
+    '<span class="fab-ring"></span>' +
+    '<span class="fab-screen">' +
+      '<span class="fab-time" id="sbnyc-fab-time">--:--</span>' +
+      '<span class="fab-apps"><i></i><i></i><i></i><i></i><i></i><i></i></span>' +
+      '<span class="fab-ini" id="sbnyc-fab-ini"></span>' +
+    '</span>' +
+    '<span class="fab-home"></span>' +
+    '<span class="fab-badge" id="sbnyc-fab-badge"></span>';
   DOC.body.appendChild(fab);
 
   var panel = DOC.createElement('div');
@@ -910,6 +939,21 @@
     var n = totalUnread();
     badgeEl.style.display = n > 0 ? 'flex' : 'none';
     badgeEl.textContent = n > 9 ? '9+' : String(n);
+    // 壳上的屏幕：有未读就亮起来，写最新来信人的首字（中文名取第一个字，英文名取首字母）
+    var iniEl = DOC.getElementById('sbnyc-fab-ini');
+    if (n > 0) {
+      var latest = null;
+      for (var k in state.npcs) {
+        if (!state.npcs.hasOwnProperty(k)) continue;
+        var np = state.npcs[k];
+        if ((np.unread || 0) > 0 && (!latest || (np.last_ts || 0) > (latest.last_ts || 0))) latest = np;
+      }
+      var nm = (latest && (latest.name || '')) || '';
+      if (iniEl) iniEl.textContent = nm ? nm.replace(/^[\s"'“”]+/, '').charAt(0).toUpperCase() : '•';
+      fab.classList.add('lit');
+    } else {
+      fab.classList.remove('lit');
+    }
   }
   function refreshView() {
     loadState();
@@ -941,7 +985,8 @@
   function render() {
     if (!state) return;
     var game = state.game || {}; var wallet = state.wallet || {}; var npcs = state.npcs || {};
-    barEl.innerHTML = '<span>5G</span><span class="sb-bar-time" id="sb-bar-time-click" style="cursor:pointer;" title="点击校准游戏时间">' + esc(game.time || nowT()) + '</span><span>76% <span class="sb-gear" id="sbnyc-night" title="夜间/白天">' + (panel.classList.contains('night') ? '☀️' : '🌙') + '</span> <span class="sb-gear" id="sbnyc-gear" title="手机设置">⚙</span></span>';   // ⏱ 时间可点校准（UWU）
+    try { var _ft = DOC.getElementById('sbnyc-fab-time'); if (_ft) _ft.textContent = String(game.time || nowT()).slice(0, 5); } catch (e) {}   // 壳上的小时钟跟游戏时间
+    barEl.innerHTML ='<span>5G</span><span class="sb-bar-time" id="sb-bar-time-click" style="cursor:pointer;" title="点击校准游戏时间">' + esc(game.time || nowT()) + '</span><span>76% <span class="sb-gear" id="sbnyc-night" title="夜间/白天">' + (panel.classList.contains('night') ? '☀️' : '🌙') + '</span> <span class="sb-gear" id="sbnyc-gear" title="手机设置">⚙</span></span>';   // ⏱ 时间可点校准（UWU）
     var h = '';
     h += renderWallet(wallet);
     h += renderActions();
@@ -3634,6 +3679,12 @@
     var open = panel.classList.toggle('open');
     if (open) { _expShow = []; lockPanelHeight(); refreshView(); }   // 掏一次手机=逛一次橱窗：奢华体验重抽一手
   });
+  // 壳上的屏幕跟着面板开合：面板 open（不管从哪条路开/关的）→ 壳屏熄；关了 → 壳屏回来
+  try {
+    var _fabSync = function () { fab.classList.toggle('open', panel.classList.contains('open')); };
+    new (DOC.defaultView || window).MutationObserver(_fabSync).observe(panel, { attributes: true, attributeFilter: ['class'] });
+    _fabSync();
+  } catch (e) {}
   // 手机面板：抓灵动岛或状态栏拖动
   makeDraggable(panel, panel.querySelector('.sb-island'), 'sbnyc_panel_pos');
   makeDraggable(panel, barEl, 'sbnyc_panel_pos');
