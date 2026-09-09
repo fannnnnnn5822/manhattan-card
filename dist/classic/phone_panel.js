@@ -80,9 +80,18 @@
   var SLANG_TERMS = 'SD=金主 · SB=宝贝 · PPM=按次结算 · Allowance=月度津贴 · M&G=首次见面 · 验资=门槛费 · Salt=白嫖怪 · Splenda=假富 · Whale=巨鲸 · GFE=女友体验 · 上岸=财务自由';
   var SLANG_FORWARD = '🔗 [转发帖子]《SugarSecret 置顶 · 黑话扫盲：进圈先读这篇》——' + SLANG_TERMS;
   // 列表预览统一入口（微信式）：自己发的带"你："前缀——一眼看出这个人回没回过，不会忘记自己回过没
+  // 😀 表情包 88 张（《霖州往事》作者好大鱼老师授权）：主源 catbox，挂了自动换 manhattan-card 仓库里的备份（固定提交号，永不变）
+  var STK_FALLBACK = 'https://cdn.jsdelivr.net/gh/fannnnnnn5822/manhattan-card@6d79116639166aa3fc6eb2b0d1ade827781bbdc8/stickers/';
+  var STICKERS = {"偷看":"s9v34y.jpeg","你好呀":"sm67i1.jpeg","摆烂":"z4tnmw.jpeg","不爽":"s38nln.jpeg","不行":"1hapz4.gif","可怜兮兮":"7d82g1.jpg","你爹来咯":"hppo99.jpg","无语":"ok9xm5.gif","别不识好歹":"gum33t.jpg","回老子消息":"gy1hs6.gif","不找我是害羞？":"5xt73w.jpeg","小子有种报段位":"1n2kps.gif","【委屈】垮起个小猫批脸":"aaz2qw.jpg","蛙蛙哭泣":"81la40.gif","妈的":"w26osr.jpeg","你他妈的":"ilyo3o.jpeg","杰瑞生气叉腰":"fnjbj6.gif","你很牛吗":"usg5yj.jpeg","让姐品品这什么货色":"7kaqyx.gif","赔偿我精神损失费":"kxowcj.jpeg","杀了你":"93cwle.jpeg","算了":"b9uzio.jpeg","所以呢":"g0vvp4.jpeg","亲亲":"ghjaxl.gif","听不懂想亲嘴":"2b8fj2.jpeg","做姐姐的舔狗":"y7nrxm.gif","跟我约会":"pcgy43.jpg","老公抱抱":"u6tph8.gif","想老婆了":"zh2plc.gif","你不爱我了":"6ekg1y.gif","恋爱脑清醒清醒":"wun9dh.gif","我疯了":"a1oiuu.jpeg","有品位":"rvak3o.jpeg","猪头问号":"bshhsw.jpeg","满屏问号":"frtizf.gif","杰瑞生气问号":"64jb35.jpg","猫咪问号":"75cjiq.gif","开始摆烂":"5pcxo1.jpeg","躺平别卷了":"f043ww.gif","卷死你们":"1jazgl.gif","卷起来了":"18dxxh.gif","来不及了快快学习":"cgtdb5.gif","没脸见人了":"hh1qcp.gif","磕头":"596zav.jpeg","哦嚯":"ns4c7w.gif","瞪大眼睛":"5a8su3.gif","来了":"dcooze.gif","死了":"h97356.gif","已老实":"gza0yc.gif","急急急":"ssm222.gif","那我走":"5anbfb.gif","好热啊":"7lcgld.jpg","太有实力了":"kujto0.gif","竖起耳朵听":"m8b5lo.jpeg","看戏吃瓜":"cr6ydz.gif","姐妹有八卦吗":"t75i48.gif","假装没在听八卦":"lanin5.gif","说八卦请大点声":"9ixmip.gif","有什么八卦让我听听":"y7n0js.jpeg","乡下人的目光":"2d88v1.jpeg","吃瓜群众已就位":"rxgo8j.gif","睡了拜拜":"eufams.gif","有一丁点害羞":"sto3ob.gif","撸袖子冲":"igsolv.jpeg","拜托拜托":"yns5x8.jpg","我要当废物":"ypphrr.jpeg","我投降":"uaseh3.jpeg","等我有钱了":"3pie3n.png","滑跪道歉":"aw00em.jpeg","【可爱小狗】我来咯":"cjq0ng.jpeg","【可爱】好的呀":"8iixex.gif","【可爱】大笑":"b7ib9u.gif","【可爱】道歉":"dwvb5k.gif","【可爱】给你我的心":"ouvm3g.gif","【可爱】呐":"9j1gia.gif","【可爱】嗯嗯":"92ffxx.gif","【可爱】生气":"hwznad.gif","【可爱】委屈":"kdlm6b.gif","【可爱】谢谢":"o3caur.gif","【可爱】心碎":"rhawk1.gif","【可爱】兴奋":"fcw3mi.gif","【可爱】爱你":"lv4svp.jpeg","【可爱】鞠躬":"p8wg65.gif","【可爱】哇喔":"snpmwq.gif","【可爱】阴影":"5cjkx3.gif","【可爱】震惊":"d6rmkp.gif","暗中观察":"my92nd.gif","翻滚":"55p5hs.gif"};
+  var STICKER_NAMES = Object.keys(STICKERS);
+  function stickerImg(name, cls) {
+    var f = STICKERS[name]; if (!f) return '';
+    return '<img class="' + (cls || '') + '" src="https://files.catbox.moe/' + f + '" alt="' + esc(name) + '" title="' + esc(name) + '" loading="lazy" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src=\'' + STK_FALLBACK + f + '\'}">';
+  }
   function lastPreview(m) {
     if (!m) return '';
     if (m.type === 'recall') return (m.sender === 'USER' ? '你：' : '') + '撤回了一条消息';
+    if (m.type === 'sticker') return (m.sender === 'USER' ? '你：' : '') + '[表情包] ' + String(m.content || '').substring(0, 20);
     return (m.sender === 'USER' ? '你：' : '') + ((m.type && m.type !== 'text') ? '[' + m.type + '] ' : '') + String(m.content || '').substring(0, 50);
   }
   function replyOne(name) {
@@ -689,6 +698,19 @@
     '#sbnyc-panel .sb-msg.voice .sb-vc-txt{display:none;margin-top:6px;padding-top:6px;border-top:.5px dashed var(--line);font-size:12.5px;line-height:1.55;}',
     '#sbnyc-panel .sb-msg.voice.open .sb-vc-txt{display:block;}',
     '#sbnyc-panel .sb-msg.voice.me .sb-vc-txt{border-top-color:rgba(255,255,255,.35);}',
+    // 😀 表情包气泡 + 选择器（好大鱼老师授权的 88 张）
+    '#sbnyc-panel .sb-msg.sticker{background:transparent!important;border:0!important;padding:2px!important;box-shadow:none!important;}',
+    '#sbnyc-panel .sb-msg.sticker .sb-stk-img{max-width:120px;max-height:120px;border-radius:8px;display:block;}',
+    '#sbnyc-panel .sb-msg.sticker .mt{display:block;margin-top:2px;}',
+    '#sbnyc-panel .sb-stkpick{max-height:72%;display:flex;flex-direction:column;padding:8px;}',
+    '#sbnyc-panel .sb-stk-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;padding:2px 4px 8px;flex:none;}',
+    '#sbnyc-panel .sb-stk-head button{width:auto;padding:4px 10px;margin:0;}',
+    '#sbnyc-panel .sb-stk-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;min-height:0;}',
+    '#sbnyc-panel .sb-stk-cell{aspect-ratio:1;border-radius:8px;overflow:hidden;background:var(--paper-2);display:flex;align-items:center;justify-content:center;cursor:pointer;}',
+    '#sbnyc-panel .sb-stk-cell:hover{outline:1px solid var(--gold);}',
+    '#sbnyc-panel .sb-stk-cell img{max-width:90%;max-height:90%;object-fit:contain;}',
+    '.sbnyc-bubs .bb.stk{background:transparent!important;padding:2px!important;border:0!important;}',
+    '.sbnyc-bubs .bb.stk .sb-stk-img{max-width:120px;max-height:120px;border-radius:8px;display:block;}',
     // 🧾 小票样式：转发的账单/商品/帖子渲染成收据卡（虚线边框+抬头+明细）
     '#sbnyc-panel .sb-msg.sb-rcpt{background:var(--paper-2);color:var(--ink);border:1px dashed var(--gold);border-radius:8px;font-weight:400;max-width:82%;align-self:flex-end;}',
     '#sbnyc-panel .sb-msg.sb-rcpt .rc-h{font-family:var(--font-en);font-size:8px;letter-spacing:2.5px;color:var(--gold);font-weight:700;border-bottom:.5px dashed var(--line);padding-bottom:4px;margin-bottom:5px;}',
@@ -2799,7 +2821,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">🔄 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 · 💬正文聊天气泡 · 🎼公共歌库音乐 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 · 💬正文聊天气泡 · 🎼公共歌库音乐 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -3293,6 +3315,23 @@
 
     // ➕ 动作菜单：普通联系人和管家 S. 各一套；一键类（哭穷/自拍/使唤管家）发完立刻让TA回，
     // 描述类（照片/语音/定位/转账）走面板小窗，攒进待发由玩家点发送
+    // 😀 表情包选择器：网格里点一张进待发（和照片/语音一样由玩家点发送）
+    function openStickerPicker() {
+      closeMsgMenu();
+      var pick = DOC.createElement('div');
+      pick.className = 'sb-msgmenu sb-stkpick';
+      pick.style.left = '10px'; pick.style.right = '10px'; pick.style.top = '8%';
+      pick.innerHTML = '<div class="sb-stk-head"><span>😀 表情包 · 点一张进待发</span><button data-pa="">✕</button></div>' +
+        '<div class="sb-stk-grid">' + STICKER_NAMES.map(function (n) { return '<div class="sb-stk-cell" data-stk="' + esc(n) + '">' + stickerImg(n) + '</div>'; }).join('') + '</div>';
+      panel.appendChild(pick);
+      _msgMenu = pick;
+      pick.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var cell = e.target && e.target.closest && e.target.closest('[data-stk]');
+        if (cell) { queueMsg(cell.getAttribute('data-stk'), 'sticker'); closeMsgMenu(); _msgMenu = null; toast('success', '😀 表情包已进待发——点发送'); return; }
+        if (e.target.closest && e.target.closest('[data-pa]')) { closeMsgMenu(); _msgMenu = null; }
+      });
+    }
     var plusBtn = chatEl.querySelector('.sb-cbar .plus');
     if (plusBtn) plusBtn.addEventListener('click', function (ev) {
       ev.stopPropagation();   // 老规矩：不拦冒泡，"点菜单外=收菜单"会把刚开的菜单当场关掉
@@ -3307,6 +3346,7 @@
           '<button data-pa="q2">🕵️ 查个人</button>' +
           '<button data-pa="photo">📷 发照片（自己描述）</button>' +
           '<button data-pa="img">🎨 AI生图</button>' +
+          '<button data-pa="sticker">😀 发表情包</button>' +
           '<button data-pa="link">🔗 发链接（科普帖/账单/商品）</button>';
       } else {
         mh += '<button data-pa="meet">☕ 约见面（开正文剧情）</button>' +
@@ -3314,6 +3354,7 @@
           '<button data-pa="selfie">🤳 快捷自拍（一键）</button>' +
           '<button data-pa="photo">📷 发照片（自己描述）</button>' +
           '<button data-pa="img">🎨 AI生图</button>' +
+          '<button data-pa="sticker">😀 发表情包</button>' +
           '<button data-pa="voice">🎙️ 发语音（自己描述）</button>' +
           '<button data-pa="loc">📍 发定位</button>' +
           '<button data-pa="pay">💸 转账给TA（从你钱包扣）</button>' +
@@ -3337,6 +3378,7 @@
         else if (act === 'broke') { queueMsg(pickFrom(QUICK_POOLS.broke), 'text'); replyOne(name); }
         else if (act === 'selfie') { queueMsg(pickFrom(QUICK_POOLS.selfie), 'image'); replyOne(name); }
         else if (act.charAt(0) === 'q') { queueMsg(SE_Q[parseInt(act.slice(1), 10)], 'text'); replyOne(name); }
+        else if (act === 'sticker') openStickerPicker();
         else if (act === 'photo') askPhoto();
         else if (act === 'voice') {
           panelPrompt('这段语音你说了什么？（对方会"听到"，语气喘息也可以写进去）', '').then(function (d) {
@@ -3453,8 +3495,8 @@
       dataA = ' data-owner="' + (isU ? 'me' : 'them') + '" data-nm="' + esc(trName) + '" data-mi="' + trIdx + '"';
       if (type !== 'transfer' && type !== 'recall' && type !== 'system' && type !== 'gift' && type !== 'dossier') {   // 档案卡不给重roll/编辑（它不是一条消息，卡上自带「再查一次」）
         if (canReroll && !isU) dataA += ' data-rr="1"';
-        if (isU && (type === 'text' || type === 'image' || type === 'voice')) {
-          dataA += ' data-ed="1"';
+        if (isU && (type === 'text' || type === 'image' || type === 'voice' || type === 'sticker')) {
+          if (type !== 'sticker') dataA += ' data-ed="1"';   // 表情包没有"编辑"这回事，只能撤
           if (isLast) dataA += ' data-rc="1"';   // 只有自己发的最后一条能撤回（转账不能撤——钱已经走了）
         }
       }
@@ -3476,6 +3518,10 @@
           '<div style="font-size:11px;color:var(--ink-sub);margin-top:4px;padding:0 6px;">📷 ' + esc(c) + '</div>' + tH + trH + '</div>';
       }
       return '<div class="sb-msg ' + cls + ' media"' + dataA + '>' + gsp + '📷 ' + esc(c) + tH + trH + '</div>';
+    }
+    if (type === 'sticker') {
+      var sImg = stickerImg(c, 'sb-stk-img');
+      return '<div class="sb-msg ' + cls + ' sticker"' + dataA + '>' + gsp + (sImg || ('😀 ' + esc(c))) + tH + '</div>';
     }
     if (type === 'voice') {
       // 沉浸语音条：只露波形和秒数（时长按字数估），点一下气泡才展开文字
@@ -3823,7 +3869,10 @@
         if (row.who === lastWho) av.style.visibility = 'hidden';   // 同一个人连发几条：只有第一条露头像，剩下的留空位对齐
         var bw = DOC.createElement('div'); bw.className = 'bw';
         if (!isMe && row.who !== lastWho) { var nm = DOC.createElement('div'); nm.className = 'bn'; nm.textContent = row.who; bw.appendChild(nm); }
-        var bb = DOC.createElement('div'); bb.className = 'bb'; bb.textContent = row.text;   // textContent：正文里的内容一律当纯文本，不给 HTML 可乘之机
+        var bb = DOC.createElement('div'); bb.className = 'bb';
+        var stkM = String(row.text || '').match(/^\(表情:(.+)\)$/);
+        if (stkM && STICKERS[stkM[1]]) { bb.className = 'bb stk'; bb.innerHTML = stickerImg(stkM[1], 'sb-stk-img'); }   // 表情包行 → 出图（名字来自白名单，不是玩家可控 HTML）
+        else bb.textContent = row.text;   // textContent：正文里的内容一律当纯文本，不给 HTML 可乘之机
         bw.appendChild(bb);
         line.appendChild(av); line.appendChild(bw);
         wrap.appendChild(line);
