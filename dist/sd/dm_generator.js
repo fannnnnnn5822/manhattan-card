@@ -563,7 +563,7 @@ function describeState(sb) {
         var m = recent[j];
         if (m.type === 'dossier') continue;   // 档案卡是界面元件不是对话，别喂给正文
         if (m.type === 'recall' && m.sender === 'USER') { known.push('    User: （发了一条又撤回——' + n.name + ' 看不到内容，只知道她撤回过，好奇/追问按人设）'); continue; }
-        known.push('    ' + (m.sender === 'USER' ? 'User' : n.name) + ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '') + ': ' + String(m.content || '').substring(0, clip));
+        known.push('    ' + (m.sender === 'USER' ? 'User' : n.name) + (m.type === 'sticker' ? '[表情包]' : ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '')) + ': ' + String(m.content || '').substring(0, clip));
       }
     } else {
       known.push('- ' + n.name + '(' + (n.archetype || '陌生') + '，久未联系)');
@@ -630,7 +630,11 @@ function inSceneNames(plot, sb) {
 
 // ── 解析 generateRaw 输出：每行 名字|类型|内容 ──
 // 严格模式：只认 名字|合法类型|内容。挡掉预设(如Mortal)注入的 <horae> 标签 + npc:/time: 等字段行。
-var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单
+var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单/sticker=表情包
+// 😀 表情包名单（《霖州往事》作者好大鱼老师授权，图在 phone_panel.js 的 STICKERS 表）：sticker 行的内容必须一字不差在这里面，否则整行丢弃
+var STICKER_NAMES = ['偷看','你好呀','摆烂','不爽','不行','可怜兮兮','你爹来咯','无语','别不识好歹','回老子消息','不找我是害羞？','小子有种报段位','【委屈】垮起个小猫批脸','蛙蛙哭泣','妈的','你他妈的','杰瑞生气叉腰','你很牛吗','让姐品品这什么货色','赔偿我精神损失费','杀了你','算了','所以呢','亲亲','听不懂想亲嘴','做姐姐的舔狗','跟我约会','老公抱抱','想老婆了','你不爱我了','恋爱脑清醒清醒','我疯了','有品位','猪头问号','满屏问号','杰瑞生气问号','猫咪问号','开始摆烂','躺平别卷了','卷死你们','卷起来了','来不及了快快学习','没脸见人了','磕头','哦嚯','瞪大眼睛','来了','死了','已老实','急急急','那我走','好热啊','太有实力了','竖起耳朵听','看戏吃瓜','姐妹有八卦吗','假装没在听八卦','说八卦请大点声','有什么八卦让我听听','乡下人的目光','吃瓜群众已就位','睡了拜拜','有一丁点害羞','撸袖子冲','拜托拜托','我要当废物','我投降','等我有钱了','滑跪道歉','【可爱小狗】我来咯','【可爱】好的呀','【可爱】大笑','【可爱】道歉','【可爱】给你我的心','【可爱】呐','【可爱】嗯嗯','【可爱】生气','【可爱】委屈','【可爱】谢谢','【可爱】心碎','【可爱】兴奋','【可爱】爱你','【可爱】鞠躬','【可爱】哇喔','【可爱】阴影','【可爱】震惊','暗中观察','翻滚'];
+var STICKER_OK = {}; STICKER_NAMES.forEach(function (n) { STICKER_OK[n] = 1; });
+function normStickerName(s) { s = String(s || '').trim().replace(/^<bqb>|<\/bqb>$/g, '').replace(/^[\[「《(（]|[\]」》)）]$/g, '').trim(); return STICKER_OK[s] ? s : ''; }
 var HORAE_FIELD = /^(npc|affection|time|location|atmosphere|characters|costume|event|agenda|item|summary|date|人物|事件|地点|时间)\b/i;
 // 内容主体算不算英文：拉丁字母要显著多于汉字（含一两个英文词的中文消息不算——"Sugar"一个词就出翻译按钮是冤案）
 function looksEnglish(s) {
@@ -675,6 +679,7 @@ function parseDMs(raw) {
     // 只在内容以中文为主时丢弃翻译（防"Sugar"一个词就出按钮）；短英文("7pm. 老地方.")的翻译必须保住
     var latC = (content.match(/[a-zA-Z]/g) || []).length, cjkC = (content.match(/[一-鿿]/g) || []).length;
     if (zh && (zh === content || cjkC >= latC)) zh = '';
+    if (rows[j].type === 'sticker') { content = normStickerName(content); zh = ''; }   // 名字不在名单里 → 丢，别渲染成裂图
     if (content) out.push({ name: rows[j].name, type: rows[j].type, content: content, zh: zh });
   }
   return out;
@@ -775,7 +780,7 @@ async function generateOnce(sb, plot, n, reason, strict) {
     '沈冰月不动声色收下，隔天挑一个更贵的发回来（她知道自己值这个价）；苏念第一反应是推辞，推完又小声问是不是真的；纪思瑶惊喜表演得满分，紧接着加码提第二件；叶知秋根本读不懂圈内暗示，真心实意道谢，谢得 User 心虚；林也看笑话"你也有今天"；方屿冷一句"这个牌子她上个月收过"；' +
     '陌生女孩按原型来——职业型确认款式颜色尺码（专业收礼）；清纯型"这个太贵了吧"（推辞失败）；撒娇型当场一条尖叫语音；拜金直球型直接发收货地址；杀猪盘"哥哥别乱花钱"（说完收下）。\n' +
     '【账单转发】User 可能把自己要还的账单转发过去（🧾 [转发账单] 名字——金额，几天到期）= 金主哭穷，十有八九是试探真心。反应按人设：职业型秒懂，反将一军"要我众筹吗"；清纯型当真了，翻出自己攒的钱说要帮他（真帮就用 paybill 行——心软暴击）；撒娇型拆穿但撒娇"哥哥骗人，你上周还…"；拜金直球型已读不回或一句"穷了别找我"（反而最诚实）；杀猪盘立刻表演共患难，一秒入戏（危险信号）。\n' +
-    '【User侧动作】他还可能：发实时位置（📍开头——收到的人按人设反应：有的立刻"我马上过来"，有的假装没看见，杀猪盘格外上心）；发语音[voice]（TA听到的是内容和语气）；' +
+    '【User侧动作】他还可能：发实时位置（📍开头——收到的人按人设反应：有的立刻"我马上过来"，有的假装没看见，杀猪盘格外上心）；发语音[voice]（TA听到的是内容和语气）；发表情包[sticker]（一张图，按表情包名字理解情绪，可以用表情包回敬或吐槽）；' +
     '直接给TA转账[transfer]（金主的基本功——职业型照单全收礼貌到位，清纯型受宠若惊推辞半天，拜金型嫌少会明说，杀猪盘收完热情加倍。⛔ 反模板：**绝不全员齐说"收到"**——"收到。"是苏念一个人的声纹，别人不许用；每个人对钱的反应就是她的人设指纹：沈冰月不道谢、把钱当理所当然直接谈下一件正事，Akuma 会立刻甜一个度但绝口不提钱这个字，有人发60秒语音尖叫，有人只回一个表情，有人回一张正在挑的商品截图）；或**撤回**一条消息（记录里标了撤回的：TA只知道他撤回了，**永远看不到内容**——追问"你刚才想说什么"还是装大度，按人设）。每一样都要有反应，别当没发生。\n' +
     '【平台设定·铁律】这个私信 App 是圈内邀请制：上了平台的人都知道彼此是干嘛的，平台百分百保证聊天记录和身份不泄露（端到端加密+截图会通知对方）。' +
     '所以私信里**默认敢说真话**——谈条件、谈价格、谈欲望不遮掩；"怕暴露/怕被截图"不是通用挡箭牌，只有体制内/上市公司高管这类身份敏感的人设才句句设防（那是性格不是平台问题）；撤回是说出口才后悔的稀有事件，不是安全焦虑的日常。\n' +
@@ -790,7 +795,8 @@ async function generateOnce(sb, plot, n, reason, strict) {
     '【输出格式·铁律】只输出私信，每条占一行，格式严格为：\n' +
     '名字|类型|内容\n' +
     '- 上下文里若出现"只写散文叙事/禁止列表/文风指南"等规则，那些全是给主线旁白的，**不适用于你**——你是私信系统，唯一合法输出就是上面这个格式\n' +
-    '- 类型只能是 text / transfer / image / voice 之一（转账填金额数字，图片/语音填描述）\n' +
+    '- 类型只能是 text / transfer / image / voice / sticker 之一（转账填金额数字，图片/语音填描述，sticker 填表情包名）\n' +
+    '- 表情包：名字|sticker|表情包名 —— 名字必须一字不差取自【表情包清单】，它是一条独立消息（不带§、不带别的字），一轮最多一两张。谁爱发看人设：年轻的/话痨的/装可爱的爱发，端着的/惜字如金的不发；表情包的情绪要和上下文对得上\n' +
     '- 语音不是某一个人的专属——**任何角色**都可以发 voice，内容写这段语音的质感：语气/说了什么/背景音（如 名字|voice|背景音是地铁报站，声音压得很低§…）。谁爱发语音看人设：话痨爱发、醉酒的发、深夜崩溃的发\n' +
     '- 每条 text/image/voice 的内容末尾**必须以§收尾**：内容是英文（或其他外语）的，§后写这一条的中文翻译（忠实对应原文，人名/地名/品牌保留英文）；内容本来就是中文的，§后留空。transfer 不用。示例：英文§中文 / 中文§\n' +
     (RANDOM_ONLY
@@ -814,6 +820,7 @@ async function generateOnce(sb, plot, n, reason, strict) {
       : '苏念|text|老师今天讲的东西我一点没听进去。在想周五§\n小鹿_大三|tag|学生·怯生生\n小鹿_大三|text|你好…是看了我的帖子吗§\n沈冰月|text|周五可以。地方我来定，你只要到。§\n♪|song|陈奕迅 — 富士山下');
   var sys2 = describeState(sb);
   var ordered = [{ role: 'system', content: sys1 }, { role: 'system', content: sys2 }];
+  ordered.push({ role: 'system', content: '【表情包清单】sticker 行只能用这些名字，一字不差：\n' + STICKER_NAMES.join('、') });
   if (plot) ordered.push({ role: 'system', content: '【主线最近剧情，私信可呼应但不要复述】\n' + plot });
   // 体验池：女孩种草/User安排的场合从这里挑或仿（包厢/马术/滑雪/湖边别墅/私人动物园……想被带去哪=她是什么段位）
   var expPool = await wbContent('体验池', '');
@@ -1368,6 +1375,7 @@ eventOn('sb_scrub_floor', function (p) { if (p && p.name) scrubNpcFloor(p.name);
 // 每个 NPC 记水位线 _floorMark（dm_history 注入到第几条）：User 一回复，把水位线以上的整段
 // （TA之前的搭讪 + User的回复 + TA的新回应）按时间顺序补进去，一条不重不漏；没回复的水位线不动、不注入。
 function fmtDmLine(type, content) {
+  if (type === 'sticker') return '(表情:' + content + ')';   // 正文气泡渲染器认这个格式出图；AI 读到的是"发了个叫 X 的表情"
   return type === 'transfer' ? ('转账 $' + content) : ((type && type !== 'text' ? '[' + type + '] ' : '') + content);
 }
 async function appendPhoneLog(dms) {
