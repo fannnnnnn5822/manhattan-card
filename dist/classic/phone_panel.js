@@ -527,7 +527,7 @@
     '#sbnyc-panel .sb-badge{background:var(--red);color:#fff;min-width:18px;height:18px;border-radius:9px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0;}',
     '#sbnyc-panel .sb-chat{position:absolute;top:0;left:0;right:0;bottom:0;background:transparent !important;display:flex;flex-direction:column;z-index:10;border-radius:38px;overflow:hidden;}',
     '#sbnyc-panel .sb-ch{display:flex;align-items:center;gap:10px;padding:14px 16px 10px;border-bottom:.5px solid var(--line);background:linear-gradient(180deg,var(--paper-2),var(--paper-3));flex-shrink:0;}',
-    '#sbnyc-panel .sb-ch-back{background:none;border:none;color:var(--gold);font-size:22px;cursor:pointer;padding:0 4px;line-height:1;}',
+    '#sbnyc-panel .sb-ch-back{background:none;border:none;color:var(--gold);font-size:22px;cursor:pointer;line-height:1;padding:11px 14px;margin:-11px -10px;position:relative;z-index:1;touch-action:manipulation;-webkit-tap-highlight-color:transparent;}',   // 可点区≈36×44（苹果规范 44pt），图形没变；玩家 iPhone 上按不到，反馈自小栗 2026-09-10
     '#sbnyc-panel .sb-ch-del{background:none;border:none;font-size:15px;cursor:pointer;opacity:.45;padding:0 4px;}',
     '#sbnyc-panel .sb-ch-del:hover{opacity:1;}',
     '#sbnyc-panel .sb-ch-name{flex:1;}',
@@ -3630,6 +3630,23 @@
     panel.style.height = (Math.min(660, vpH() - 220) / CAL.sy) + 'px';
   }
   // 窄屏（手机浏览器）：面板顶到屏幕顶、底不压输入栏，宽度居中
+  // iOS 全屏壳（Tauri Tavern 等）里面板贴顶会撞状态栏：先探 env(safe-area-inset-top)，探不到且是全屏 iPhone 就按 44 算
+  var _safeTop = -1;
+  function safeTop() {
+    if (_safeTop >= 0) return _safeTop;
+    var v = 0;
+    try {
+      var probe = DOC.createElement('div');
+      probe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none;';
+      DOC.body.appendChild(probe); v = probe.offsetHeight || 0; probe.remove();
+    } catch (e) {}
+    try {
+      var ua = (VIEW.navigator && VIEW.navigator.userAgent) || '';
+      var fullscreen = VIEW.screen && Math.abs(VIEW.innerHeight - VIEW.screen.height) < 2;
+      if (!v && /iPhone/.test(ua) && fullscreen) v = 44;
+    } catch (e2) {}
+    _safeTop = v; return v;
+  }
   function fitPanel() {
     if (vpW() >= 500) { panel.style.height = ''; return; }
     recalib();
@@ -3639,8 +3656,9 @@
       if (sf) { var r = sf.getBoundingClientRect(); if (r.top > 100) bottom = r.top; }
     } catch (e) {}
     var pw2 = Math.min(380, vpW() - 12);
-    setClientPos(panel, Math.max(4, (vpW() - pw2) / 2), 6);
-    panel.style.height = ((bottom - 14) / CAL.sy) + 'px';
+    var st = Math.max(6, safeTop());
+    setClientPos(panel, Math.max(4, (vpW() - pw2) / 2), st);
+    panel.style.height = ((bottom - st - 8) / CAL.sy) + 'px';
   }
   function loadPos(key) { try { var s = VIEW.localStorage.getItem(key); return s ? JSON.parse(s) : null; } catch (e) { return null; } }
   function savePos(key, x, y) { try { VIEW.localStorage.setItem(key, JSON.stringify({ x: x, y: y })); } catch (e) {} }
@@ -4093,7 +4111,7 @@
       var sf = DOC.getElementById('send_form') || DOC.getElementById('form_sheld');
       if (sf) { var r = sf.getBoundingClientRect(); if (r.top > 100) bottom = r.top; }
     } catch (e) {}
-    var top = narrow ? 8 : 0;
+    var top = narrow ? Math.max(8, safeTop()) : 0;
     var maxH = Math.max(200, Math.min(narrow ? (bottom - top - 12) : Math.round(vpH() * 0.7), bottom - 12));
     sp.style.maxHeight = (maxH / CAL.sy) + 'px';
     var x, y;
