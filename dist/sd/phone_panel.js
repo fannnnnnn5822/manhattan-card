@@ -709,7 +709,7 @@
     '#sbnyc-panel .sb-stk-grid{overflow-y:auto;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;min-height:0;}',
     '#sbnyc-panel .sb-stk-cell{aspect-ratio:1;border-radius:8px;overflow:hidden;background:var(--paper-2);display:flex;align-items:center;justify-content:center;cursor:pointer;}',
     '#sbnyc-panel .sb-stk-cell:hover{outline:1px solid var(--gold);}',
-    '#sbnyc-panel .sb-stk-cell img{max-width:90%;max-height:90%;object-fit:contain;}',
+    '#sbnyc-panel .sb-stk-cell img{max-width:90%;max-height:66px;object-fit:contain;}',
     '.sbnyc-bubs .bb.stk{background:transparent!important;padding:2px!important;border:0!important;}',
     '.sbnyc-bubs .bb.stk .sb-stk-img{max-width:120px;max-height:120px;border-radius:8px;display:block;}',
     // 🧾 小票样式：转发的账单/商品/帖子渲染成收据卡（虚线边框+抬头+明细）
