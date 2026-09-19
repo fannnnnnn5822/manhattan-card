@@ -20,6 +20,98 @@
   // 私享版开关（build.py --personal 注入 PERSONAL_EDITION=true）：兄弟群只在私享版出现
   var IS_PERSONAL = (typeof PERSONAL_EDITION !== 'undefined' && PERSONAL_EDITION);
   var GROUP_NAME = '🥂 兄弟群';
+  // ── 👥 群聊（2026-09-19）：群＝ sb.npcs 里一个 isGroup=true 的联系人，列表/聊天页全部复用私信那套 ──
+  var ANON_GROUP_NAME = '🎭 雪茄房';            // 匿名大厅（聊满 50 楼由管家拉进去，解锁逻辑在 dm_generator）
+  var GROUP_MAX_MEMBERS = 8;                    // 手动拉群一次最多勾几个人
+  var GROUP_NAME_MAX = 16;                      // 群名字数上限
+  var ANON_WORDS = ['鱼子酱', '松露', '香槟', '马提尼', '生蚝', '貂皮', '羊绒', '龙虾', '和牛', '鹅肝',
+    '勃艮第', '威士忌', '雪茄', '珍珠', '水晶', '丝绒', '缎面', '皮草', '鸵鸟皮', '鳄鱼皮',
+    '金箔', '银器', '骨瓷', '高脚杯', '冰桶', '车厘子', '无花果', '白芦笋', '帝王蟹', '火腿',
+    '芝士', '苦艾酒', '干邑', '波特酒', '清酒', '檀香', '琥珀', '玳瑁', '祖母绿', '孔雀'];
+  var ANON_HANDLES = ANON_WORDS.map(function (w) { return '匿名·' + w; });
+  // 群气泡上方那行小名字的颜色：按名字哈希从八色盘取，同一个人在整局里永远同一个颜色（S./Akuma 保留金和粉）
+  // 低饱和中间调，浅纸底和夜间深底上都读得出、彼此分得开；前两个是保留位（S. 金＝面板的 --gold，Akuma 粉）
+  var GSP_COLORS = ['#c9a566', '#d98fae', '#7396c9', '#6aa885', '#c08472', '#9a86cc', '#c0a35f', '#6fa5a5'];
+  function speakerColor(who) {
+    if (who === 'SugarElite™' || who === 'S.') return GSP_COLORS[0];
+    if (who === 'Akuma') return GSP_COLORS[1];
+    var h = 0, s = String(who || '');
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return GSP_COLORS[2 + (h % (GSP_COLORS.length - 2))];
+  }
+  // 拆群消息的说话人（和 dm_generator 里那份同码）：认 `名：` / `名:` / 【名】/ [名] / **名**。
+  // 返回 { who, text }：who 为 null＝名单外的名字，who 为空串＝这行没写说话人。
+  function splitGroupSpeaker(content, names) {
+    var s = String(content == null ? '' : content);
+    var list = names || [];
+    function norm(x) {
+      return String(x || '')
+        .replace(/（[^）]*）/g, '').replace(/\([^)]*\)/g, '')
+        .replace(/[^0-9A-Za-z一-鿿ぁ-ヿ가-힣]/g, '')
+        .toLowerCase();
+    }
+    // 管家的写法太多（S / S. / 管家S. / SugarElite™）——全折成同一个 key，群里才不会长出第二个管家
+    function key(x) { var k = norm(x); return /^(?:s|se|管家s?|s管家|sugarelite.*|elite)$/.test(k) ? 's' : k; }
+    function find(nm) {
+      nm = String(nm || '').trim();
+      if (!nm) return null;
+      var i;
+      for (i = 0; i < list.length; i++) { if (list[i] === nm) return list[i]; }
+      var k = key(nm);
+      if (!k) return null;
+      for (i = 0; i < list.length; i++) { if (key(list[i]) === k) return list[i]; }
+      return null;
+    }
+    var m = null, head = null, rest = '';
+    if ((m = s.match(/^\s*【\s*([^】\n]{1,20}?)\s*】\s*[:：]?\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+    else if ((m = s.match(/^\s*\[\s*([^\]\n]{1,20}?)\s*\]\s*[:：]?\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+    else if ((m = s.match(/^\s*\*\*\s*([^*\n]{1,20}?)\s*\*\*\s*[:：]?\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+    else if ((m = s.match(/^\s*([^\s:：【\[*\n][^:：\n]{0,19}?)\s*[:：]\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+    if (head === null) return { who: '', text: s.trim() };
+    var hit = find(head);
+    if (!hit) return { who: null, text: s.trim() };
+    return { who: hit, text: String(rest || '').trim() };
+  }
+  // 群名规范化：玩家起的名字里把协议字符和换行去掉，掐到上限
+  function cleanGroupName(s) { return String(s || '').replace(/[|§]/g, '').replace(/[\r\n]+/g, ' ').trim().slice(0, GROUP_NAME_MAX); }
+  // 默认群名＝前几个人的名字顿号连起来，但只放得下整个名字的才放——
+  // 直接 slice(0,16) 会把第三个名字掐成半个（「苏念、沈冰月、纪」），难看
+  function defaultGroupName(names) {
+    var out = '';
+    for (var i = 0; i < names.length && i < 3; i++) {
+      var next = out ? out + '、' + names[i] : String(names[i]);
+      if (next.length > GROUP_NAME_MAX) break;
+      out = next;
+    }
+    return out || String(names[0] || '').slice(0, GROUP_NAME_MAX);
+  }
+  // 玩家亲手把一个人拉进群 = 明确要 TA 说话 → 顺手解除「冷处理」（muted＝删过聊天记录的静默，和群无关）
+  function unmuteMembers(sbObj, names) {
+    var np = sbObj && sbObj.npcs; if (!np) return;
+    for (var i = 0; i < names.length; i++) { if (np[names[i]] && np[names[i]].muted) np[names[i]].muted = false; }
+  }
+  function npcOf(name) { return (state && state.npcs && state.npcs[name]) || null; }
+  function isGroupChat(name) { var n = npcOf(name); return !!(n && n.isGroup); }
+  function groupMembersOf(name) { var n = npcOf(name); return (n && n.members) || []; }
+
+  // ── 单色线条图标（2026-09-19）──
+  // 病根：emoji 当按钮用会被系统字体渲染成彩色方块（Windows/安卓上的 🔄 是一块雷霆蓝），
+  // 和香槟金+深色的面板打架。这里自己手画一套 24×24 的线条图标，只用 currentColor，
+  // 颜色/透明度全交给 CSS（.sb-ik）——按钮再也不会自己带颜色进来。
+  var SB_ICONS = {
+    refresh: '<path d="M3.5 12a8.5 8.5 0 0 1 14.5-6"/><polyline points="18 2.5 18 6 14.5 6"/><path d="M20.5 12a8.5 8.5 0 0 1-14.5 6"/><polyline points="6 21.5 6 18 9.5 18"/>',
+    bell: '<path d="M18 8.5a6 6 0 0 0-12 0c0 6-2.5 7.5-2.5 7.5h17S18 14.5 18 8.5"/><path d="M13.7 19.4a2 2 0 0 1-3.4 0"/>',
+    bellOff: '<path d="M8.6 4.3A6 6 0 0 1 18 8.5c0 2.3.4 3.9.9 5"/><path d="M15.5 16H3.5S6 14.5 6 8.5c0-.6.1-1.2.2-1.7"/><path d="M13.7 19.4a2 2 0 0 1-3.4 0"/><line x1="3.2" y1="3.2" x2="20.8" y2="20.8"/>',
+    pin: '<line x1="12" y1="15" x2="12" y2="21.2"/><path d="M8 3h8l-1 6 3 3v1H6v-1l3-3-1-6z"/>',
+    trash: '<line x1="3.5" y1="6" x2="20.5" y2="6"/><path d="M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6"/><path d="M6 6v13.5A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V6"/><line x1="10" y1="10.5" x2="10" y2="17"/><line x1="14" y1="10.5" x2="14" y2="17"/>',
+    group: '<circle cx="9" cy="8" r="3.2"/><path d="M2.5 20v-1a5 5 0 0 1 5-5h3a5 5 0 0 1 5 5v1"/><path d="M16.4 5.3a3.2 3.2 0 0 1 0 5.4"/><path d="M18 14.2a5 5 0 0 1 3.5 4.8v1"/>',
+    mask: '<path d="M3 7.5C6 6 9 5.4 12 5.4s6 .6 9 2.1c0 5-2.5 10-5.5 10-1.5 0-2.3-1-3.5-1s-2 1-3.5 1C5.5 17.5 3 12.5 3 7.5z"/><path d="M6.9 10.2c.8-.8 2-.8 2.8 0"/><path d="M14.3 10.2c.8-.8 2-.8 2.8 0"/>',
+  };
+  function sbIcon(name, px) {
+    var d = SB_ICONS[name] || SB_ICONS.group;
+    var s = px || 16;
+    return '<svg class="sb-ico" viewBox="0 0 24 24" width="' + s + '" height="' + s + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + d + '</svg>';
+  }
 
   // ── API 包装（脚本作用域直接有全局，仍套 try/catch 防御） ──
   function toast(kind, msg) {
@@ -40,6 +132,15 @@
   }
   function SBon(ev, cb) { try { eventOn(ev, cb); } catch (e) {} }
   function SBemit(ev, data) {
+    // ⚠️ sb_updated 必须等写队列落账再广播（2026-09-19 浏览器实测）：它会触发 refreshView → loadState，
+    // 用聊天变量里的旧数据整个替换 state 镜像——刚删的消息、刚删的联系人/群、刚撤回的那条会当场"复活"，
+    // 要等下一次刷新才对。排一个空写进同一条队列，落账后再广播。
+    if (ev === 'sb_updated') {
+      SBupdate(function (v) { return v; }).then(function () {
+        try { eventEmit(ev, data); } catch (e) { toast('error', '事件发送失败: ' + e.message); }
+      });
+      return;
+    }
     try { eventEmit(ev, data); } catch (e) { toast('error', '事件发送失败: ' + e.message); }
   }
   // 把文字填进正文输入框（不代发——玩家补充细节后自己发送，主线LLM接着写见面/体验剧情）
@@ -92,11 +193,38 @@
     if (!m) return '';
     if (m.type === 'recall') return (m.sender === 'USER' ? '你：' : '') + '撤回了一条消息';
     if (m.type === 'sticker') return (m.sender === 'USER' ? '你：' : '') + '[表情包] ' + String(m.content || '').substring(0, 20);
-    return (m.sender === 'USER' ? '你：' : '') + ((m.type && m.type !== 'text') ? '[' + m.type + '] ' : '') + String(m.content || '').substring(0, 50);
+    // system 行不加 [system] 标签（和 dm_generator.pushThem 同一条理由：那句话本来就是写给玩家看的）
+    return (m.sender === 'USER' ? '你：' : '') + ((m.type && m.type !== 'text' && m.type !== 'system') ? '[' + m.type + '] ' : '') + String(m.content || '').substring(0, 50);
   }
+  // 👥 群请求：带 group 字段发出去，生成器那边永远单独跑一次（和私信合批＝串号）
+  function groupN(npc) { return (npc && npc.anon) ? '4-8' : '2-6'; }
+  function askGroupRound(name, why) {
+    var npcG = state && state.npcs && state.npcs[name];
+    setStatus('⏳ 群里正在说话…');
+    showTyping(name);
+    // ⚠️ 等写队列落账再发请求（2026-09-19 浏览器实测）：刚建好/刚从 ➕ 页重进的群还排在 SBupdate 队列里，
+    // 生成器这会儿去读聊天变量会找不到它 →「群聊「X」不在通讯录里了」，首开那一轮直接废掉。
+    SBupdate(function (v) { return v; }).then(function () {
+      SBemit('sb_request_dm', { group: name, reason: why, n: groupN(npcG) });
+    });
+  }
+  // ⚠️ 竞态守卫（2026-09-19 浏览器实测）：queueMsg 刚攒进去的那句还排在 SBupdate 队列里没落盘，
+  // 这里同步 loadOutbox 会读到旧的 → 打完字直接点「发送」第一次没反应、话卡在待发里，再点一次才发出去。
+  // 和 rerollLast 同一招：排一个空写进同一条队列，等它落账再读。
   function replyOne(name) {
+    SBupdate(function (v) { return v; }).then(function () { replyOneNow(name); });
+  }
+  function replyOneNow(name) {
     var ob = loadOutbox();
     var lines = ob[name] || [];
+    var npcB = state && state.npcs && state.npcs[name];
+    if (npcB && npcB.isGroup) {
+      if (!lines.length) { toast('info', '先说点什么再发送'); return; }
+      delete ob[name]; saveOutbox(ob);
+      askGroupRound(name, 'User 在群聊「' + name + '」里说了：' + lines.map(function (s) { return '「' + s + '」'; }).join('、') + '。群里的人接着往下聊。');
+      return;
+    }
+    if (npcB && npcB.blocked) { delete ob[name]; saveOutbox(ob); toast('warning', name + ' 已经把你拉黑了，TA 收不到'); return; }   // ⛔ 拉黑：待发的清掉，不触发生成
     if (!lines.length) { toast('info', '先说点什么再发送'); return; }
     var why = '玩家在私信里对 ' + name + ' 说了：' + lines.map(function (s) { return '「' + s + '」'; }).join('、') +
       '。只让 ' + name + ' 本人回应这些，别的角色不要出现、不要插话。';
@@ -132,11 +260,15 @@
     // 本地镜像同步 + 重画
     if (npc0) { var hh = npc0.dm_history || []; var cc = hh.length; for (var k = hh.length - 1; k >= 0; k--) { if (hh[k].sender === 'THEM') cc = k; else break; } npc0.dm_history = hh.slice(0, cc); }
     if (state && state.npcs && state.npcs[name]) openChat(name, state.npcs[name]);
-    var hint = userLine
-      ? '玩家刚对 ' + name + ' 说的是："' + userLine.content + '"。请 ' + name + ' 换一种方式重新回应（和刚才不一样）。只让 ' + name + ' 回应，别人不要出现。'
-      : '请 ' + name + ' 主动再发一条消息（换个内容）。只让 ' + name + ' 回应，别人不要出现。';
+    var isG = !!(npc0 && npc0.isGroup);
+    var hint = isG
+      ? ('群聊「' + name + '」刚才那一轮重来一次，换个说法、换个人接话。' + (userLine ? 'User 在群里说的是："' + userLine.content + '"。' : ''))
+      : (userLine
+        ? '玩家刚对 ' + name + ' 说的是："' + userLine.content + '"。请 ' + name + ' 换一种方式重新回应（和刚才不一样）。只让 ' + name + ' 回应，别人不要出现。'
+        : '请 ' + name + ' 主动再发一条消息（换个内容）。只让 ' + name + ' 回应，别人不要出现。');
     // 链式等 SBupdate 落账后再触发重新生成（防竞态：生成器读到旧数据）
     SBupdate(function (v2) { return v2; }).then(function () {
+      if (isG) { askGroupRound(name, hint); return; }
       SBemit('sb_request_dm', { reason: hint, n: '1-2' });
       setStatus('⏳ ' + name + ' 重新回复中…');
       showTyping(name);
@@ -323,6 +455,19 @@
     var ob = loadOutbox();
     var names = Object.keys(ob);
     if (!names.length) { toast('info', '没有待发送的消息'); return; }
+    // 👥 群从点名合批里摘出来，各自单发一条 group 请求（群和私信混在一次生成里＝串号）
+    var groupsOut = [];
+    for (var gi = names.length - 1; gi >= 0; gi--) {
+      if (!isGroupChat(names[gi])) continue;
+      groupsOut.push({ name: names[gi], lines: ob[names[gi]] });
+      delete ob[names[gi]];
+      names.splice(gi, 1);
+    }
+    for (var gj = 0; gj < groupsOut.length; gj++) {
+      askGroupRound(groupsOut[gj].name, 'User 在群聊「' + groupsOut[gj].name + '」里说了：' +
+        groupsOut[gj].lines.map(function (s) { return '「' + s + '」'; }).join('、') + '。群里的人接着往下聊。');
+    }
+    if (!names.length) { saveOutbox({}); toast('success', '📨 已发送，等回复'); return; }
     var parts = [];
     for (var i = 0; i < names.length; i++) {
       parts.push('· ' + names[i] + ' 收到：' + ob[names[i]].map(function (s) { return '「' + s + '」'; }).join('、'));
@@ -445,6 +590,41 @@
     if (cd > pd) return '——— ' + fmtMD(gameDateOf(cd)) + ' ———';
     if (cd === pd && prevMsg.time && currMsg.time && hhmmMin(currMsg.time) - hhmmMin(prevMsg.time) >= 60) return '——— ' + currMsg.time + ' ———';
     return null;
+  }
+  // ── ⏳ 不秒回（2026-09-16，学墨韵手机的 delayMinutes；钟用我们自己的 game.day + game.time）──
+  // 生成器给 THEM 消息标 pending + dueDay/dueMin（时间戳已写成送达那一刻）。每次刷新看剧情钟走没走到点，到点才「送达」：
+  // 去掉 pending、未读+1、列表预览/last_contact 那一刻才更新，所以送达前列表和角标都看不出有东西在路上。
+  // 兜底：真实时间过了 8 分钟也送达（玩家只在手机里聊、正文不推进时，剧情钟不走，不能让消息卡死）。
+  var PENDING_REAL_MS = 8 * 60 * 1000;
+  function storyNowMin() { return { day: (state && state.game && state.game.day) || 1, min: hhmmMin(nowT()) }; }
+  function revealIn(sbObj, now, real) {
+    var n = 0; var npcs = (sbObj && sbObj.npcs) || {};
+    for (var k in npcs) {
+      if (!npcs.hasOwnProperty(k)) continue;
+      var npc = npcs[k]; var h = npc.dm_history || [];
+      for (var i = 0; i < h.length; i++) {
+        var m = h[i]; if (!m || !m.pending) continue;
+        var left = ((m.dueDay || now.day) - now.day) * 1440 + ((m.dueMin || 0) - now.min);
+        if (left > 0 && (real - (m.ts || 0)) < PENDING_REAL_MS) continue;
+        delete m.pending;
+        npc.unread = (npc.unread || 0) + 1;
+        npc.last_message = lastPreview(m); npc.last_contact = m.time || npc.last_contact; npc.last_ts = real;
+        n++;
+      }
+    }
+    return n;
+  }
+  function revealDue() {   // 返回这次送达了几条；镜像和变量各跑一遍同一个函数（同样的 now/real → 结果一致）
+    if (!state || !state.npcs) return 0;
+    var now = storyNowMin(), real = Date.now();
+    var n = revealIn(state, now, real);
+    if (n) SBupdate(function (v) { if (v.sb) revealIn(v.sb, now, real); return v; });
+    return n;
+  }
+  function revealPendingNpc(npc) {   // 玩家给 TA 发消息 = TA 在路上的话先落地（他看见你上线了）；不算未读，你正看着呢
+    var h = (npc && npc.dm_history) || [], n = 0;
+    for (var i = 0; i < h.length; i++) if (h[i] && h[i].pending) { delete h[i].pending; n++; }
+    return n;
   }
   function dividerHtml(txt) { return '<div class="sb-msg system" style="font-weight:500;color:var(--gold);">' + esc(txt) + '</div>'; }
 
@@ -719,8 +899,35 @@
     '#sbnyc-panel .sb-msg.sb-rcpt .rc-m{font-family:var(--font-en);font-size:12px;color:var(--ink-sub);margin-top:2px;}',
     '#sbnyc-panel .sb-msg.sb-rcpt .rc-f{font-size:9px;color:var(--ink-faint);border-top:.5px dashed var(--line);margin-top:6px;padding-top:4px;letter-spacing:1px;}',
     '#sbnyc-panel .sb-msg.sb-rcpt .mt{color:var(--ink-faint);text-align:right;}',
-    // 👯 群聊：气泡上方的小名字（谁在说）
-    '#sbnyc-panel .sb-msg .gsp{display:block;font-size:10px;color:var(--gold);font-weight:700;margin-bottom:2px;letter-spacing:.5px;font-family:var(--font-en);}',
+    // 👯 群聊：气泡上方的小名字（谁在说）——点得动，所以给个手型（颜色由 speakerColor 逐条写在 style 上）
+    '#sbnyc-panel .sb-msg .gsp{display:block;font-size:10px;color:var(--gold);font-weight:700;margin-bottom:2px;letter-spacing:.5px;font-family:var(--font-en);cursor:pointer;}',
+    // 表情包气泡的 padding 被压到 2px，里头的说话人小字比别的气泡往左戳 11px（一竖列名字看着是歪的）——补回来
+    '#sbnyc-panel .sb-msg.sticker .gsp{padding-left:11px;}',
+    // 页面标题里的线条图标（拉个群 / 成员页）：跟文字同一行、别顶着基线
+    '#sbnyc-panel .sb-ch-name b .sb-ico{display:inline-block;vertical-align:-2px;margin-right:5px;}',
+    // 👥 群名下面那行小字里的「N 人 ›」：长在现有 .sb-ch-name small 里（金色小字），不另占一个按钮位
+    '#sbnyc-panel .sb-ch-name .sb-gmem{cursor:pointer;}',
+    // 窄屏（380px 面板）下长群名不撑破头部：ellipsis 一行到底（flex 子项要 min-width:0 才截得动）
+    '#sbnyc-panel .sb-ch-name{min-width:0;}',
+    '#sbnyc-panel .sb-ch-name b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    // ── 线条图标键（2026-09-19）：emoji 当按钮会被系统渲染成彩色方块，改用 sbIcon() 的单色 SVG ──
+    // 图形 15–16px 不放大，可点区靠 padding 撑到约 32×36；颜色/透明度全在这里管，图形本身只用 currentColor
+    '#sbnyc-panel .sb-ico{display:block;pointer-events:none;}',
+    '#sbnyc-panel .sb-abtn .sb-ico,#sbnyc-panel .sb-msgmenu .sb-ico,#sbnyc-panel .sb-dsr-btn .sb-ico{display:inline-block;vertical-align:-3px;}',
+    '#sbnyc-panel .sb-ik{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;box-shadow:none;color:var(--ink-sub);opacity:.8;cursor:pointer;padding:9px 8px;}',
+    '#sbnyc-panel .sb-ik:hover,#sbnyc-panel .sb-ik:active{opacity:1;color:var(--gold);}',
+    '#sbnyc-panel .sb-ik.on{color:var(--gold);opacity:.9;}',
+    // 🔕 私信列表：群名后面的小铃铛 / 置顶小图钉 + 红角标位置上的小灰点（尺寸对齐 .sb-badge 的 18px 行高）
+    '#sbnyc-panel .sb-dnd-ic,#sbnyc-panel .sb-mk-pin{display:inline-block;vertical-align:-1px;opacity:.5;}',
+    '#sbnyc-panel .sb-mk-pin{color:var(--gold);opacity:.85;}',
+    '#sbnyc-panel .sb-dnd-dot{width:8px;height:8px;border-radius:50%;background:var(--ink-faint);opacity:.6;margin:0 5px;flex-shrink:0;}',
+    // 免打扰的群：行首那颗"有未读"的红点也跟着变灰（红角标都换灰点了，红点还留着就等于还在提示）
+    '#sbnyc-panel .sb-dmrow.unread.quiet::before{background:var(--ink-faint);opacity:.55;}',
+    // 👥 拉群选人页：整行沿用 .sb-forow，勾选态只加金色描边 + 把右边的 .sb-soon 胶囊填成金底
+    '#sbnyc-panel .sb-forow.sb-gpick.on{border-color:var(--gold);}',
+    '#sbnyc-panel .sb-forow.sb-gpick.on .gtick{background:var(--gold);color:var(--paper-2);}',
+    '#sbnyc-panel .sb-forow.off{opacity:.45;}',
+    '#sbnyc-panel .sb-soon.sb-gkick{cursor:pointer;color:var(--red);border-color:var(--red);}',
     // ☑️ 多选删除模式：被选中的气泡描红；底部操作条
     '#sbnyc-panel .sb-msg.sel{outline:1.5px solid var(--red);outline-offset:1px;opacity:.85;}',
     '#sbnyc-panel .sb-mselbar{position:absolute;left:10px;right:10px;bottom:12px;z-index:65;display:flex;gap:8px;background:var(--paper-2);border:.5px solid var(--gold);border-radius:14px;padding:8px;box-shadow:0 10px 26px rgba(0,0,0,.25);}',
@@ -823,6 +1030,19 @@
       }
       if (state.game && !state.game.epoch) state.game.epoch = GAME_EPOCH_STR;
       if (state.wallet && !Array.isArray(state.wallet.allTransactions)) state.wallet.allTransactions = [];
+      // 👥 老存档补档（镜像侧）：私享版兄弟群以前只是个名字特殊的联系人，现在统一当群看
+      // （变量侧由 dm_generator 的 migrateGroups 落盘，这里只保证本次渲染不瞎）
+      if (state.npcs) {
+        if (state.npcs[GROUP_NAME] && !state.npcs[GROUP_NAME].isGroup) {
+          state.npcs[GROUP_NAME].isGroup = true;
+          state.npcs[GROUP_NAME].anon = false;
+          state.npcs[GROUP_NAME].members = ['SugarElite™', 'Akuma'];
+        }
+        for (var gk in state.npcs) {
+          if (!state.npcs.hasOwnProperty(gk) || !state.npcs[gk].isGroup) continue;
+          if (!Array.isArray(state.npcs[gk].members)) state.npcs[gk].members = [];
+        }
+      }
     }
   }
   // 📳 震动+发光开关（UWU）：默认开，localStorage 记偏好（这里不能用 VIEW——它在文件更靠后才赋值）
@@ -926,11 +1146,18 @@
       }
     } catch (e) {}
   }
-  function totalUnread() {
-    if (!state || !state.npcs) return 0;
-    var n = 0; for (var k in state.npcs) { if (state.npcs.hasOwnProperty(k)) n += (state.npcs[k].unread || 0); }
+  // 🔕 免打扰的群不进总数：消息照进、真实未读照涨（进群看得到、读了清零），只是不亮悬浮球、不出角标、不震动
+  function countUnread(npcs) {
+    var n = 0;
+    for (var k in npcs) {
+      if (!npcs.hasOwnProperty(k)) continue;
+      var np = npcs[k];
+      if (np && np.isGroup && np.dnd) continue;
+      n += (np && np.unread) || 0;
+    }
     return n;
   }
+  function totalUnread() { return (state && state.npcs) ? countUnread(state.npcs) : 0; }
   function updateBadge() {
     var n = totalUnread();
     badgeEl.style.display = n > 0 ? 'flex' : 'none';
@@ -938,6 +1165,7 @@
   }
   function refreshView() {
     loadState();
+    revealDue();   // ⏳ 到点的「在路上」消息先送达，再画界面（正文每推进一次剧情钟，生成器都会 emit sb_updated 走到这里）
     updateBadge();
     applyWallpaper();
     // AI 歌单：变量里有就用，没有就请求生成一次（垫场歌单先顶着）
@@ -1000,7 +1228,7 @@
     h += '</div>'; return h;
   }
   function renderActions() {
-    return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">🔄 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button><button class="sb-abtn" data-act="closet">🚧 衣橱（装修中）</button></div>' +
+    return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">' + sbIcon('refresh', 14) + ' 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button><button class="sb-abtn" data-act="closet">🚧 衣橱（装修中）</button></div>' +
       '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button></div>';   // 第二行（UWU 的两个新页面）
   }
   function renderDMList(npcs) {
@@ -1019,12 +1247,18 @@
     var h = head + '<div class="sb-dm">';
     for (var i = 0; i < entries.length; i++) {
       var npc = entries[i]; var seRow = npc.name === 'SugarElite™';
-      var ini = seRow ? '✦' : ((npc.name.replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase());
+      // 👥 群头像用线条小图标（匿名群是面具），标签行写人数（匿名群只写「匿名」——人数会变，别给玩家一个假的确定感）
+      var avaH = seRow ? '✦' : (npc.isGroup ? sbIcon(npc.anon ? 'mask' : 'group', 18) : esc((npc.name.replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase()));
       var ur = npc.unread > 0 ? ' unread' : '';
-      h += '<div class="sb-dmrow' + ur + (seRow ? ' se' : '') + (npc.pinned ? ' pinned' : '') + '" data-name="' + esc(npc.name) + '"><span class="sb-ava">' + esc(ini) + '</span><div class="sb-dmbody"><div class="sb-dmtop"><b>' + esc(npc.name) + (npc.pinned ? ' 📌' : '') + '</b><em>' + esc(npc.last_contact || '') + '</em></div>';
-      if (npc.archetype) h += '<div class="sb-dmtags">' + esc(npc.archetype) + '</div>';
+      var quiet = !!(npc.isGroup && npc.dnd);
+      h += '<div class="sb-dmrow' + ur + (quiet ? ' quiet' : '') + (seRow ? ' se' : '') + (npc.pinned ? ' pinned' : '') + '" data-name="' + esc(npc.name) + '"><span class="sb-ava">' + avaH + '</span><div class="sb-dmbody"><div class="sb-dmtop"><b>' + esc(npc.name) + (npc.pinned ? ' <span class="sb-mk-pin">' + sbIcon('pin', 11) + '</span>' : '') + (quiet ? ' <span class="sb-dnd-ic">' + sbIcon('bellOff', 11) + '</span>' : '') + '</b><em>' + esc(npc.last_contact || '') + '</em></div>';
+      var tagsR = npc.isGroup
+        ? (npc.anon ? '匿名' : ((npc.members || []).length + ' 人'))
+        : (npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已拉黑你' : '');
+      if (tagsR) h += '<div class="sb-dmtags">' + esc(tagsR) + '</div>';
       h += '<div class="sb-dmlast">' + esc(npc.last_message || '') + '</div></div>';
-      if (npc.unread > 0) h += '<span class="sb-badge">' + npc.unread + '</span>';
+      // 🔕 免打扰的群：红角标换成一个小灰点（占原来角标的位置，知道有动静就行）
+      if (npc.unread > 0) h += quiet ? '<span class="sb-dnd-dot"></span>' : '<span class="sb-badge">' + npc.unread + '</span>';
       h += '</div>';
     }
     h += '</div>'; return h;
@@ -1096,8 +1330,8 @@
       var a = b.getAttribute('data-act');
       if (a === 'refresh') {
         SBemit('sb_request_dm', { reason: '玩家刷新手机，看看有没有新消息' });
-        b.textContent = '⏳ 生成中…'; setStatus('⏳ 正在生成私信…');
-        setTimeout(function () { b.textContent = '🔄 刷新'; }, 8000);
+        b.innerHTML = '⏳ 生成中…'; setStatus('⏳ 正在生成私信…');
+        setTimeout(function () { b.innerHTML = sbIcon('refresh', 14) + ' 刷新'; }, 8000);
       }
       else if (a === 'forum') openForum();
       else if (a === 'elite') openElite();
@@ -1476,9 +1710,10 @@
   // 私信刷新后自动补货，玩家点开时内容通常已就位，不用现场等。
   var BOARD_KEY = { sb: 'sbRank', sd: 'sdRank', gossip: 'gossip', trend: 'trend', abyss: 'abyss', recruit: 'recruit' };
 
-  function pageHeader(title, sub, showRefresh) {
-    return '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b>' + esc(title) + '</b><small>' + esc(sub) + '</small></div>' +
-      (showRefresh ? '<button class="sb-ch-del sb-pg-rf" title="刷新本期内容">🔄</button>' : '') + '</div>';
+  // iconHtml：可选的行内线条图标（sbIcon 出来的 SVG，已是安全片段）——标题文字照旧走 esc
+  function pageHeader(title, sub, showRefresh, iconHtml) {
+    return '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b>' + (iconHtml || '') + esc(title) + '</b><small>' + esc(sub) + '</small></div>' +
+      (showRefresh ? '<button class="sb-ch-del sb-ik sb-pg-rf" title="刷新本期内容">' + sbIcon('refresh') + '</button>' : '') + '</div>';
   }
   function bindPageChrome(backFn, onRefresh, sections) {
     var bk = chatEl.querySelector('.sb-ch-back'); if (bk) bk.addEventListener('click', backFn || closeChat);
@@ -1499,6 +1734,7 @@
     else if (currentPage === 'calendar') openCalendar();
     else if (currentPage === 'transactions') openTransactions();
     else if (currentPage && currentPage.indexOf('board:') === 0) openBoard(currentPage.slice(6));
+    else if (currentPage && currentPage.indexOf('group:') === 0) openGroupMembers(currentPage.slice(6));   // 👥 成员页开着时（有人进群/退群）跟着刷新
   }
   // 系统权威扣款（买东西/订阅走这里，不靠主线 LLM 记账；主线消息里注明"已付款"防止它再补记）
   function debit(amount, what, channel) {
@@ -1596,6 +1832,8 @@
   }
   // 🔗 商品链接转发：圈内心照不宣的"买给我"——挑个联系人，链接进TA的待发队列，点发送看TA上不上道
   function sendProductLink(who, prodName, price) {
+    var nB = state && state.npcs && state.npcs[who];
+    if (nB && nB.blocked) { toast('warning', who + ' 已经把你拉黑了，发不过去'); return; }   // ⛔
     var text = '🔗 [转发商品] ' + prodName + (price > 0 ? ' —— ' + fmtCNY(price) : '') + '（SugarElite 商城）';
     var t = nowT();
     SBupdate(function (v) {
@@ -1814,7 +2052,7 @@
       }
       if (!l6.length && !mine.length) body += '<div class="sb-empty">本版还没帖子——你可以第一个挂出去</div>';
     }
-    if (!body) body = '<div class="sb-empty">本期这个版是空的，点右上 🔄 重新生成</div>';
+    if (!body) body = '<div class="sb-empty">本期这个版是空的，点右上角的刷新重新生成</div>';
     var h = pageHeader(title, sub, true) + '<div class="sb-msgs" style="display:block;padding-top:12px;">' + body + '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     // 每个版块的 🔄 只重烤自己这版（玩家投诉全刊重烤太慢）；SB 榜还额外强制拉一次服务器真人榜
@@ -1985,6 +2223,12 @@
     var npcs = (state && state.npcs) || {};
     var h = pageHeader('➕ 新私信', '想找谁，直接开口', false);
     h += '<div class="sb-msgs" style="display:block;padding-top:12px;">';
+    // 👥 拉群：把通讯录里的人拉进同一个线程（放最上面——它是"新建一个会话"，和这页的主题一致）
+    h += '<div style="display:flex;margin:2px 14px 10px;"><button class="sb-abtn" id="sbnyc-new-group" style="flex:1;">' + sbIcon('group', 14) + ' 拉个群</button></div>';
+    // 🎭 匿名大厅删掉过 → 给一个再进去的门（门开过就一直开着）
+    if (state && state._anonInvited && !(state.npcs && state.npcs[ANON_GROUP_NAME])) {
+      h += '<div class="sb-forow sb-contact" id="sbnyc-anon-back" style="cursor:pointer;"><span class="fi">' + sbIcon('mask', 20) + '</span><div class="fb"><b>' + esc(ANON_GROUP_NAME) + '</b><small>平台的匿名大厅 · 换一批人，换一个代号</small></div><span class="sb-soon">回去 ›</span></div>';
+    }
     var missing = [];
     var randomOnly = !!(state && state.game && state.game.random_only);   // 陌生人专场：固定名单不进通讯录（白名单 Akuma 除外）
     for (var i = 0; i < FIXED_ROSTER.length; i++) {
@@ -2024,6 +2268,10 @@
         });
       })(rows[k]);
     }
+    var gbtn = chatEl.querySelector('#sbnyc-new-group');
+    if (gbtn) gbtn.addEventListener('click', openNewGroup);
+    var abtn = chatEl.querySelector('#sbnyc-anon-back');
+    if (abtn) abtn.addEventListener('click', rejoinAnonGroup);
     var nbtn = chatEl.querySelector('#sbnyc-contact-new');
     if (nbtn) nbtn.addEventListener('click', newCustomContact);
     var impbtn = chatEl.querySelector('#sbnyc-contact-import');
@@ -2037,6 +2285,10 @@
       total_transfers: 0, relationship: 0, unlocked: true,
       last_contact: nowT(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [],
     };
+    if (name === GROUP_NAME) {   // 👥 私享版兄弟群：它是群不是人，走群那套（S.+Akuma 两个成员）
+      fresh.isGroup = true; fresh.anon = false; fresh.persistent = false;
+      fresh.members = ['SugarElite™', 'Akuma'];
+    }
     SBupdate(function (v) {
       if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
       if (!v.sb.npcs[name]) v.sb.npcs[name] = fresh;
@@ -2073,6 +2325,308 @@
         openChat(name, state.npcs[name]);
       });
     });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 👥 群聊：拉个群 / 成员页 / 改代号 / 从匿名群把人私下加出来
+  // ══════════════════════════════════════════════════════════════════════
+  var _grpAutoFired = {};   // 匿名群「首次打开自动来一轮」只做一次（openChat 每次 sb_updated 都会重进）
+  var _grpPick = {};        // 拉群选人页的勾选状态（下标 → 1）
+  var _grpCands = [];       // 拉群选人页当前列出的人（只存下标，名字里的引号弄不坏 attribute）
+
+  // 🎭 改代号：群里别人只看得到这个
+  function askAnonHandle(name, npc, done) {
+    var cur = npc.myHandle || ANON_HANDLES[0];
+    panelPrompt('群里别人只看得到你的代号。想换就改，直接确定＝用现在这个', cur).then(function (v) {
+      var hd = cleanGroupName(v == null ? cur : v) || cur;
+      npc.myHandle = hd; npc._handleAsked = true;
+      SBupdate(function (vv) {
+        var g = vv.sb && vv.sb.npcs && vv.sb.npcs[name];
+        if (g) { g.myHandle = hd; g._handleAsked = true; }
+        return vv;
+      });
+      if (done) done();
+    });
+  }
+  // 🔕 群免打扰（只给群做）：消息照进照存、真实未读照涨，只是不震动、不亮悬浮球、不出红角标、不弹 toast。
+  // 字段叫 dnd，和 npc.muted（＝玩家删过记录的"冷处理"）是两回事，别撞。
+  function toggleGroupDnd(name, npc, btn) {
+    var now = !npc.dnd;
+    npc.dnd = now;
+    SBupdate(function (v) { var g = v.sb && v.sb.npcs && v.sb.npcs[name]; if (g) g.dnd = now; return v; });
+    if (btn) { btn.innerHTML = sbIcon(now ? 'bellOff' : 'bell'); btn.classList.toggle('on', now); }
+    toast('info', now ? '🔕 已开启消息免打扰' : '🔔 已关闭消息免打扰');
+    updateBadge();
+  }
+  // 从匿名群的代号建一条私信线程（零API，和评论区建档同一条路）。bio 整段给，不截断。
+  function anonDmBio(g, handle, r) {
+    var mine = [], theirs = [];
+    var h = (g && g.dm_history) || [];
+    for (var i = h.length - 1; i >= 0; i--) {
+      if (theirs.length >= 6 && mine.length >= 6) break;
+      var m = h[i] || {};
+      if (m.type === 'system' || m.type === 'dossier') continue;
+      if (m.sender === 'USER') { if (mine.length < 6) mine.unshift(String(m.content || '')); }
+      else if (m.who === handle && theirs.length < 6) theirs.unshift(String(m.content || ''));
+    }
+    return 'TA 是匿名群「' + g.name + '」里的「' + handle + '」。' +
+      (r && r.secret ? '底细：' + String(r.secret) + '。' : '') +
+      (theirs.length ? 'TA 在群里最近说过：' + theirs.join('｜') + '。' : '') +
+      'User 在群里的代号是「' + (g.myHandle || '匿名') + '」' + (mine.length ? '，最近说过：' + mine.join('｜') : '') + '。' +
+      '现在 User 私下点开了 TA——不再匿名，TA 记得群里聊过什么，语气接着群里往下演。';
+  }
+  function dmFromHandle(gname, handle) {
+    var g = npcOf(gname);
+    var r = g && g.roster && g.roster[handle];
+    var real = r && r.real ? String(r.real).replace(/[|§\r\n]/g, '').trim().slice(0, 24) : '';
+    if (!real) { toast('info', '这个人还没露过底——再在群里聊两句'); return; }
+    var bio = anonDmBio(g, handle, r);
+    var t = nowT(), gd = (state && state.game && state.game.day) || 1;
+    var sysLine = { sender: 'THEM', time: t, ts: Date.now(), type: 'system',
+      content: '（来自匿名群「' + gname + '」· TA 在群里叫「' + handle + '」）', note: '', zh: '', gameDay: gd };
+    var fresh = {
+      name: real, archetype: '匿名群·私下加的', persistent: false, engaged: false, unlocked: true,
+      total_transfers: 0, relationship: 0,
+      last_contact: t, last_ts: Date.now(), unread: 0, last_message: '', dm_history: [sysLine], bio: bio, _fromAnon: gname,
+    };
+    function patch(np) {
+      if (!np.bio) np.bio = bio;
+      if (!np._fromAnon) { np._fromAnon = gname; if (!Array.isArray(np.dm_history)) np.dm_history = []; np.dm_history.push(sysLine); }
+    }
+    SBupdate(function (v) {
+      if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
+      if (!v.sb.npcs[real]) v.sb.npcs[real] = fresh; else patch(v.sb.npcs[real]);
+      var vg = v.sb.npcs[gname];
+      if (vg && vg.roster && vg.roster[handle]) vg.roster[handle].revealed = true;
+      return v;
+    });
+    if (state) {
+      if (!state.npcs) state.npcs = {};
+      if (!state.npcs[real]) state.npcs[real] = fresh; else patch(state.npcs[real]);
+      if (g && g.roster && g.roster[handle]) g.roster[handle].revealed = true;
+    }
+    toast('success', '💌 加上了——TA 现在知道你是谁了，你也知道 TA 是谁');
+    openChat(real, state.npcs[real]);
+  }
+  // ➕ 新私信页 → 拉个群：勾人 + 起名
+  function openNewGroup() {
+    if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }   // 马甲被封 → 和别的页面一样落锁
+    currentPage = 'newgroup';
+    _grpPick = {}; _grpCands = [];
+    var npcs = (state && state.npcs) || {};
+    for (var k in npcs) {
+      if (!npcs.hasOwnProperty(k)) continue;
+      var np = npcs[k];
+      if (!np || np.isGroup || np.unlocked === false) continue;
+      _grpCands.push(np);
+    }
+    _grpCands.sort(function (a, b) { return (b.last_ts || 0) - (a.last_ts || 0); });
+    var inputStyle = 'border:.5px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;background:var(--paper-2);color:var(--ink);font-family:var(--font-sans);';
+    var h = pageHeader('拉个群', '勾 2–' + GROUP_MAX_MEMBERS + ' 个人', false, sbIcon('group', 15));
+    h += '<div class="sb-msgs" style="display:block;padding-top:12px;">';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:2px 16px 8px;">把通讯录里的人拉进同一个线程。群里说的话这几个人全都看得到——各自和你的私聊他们看不见。谁和谁凑一块儿会出事，你自己心里有数。</div>';
+    h += '<div class="sb-frow" style="margin:0 14px 8px;"><input id="sbnyc-grp-name" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="群名（留空＝用前三个人的名字）" maxlength="' + GROUP_NAME_MAX + '" style="width:100%;' + inputStyle + '"></div>';
+    if (!_grpCands.length) {
+      h += '<div class="sb-empty">通讯录里还没有人可以拉——先去撩两个</div>';
+    } else {
+      h += '<div class="sb-sec">拉谁进来</div>';
+      for (var i = 0; i < _grpCands.length; i++) {
+        var c = _grpCands[i];
+        var blocked = !!c.blocked;
+        var ini = (String(c.name).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
+        h += '<div class="sb-forow sb-gpick' + (blocked ? ' off' : '') + '" data-gp="' + i + '" style="cursor:' + (blocked ? 'default' : 'pointer') + ';"><span class="fi">' + esc(ini) + '</span>' +
+          '<div class="fb"><b>' + esc(c.name) + '</b><small>' + esc(c.archetype || '陌生') + (blocked ? ' · ⛔ 已把你拉黑，拉不进来' : '') + '</small></div>' +
+          '<span class="sb-soon gtick">' + (blocked ? '—' : '○') + '</span></div>';
+      }
+    }
+    h += '<div style="display:flex;margin:12px 14px;"><button class="sb-abtn" id="sbnyc-grp-go" style="flex:1;">👥 建群</button></div>';
+    h += '</div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    bindPageChrome(openContacts);
+    var rows = chatEl.querySelectorAll('.sb-gpick');
+    for (var r2 = 0; r2 < rows.length; r2++) {
+      (function (row) {
+        row.addEventListener('click', function () {
+          var gi = parseInt(row.getAttribute('data-gp'), 10);
+          var cand = _grpCands[gi];
+          if (!cand) return;
+          if (cand.blocked) { toast('info', cand.name + ' 已经把你拉黑了——拉不进来'); return; }
+          if (_grpPick[gi]) delete _grpPick[gi];
+          else {
+            if (Object.keys(_grpPick).length >= GROUP_MAX_MEMBERS) { toast('info', '一个群最多 ' + GROUP_MAX_MEMBERS + ' 个人'); return; }
+            _grpPick[gi] = 1;
+          }
+          var tick = row.querySelector('.gtick');
+          if (tick) tick.textContent = _grpPick[gi] ? '●' : '○';
+          row.classList.toggle('on', !!_grpPick[gi]);
+          // 群名留空时跟着勾选走：前三个人的名字顿号连起来
+          var nmEl = chatEl.querySelector('#sbnyc-grp-name');
+          if (nmEl && (!nmEl.value || nmEl.getAttribute('data-auto') === '1')) {
+            nmEl.value = defaultGroupName(pickedNames());
+            nmEl.setAttribute('data-auto', '1');
+          }
+        });
+      })(rows[r2]);
+    }
+    var nmEl0 = chatEl.querySelector('#sbnyc-grp-name');
+    if (nmEl0) nmEl0.addEventListener('input', function () { nmEl0.setAttribute('data-auto', '0'); });
+    var goBtn = chatEl.querySelector('#sbnyc-grp-go');
+    if (goBtn) goBtn.addEventListener('click', function () {
+      var picked = pickedNames();
+      if (picked.length < 2) { toast('warning', '至少勾两个人——两个人那叫私聊'); return; }
+      var nmEl = chatEl.querySelector('#sbnyc-grp-name');
+      createGroup((nmEl && nmEl.value) || '', picked);
+    });
+  }
+  function pickedNames() {
+    var out = [];
+    for (var i = 0; i < _grpCands.length; i++) { if (_grpPick[i]) out.push(_grpCands[i].name); }
+    return out;
+  }
+  function createGroup(gname, members) {
+    gname = cleanGroupName(gname) || cleanGroupName(defaultGroupName(members));
+    if (!gname) { toast('warning', '给群起个名字'); return; }
+    if (state && state.npcs && state.npcs[gname]) { toast('warning', '已经有一个叫「' + gname + '」的联系人或群了——换个名字'); return; }
+    var t = nowT(), gd = (state && state.game && state.game.day) || 1;
+    var sysLine = { sender: 'THEM', time: t, ts: Date.now(), type: 'system',
+      content: '你邀请 ' + members.join('、') + ' 加入了群聊', note: '', zh: '', gameDay: gd };
+    var fresh = {
+      name: gname, archetype: '群聊', persistent: false, engaged: false, unlocked: true,
+      isGroup: true, anon: false, members: members.slice(),
+      total_transfers: 0, relationship: 0,
+      last_contact: t, last_ts: Date.now(), unread: 0, last_message: sysLine.content, dm_history: [sysLine],
+    };
+    SBupdate(function (v) {
+      if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
+      if (!v.sb.npcs[gname]) v.sb.npcs[gname] = fresh;
+      unmuteMembers(v.sb, members);   // 被冷处理过的人拉进群＝解冻，不然 groupSpeakers 里他永远闭嘴
+      return v;
+    });
+    if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[gname]) state.npcs[gname] = fresh; unmuteMembers(state, members); }
+    toast('success', '群建好了——说第一句，或者在 ➕ 里点「看看群里在聊什么」');
+    openChat(gname, state.npcs[gname]);
+  }
+  // 🎭 删过匿名群之后从 ➕ 页重新进去：换一批代号、换一个自己的代号（门开过就一直开着）
+  function rejoinAnonGroup() {
+    var pool = ANON_HANDLES.slice();
+    for (var s = pool.length - 1; s > 0; s--) { var r = Math.floor(Math.random() * (s + 1)); var tmp = pool[s]; pool[s] = pool[r]; pool[r] = tmp; }
+    var picks = pool.slice(0, 8);
+    var mine = pool[8];
+    var t = nowT(), gd = (state && state.game && state.game.day) || 1;
+    var roster = {};
+    for (var i = 0; i < picks.length; i++) roster[picks[i]] = { real: '', secret: '', joined: Date.now(), last: 0, revealed: false };
+    var sysLine = { sender: 'THEM', time: t, ts: Date.now(), type: 'system',
+      content: '你回到了这个大厅。这次你的代号是「' + mine + '」', note: '', zh: '', gameDay: gd };
+    var fresh = {
+      name: ANON_GROUP_NAME, archetype: '匿名·平台大厅', persistent: false, engaged: false, unlocked: true,
+      isGroup: true, anon: true, members: picks, roster: roster, myHandle: mine, _rounds: 0, _lastDm: 0,
+      total_transfers: 0, relationship: 0,
+      last_contact: t, last_ts: Date.now(), unread: 0, last_message: sysLine.content, dm_history: [sysLine],
+    };
+    SBupdate(function (v) {
+      if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
+      if (!v.sb.npcs[ANON_GROUP_NAME]) v.sb.npcs[ANON_GROUP_NAME] = fresh;
+      return v;
+    });
+    if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[ANON_GROUP_NAME]) state.npcs[ANON_GROUP_NAME] = fresh; }
+    delete _grpAutoFired[ANON_GROUP_NAME];
+    openChat(ANON_GROUP_NAME, state.npcs[ANON_GROUP_NAME]);
+  }
+  // 群成员页：熟人群可加人/移出；匿名群只读（自己的代号可以改）
+  function openGroupMembers(name) {
+    if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }   // 马甲被封 → 和别的页面一样落锁
+    var npc = npcOf(name);
+    if (!npc || !npc.isGroup) { closeChat(); return; }
+    currentPage = 'group:' + name;
+    var ms = npc.members || [];
+    // 标题图标一律用 group（＝"看成员"）：匿名群名里本来就带 🎭，再配一个线条面具是两张面具叠一起
+    var h = pageHeader(name, ms.length + ' 人' + (npc.anon ? ' · 匿名' : ''), false, sbIcon('group', 15));
+    h += '<div class="sb-msgs" style="display:block;padding-top:12px;">';
+    h += '<div class="sb-forow" id="sbnyc-gm-dnd" style="cursor:pointer;"><span class="fi">' + sbIcon(npc.dnd ? 'bellOff' : 'bell', 20) + '</span>' +
+      '<div class="fb"><b>消息免打扰</b><small>' + (npc.dnd ? '开着：消息照常进，只是不吵你' : '关着：有新消息会亮手机') + '</small></div>' +
+      '<span class="sb-soon">' + (npc.dnd ? '关掉 ›' : '打开 ›') + '</span></div>';
+    if (npc.anon) {
+      h += '<div class="sb-sec">你在群里叫</div>';
+      h += '<div class="sb-forow" style="cursor:pointer;" id="sbnyc-gm-handle"><span class="fi">' + sbIcon('mask', 20) + '</span><div class="fb"><b>' + esc(npc.myHandle || '？') + '</b><small>群里没人知道这是你</small></div><span class="sb-soon">改 ›</span></div>';
+      h += '<div class="sb-sec" style="margin-top:14px;">大厅里的人</div>';
+      if (!ms.length) h += '<div class="sb-empty">这会儿没人</div>';
+      for (var i = 0; i < ms.length; i++) {
+        var hd = ms[i];
+        var r = (npc.roster && npc.roster[hd]) || {};
+        var sub = r.real ? (r.revealed ? '你们私聊过 · ' + r.real : '露过底：' + r.real) : '还没露过底';
+        h += '<div class="sb-forow' + (r.real ? ' sb-gdm' : '') + '" data-hd="' + esc(hd) + '" style="cursor:' + (r.real ? 'pointer' : 'default') + ';"><span class="fi" style="color:' + speakerColor(hd) + ';">●</span>' +
+          '<div class="fb"><b>' + esc(hd) + '</b><small>' + esc(sub) + '</small></div>' +
+          // 还没露底的那些不给胶囊：一页八个空金胶囊里各写一个「—」，比什么都不写还吵
+          (r.real ? '<span class="sb-soon">' + (r.revealed ? '去聊 ›' : '私下加 ›') + '</span>' : '') + '</div>';
+      }
+      h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:8px 16px;">这里的人来来去去。谁在群里露了底，你就能私下点开 TA——点了私聊，两边的资料就互相看得见了。</div>';
+    } else {
+      h += '<div class="sb-sec">成员</div>';
+      if (!ms.length) h += '<div class="sb-empty">群里没人了</div>';
+      for (var j = 0; j < ms.length; j++) {
+        var mn = ms[j];
+        var mnp = npcOf(mn) || {};
+        var mini = (String(mn).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
+        h += '<div class="sb-forow"><span class="fi" style="color:' + speakerColor(mn) + ';">' + esc(mini) + '</span>' +
+          '<div class="fb"><b>' + esc(mn) + '</b><small>' + esc(mnp.archetype || '') + (mnp.blocked ? ' · ⛔ 已把你拉黑，群里不出声' : '') + '</small></div>' +
+          '<span class="sb-soon sb-gkick" data-mn="' + esc(mn) + '">移出</span></div>';
+      }
+      h += '<div style="display:flex;margin:12px 14px;"><button class="sb-abtn" id="sbnyc-gm-add" style="flex:1;">➕ 加个人进来</button></div>';
+    }
+    h += '</div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    bindPageChrome(function () { var n2 = npcOf(name); if (n2) openChat(name, n2); else closeChat(); });
+    var dndRow = chatEl.querySelector('#sbnyc-gm-dnd');
+    if (dndRow) dndRow.addEventListener('click', function () { toggleGroupDnd(name, npc, null); openGroupMembers(name); });
+    var hdBtn = chatEl.querySelector('#sbnyc-gm-handle');
+    if (hdBtn) hdBtn.addEventListener('click', function () { askAnonHandle(name, npc, function () { openGroupMembers(name); }); });
+    var dmRows = chatEl.querySelectorAll('.sb-gdm');
+    for (var d = 0; d < dmRows.length; d++) {
+      (function (row) { row.addEventListener('click', function () { dmFromHandle(name, row.getAttribute('data-hd')); }); })(dmRows[d]);
+    }
+    var kicks = chatEl.querySelectorAll('.sb-gkick');
+    for (var kk = 0; kk < kicks.length; kk++) {
+      (function (el) {
+        el.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          groupMemberChange(name, el.getAttribute('data-mn'), false);
+          openGroupMembers(name);
+        });
+      })(kicks[kk]);
+    }
+    var addBtn = chatEl.querySelector('#sbnyc-gm-add');
+    if (addBtn) addBtn.addEventListener('click', function (ev) {
+      ev.stopPropagation();   // 老规矩：不拦冒泡，「点菜单外=收菜单」会把刚开的选择器秒关
+      pickContact(function (who) { groupMemberChange(name, who, true); openGroupMembers(name); }, {
+        title: '把谁加进「' + name + '」？',
+        limit: 20,
+        filter: function (np) {
+          if (!np || np.isGroup || np.unlocked === false || np.blocked) return false;
+          return (groupMembersOf(name).indexOf(np.name) === -1);
+        },
+        empty: '没有可以加进来的人了',
+      });
+    });
+  }
+  // 群成员增删：变量和本地镜像双写 + 群里落一条灰色系统行（玩家回头看得出发生过什么）
+  function groupMemberChange(gname, who, add) {
+    if (!who) return;
+    var t = nowT(), gd = (state && state.game && state.game.day) || 1;
+    var line = { sender: 'THEM', time: t, ts: Date.now(), type: 'system',
+      content: add ? ('你邀请 ' + who + ' 加入了群聊') : ('你把 ' + who + ' 移出了群聊'), note: '', zh: '', gameDay: gd };
+    function apply(g) {
+      if (!g || !Array.isArray(g.members)) return;
+      var idx = g.members.indexOf(who);
+      if (add) { if (idx !== -1) return; g.members.push(who); }
+      else { if (idx === -1) return; g.members.splice(idx, 1); }
+      if (!Array.isArray(g.dm_history)) g.dm_history = [];
+      g.dm_history.push(line);
+      g.last_message = line.content; g.last_contact = t; g.last_ts = Date.now();
+    }
+    SBupdate(function (v) { apply(v.sb && v.sb.npcs && v.sb.npcs[gname]); if (add) unmuteMembers(v.sb, [who]); return v; });
+    apply(npcOf(gname));
+    if (add) unmuteMembers(state, [who]);   // 拉进来的人解冻（和 createGroup 同一条理由）
+    toast('info', add ? ('👥 ' + who + ' 进群了') : ('👥 ' + who + ' 被移出去了'));
   }
 
   // ── 📥 旧识导入：搜玩家酒馆里的世界书 → 填两句话 → 发给生成器做AI背调（蒸馏成档案+声音卡）→ TA主动来打招呼 ──
@@ -2543,7 +3097,7 @@
         title: '查谁？（S. 会读你和TA的全部私信＋正文里所有和TA有关的场次）',
         limit: 20,
         filter: function (np) {
-          if (!np || np.unlocked === false) return false;
+          if (!np || np.unlocked === false || np.isGroup) return false;   // 👥 群不是人，建不了档
           return !(np.persistent || np.name === 'SugarElite™');   // 只挡卡自带的人（他们的档案本来就在世界书里）
           // 料够不够由 dm_generator 那边合起来判（私信薄但线下戏多的人照样查得出来），这里不预先拦
         },
@@ -2779,12 +3333,12 @@
     h += '<div class="sb-frow"><label>API 地址（OpenAI 兼容，留空 = 走主 API）</label><textarea id="sbnyc-cfg-url" rows="1" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore placeholder="https://api.xxx.com/v1">' + esc(cfg.url || '') + '</textarea></div>';
     // type=password 会勾出安卓输入法的密码管理器（玩家投诉）——改 text + CSS 圆点遮罩 + 各家密码管理器忽略标记 + readonly到聚焦（安卓 autofill 最认这招）
     h += '<div class="sb-frow"><label>API Key</label><input id="sbnyc-cfg-key" type="text" class="sb-mask" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" readonly data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="sk-..." value="' + esc(cfg.key || '') + '"></div>';
-    h += '<div class="sb-frow"><label>模型名（🔄 拉取后下面出下拉可选）</label><input id="sbnyc-cfg-model" list="sbnyc-cfg-models" placeholder="gpt-4o-mini" value="' + esc(cfg.model || '') + '"><datalist id="sbnyc-cfg-models"></datalist>' +
+    h += '<div class="sb-frow"><label>模型名（点上面「拉取模型」后这里出下拉可选）</label><input id="sbnyc-cfg-model" list="sbnyc-cfg-models" placeholder="gpt-4o-mini" value="' + esc(cfg.model || '') + '"><datalist id="sbnyc-cfg-models"></datalist>' +
       '<select id="sbnyc-cfg-modelsel" style="display:none;margin-top:4px;border:.5px solid var(--line);border-radius:8px;padding:7px 10px;font-size:12px;background:#fff;color:var(--ink);"></select></div>';
     h += '<div style="display:flex;gap:8px;margin:4px 14px 10px;">' +
-      '<button class="sb-abtn" id="sbnyc-cfg-fetch" style="flex:1;">🔄 拉取模型</button>' +
+      '<button class="sb-abtn" id="sbnyc-cfg-fetch" style="flex:1;">' + sbIcon('refresh', 14) + ' 拉取模型</button>' +
       '<button class="sb-abtn" id="sbnyc-cfg-save" style="flex:1;">💾 保存</button>' +
-      '<button class="sb-abtn" id="sbnyc-cfg-clear" style="flex:1;">🗑️ 清除</button></div>';
+      '<button class="sb-abtn" id="sbnyc-cfg-clear" style="flex:1;">' + sbIcon('trash', 14) + ' 清除</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">填了独立 API 后，私信生成完全不占主 API 的每分钟限额，也不再限速排队。Key 只存这台浏览器本地，不进聊天文件。</div>';
     // 显示偏好：盲盒模式（藏标签）
     var blindOn = panel.classList.contains('blindbox');
@@ -2882,7 +3436,7 @@
     h += '<div class="sb-sec" style="margin-top:16px;">数据 · Data</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;gap:8px;"><button class="sb-abtn" id="sbnyc-export" style="flex:1;">📤 导出全部数据</button><button class="sb-abtn" id="sbnyc-import" style="flex:1;">📥 导入数据</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">导出 = 把全部手机数据（联系人/钱包/衣橱/日程/私信记录/设置）下载为一个 .json 文件。导入 = 选之前导出的文件覆盖当前数据。<b>导入不可逆，建议先导出一份备份。</b></div>';
-    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">🔄 初始化聊天（回档到 Day 1）</button></div>';
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">' + sbIcon('refresh', 14) + ' 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
     h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师</div>';
@@ -2913,10 +3467,10 @@
         var mi = chatEl.querySelector('#sbnyc-cfg-model');
         if (!mi.value.trim()) mi.value = ids[0];
         toast('success', '📡 拉到 ' + ids.length + ' 个模型——连通性OK，选一个再保存');
-        fbtn.textContent = '🔄 拉取模型 (' + ids.length + ')';
+        fbtn.innerHTML = sbIcon('refresh', 14) + ' 拉取模型 (' + ids.length + ')';
       } catch (e) {
         toast('error', '拉取失败: ' + ((e && e.message) || e) + '。多半是地址不对 / Key 无效 / 该服务不允许浏览器直连(CORS)');
-        fbtn.textContent = '🔄 拉取模型';
+        fbtn.innerHTML = sbIcon('refresh', 14) + ' 拉取模型';
       }
     });
     // Key 框 readonly 到聚焦才解锁：安卓 autofill 只认这招，真点进去照常能输入（两个 key 框都套）
@@ -3197,33 +3751,56 @@
     SBupdate(function (v) { if (v.sb && v.sb.npcs && v.sb.npcs[name]) v.sb.npcs[name].unread = 0; return v; });
     updateBadge();
     var isSE = name === 'SugarElite™';
+    var isGrp = !!npc.isGroup;
     var hist = npc.dm_history || [];
-    var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + esc(npc.archetype || '') + '</small></div>' +
-      '<button class="sb-ch-pin' + (npc.pinned ? ' on' : '') + '" title="置顶/取消置顶（置顶的联系人不会被自动清理）">📌</button>' +
-      '<button class="sb-ch-del" title="删除聊天记录">🗑️</button></div>';
+    var subLine = isGrp
+      ? '<span class="sb-gmem">' + ((npc.members || []).length) + ' 人 ›</span>' + (npc.anon ? ' 匿名 · 你是「' + esc(npc.myHandle || '？') + '」' : '')
+      : esc(npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已把你拉黑' : '');
+    var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + '</small></div>' +
+      (isGrp ? '<button class="sb-ch-dnd sb-ik' + (npc.dnd ? ' on' : '') + '" title="消息免打扰（照常收，只是不吵你）">' + sbIcon(npc.dnd ? 'bellOff' : 'bell') + '</button>' : '') +
+      '<button class="sb-ch-pin sb-ik' + (npc.pinned ? ' on' : '') + '" title="置顶/取消置顶（置顶的联系人不会被自动清理）">' + sbIcon('pin') + '</button>' +
+      '<button class="sb-ch-del sb-ik" title="' + (isGrp ? '退出并删除这个群' : '删除聊天记录') + '">' + sbIcon('trash') + '</button></div>';
     h += '<div class="sb-msgs">';
     if (!hist.length) h += '<div class="sb-empty">No messages yet</div>';
     else {
       var lastThemIdx = -1;
-      for (var li = hist.length - 1; li >= 0; li--) { if (hist[li].sender === 'THEM') { lastThemIdx = li; break; } }
+      for (var li = hist.length - 1; li >= 0; li--) { if (hist[li].sender === 'THEM' && !hist[li].pending) { lastThemIdx = li; break; } }
       var prevMsg = null;   // 时间分割线（UWU）：跨天插日期条，同天隔1小时+插时间条
+      var prevWho = '';     // 👥 同一个人连发只在第一条标名字
       for (var i = 0; i < hist.length; i++) {
+        if (hist[i].pending) continue;   // ⏳ 还在路上的不画（剧情钟到点 revealDue 才送达）
         var dv = dividerBetween(prevMsg, hist[i]);
-        if (dv) h += dividerHtml(dv);
+        if (dv) { h += dividerHtml(dv); prevWho = ''; }   // 隔了时间条就重新报一次名字
         var autoTr = !!(_pendingTrs[name + '|' + i] && hist[i].zh);
         if (autoTr) delete _pendingTrs[name + '|' + i];   // 刚才点了兜底翻译的那条：翻好自动展开（字典各销各的账）
-        h += renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx, i === hist.length - 1);   // 对方最后一条挂 reroll；自己的最后一条挂撤回
+        h += renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx, i === hist.length - 1, prevWho);   // 对方最后一条挂 reroll；自己的最后一条挂撤回
         prevMsg = hist[i];
+        prevWho = (isGrp && hist[i].sender === 'THEM' && hist[i].type !== 'system') ? (hist[i].who || '') : '';
       }
     }
     h += '</div>';
     // 所有动作收进输入栏左边的 ➕（User 定稿：按钮太散，收在一起）——快捷键/照片/语音/定位/转账/发链接全在里面
-    h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="回车攒消息，可连打几条…"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
+    h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
 
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     var me = chatEl.querySelector('.sb-msgs'); if (me) me.scrollTop = me.scrollHeight;
 
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
+    // 👥 群头部：🔔/🔕=免打扰；群名下面那行「N 人 ›」=成员页（「看看群里在聊什么」收在 ➕ 菜单里，头部不再挤第四个键）
+    var dndBtn = chatEl.querySelector('.sb-ch-dnd');
+    if (dndBtn) dndBtn.addEventListener('click', function () { toggleGroupDnd(name, npc, dndBtn); });
+    // 绑定不变，只换里面的图形：dnd 键切图标、pin 键切金色（.on 由 CSS 上色）
+    var gmemBtn = chatEl.querySelector('.sb-gmem');
+    if (gmemBtn) gmemBtn.addEventListener('click', function (ev) { ev.stopPropagation(); openGroupMembers(name); });
+    // 🎭 匿名群第一次打开、群里还没人说过话 → 自动来一轮（这个群本来就是"进去看热闹"的）
+    if (isGrp && npc.anon && !_grpAutoFired[name]) {
+      var spoken = false;
+      for (var ai = 0; ai < hist.length; ai++) { if (hist[ai].sender === 'THEM' && hist[ai].type !== 'system') { spoken = true; break; } }
+      if (!spoken) {
+        _grpAutoFired[name] = 1;
+        askGroupRound(name, 'User 刚被拉进这个匿名大厅，还没说话——群里的人本来就在聊，写一轮此刻正在进行的对话');
+      }
+    }
     var pinBtn = chatEl.querySelector('.sb-ch-pin');
     pinBtn.addEventListener('click', function () {
       var now = !npc.pinned;
@@ -3234,7 +3811,11 @@
     });
     chatEl.querySelector('.sb-ch-del').addEventListener('click', function () {
       var ok = true;
-      try { ok = (DOC.defaultView || window).confirm('删除与 ' + name + ' 的全部聊天记录' + (npc.persistent ? '？（固定联系人：清空记录并让TA安静——直到你主动再发消息给TA）' : '？（联系人也会一起移除）')); } catch (e) {}
+      try {
+        ok = (DOC.defaultView || window).confirm(isGrp
+          ? ('退出并删除群聊「' + name + '」？' + (npc.anon ? '（匿名大厅可以从 ➕ 新私信页再进去，换一批人、换一个代号）' : '（群解散，聊天记录一起没）'))
+          : ('删除与 ' + name + ' 的全部聊天记录' + (npc.persistent ? '？（固定联系人：清空记录并让TA安静——直到你主动再发消息给TA）' : '？（联系人也会一起移除）')));
+      } catch (e) {}
       if (!ok) return;
       // 回退全部消息的财务影响（删整段聊天 = 这段关系在账面上归档）
       rollbackMsgEffects(name, hist, (state && state.wallet) || {}, (state && state.closet) || []);
@@ -3243,11 +3824,12 @@
         // 变量持久化端回退（带流水记录）
         rollbackMsgEffects(name, v.sb.npcs[name].dm_history || [], v.sb.wallet || {}, v.sb.closet || [], true);
         // 固定NPC删记录=冷处理：muted 后生成器和硬闸都禁止TA再发（L. 也不例外），User 主动发消息才解除
-        if (npc.persistent) { var n = v.sb.npcs[name]; n.dm_history = []; n.last_message = ''; n.unread = 0; n.engaged = false; n.muted = true; }
+        // 👥 群＝直接解散（_anonInvited 不回退：匿名大厅的门一旦开过就一直开着，从 ➕ 页能再进去）
+        if (npc.persistent && !npc.isGroup) { var n = v.sb.npcs[name]; n.dm_history = []; n.last_message = ''; n.unread = 0; n.engaged = false; n.muted = true; }
         else delete v.sb.npcs[name];
         return v;
       });
-      if (npc.persistent) { npc.dm_history = []; npc.last_message = ''; npc.unread = 0; npc.engaged = false; npc.muted = true; }
+      if (npc.persistent && !npc.isGroup) { npc.dm_history = []; npc.last_message = ''; npc.unread = 0; npc.engaged = false; npc.muted = true; }
       else if (state && state.npcs) delete state.npcs[name];
       SBemit('sb_updated');   // 让注入摘要也同步刷新（被删的对话不再回灌主线）
       SBemit('sb_scrub_floor', { name: name });   // 整段聊天删了 → 楼层里TA的誊抄段落全部擦掉
@@ -3269,6 +3851,20 @@
         if (pend && pend !== String(txt)) { input.value = ''; queueMsg(pend, 'text'); }
       }
       var text = txt || input.value.trim(); if (!text) return;
+      // ⛔ 被拉黑：消息照样显示在自己这边，但下面跟一条「被对方拒收」；不进待发队列、不触发生成（钱类动作在 ➕ 菜单里就拦了）
+      if (npc.blocked) {
+        var tB = nowT(), gB = (state && state.game && state.game.day) || 1;
+        var uB = { sender: 'USER', time: tB, ts: Date.now(), type: mtype || 'text', content: text, note: '', gameDay: gB };
+        var sB = { sender: 'THEM', time: tB, ts: Date.now(), type: 'system', content: '消息已发出，但被对方拒收了', note: '', zh: '', gameDay: gB };
+        if (!npc.dm_history) npc.dm_history = [];
+        npc.dm_history.push(uB, sB);
+        SBupdate(function (v) { var n = v.sb && v.sb.npcs && v.sb.npcs[name]; if (!n) return v; if (!n.dm_history) n.dm_history = []; n.dm_history.push(uB, sB); if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400); n.last_message = lastPreview(uB); return v; });
+        input.value = '';
+        openChat(name, npc);
+        toast('warning', name + ' 已经把你拉黑了');
+        return;
+      }
+      var revealed = revealPendingNpc(npc);   // ⏳ 你开口了 → TA 在路上的消息先落地（变量那份在下面 SBupdate 里同步）
       var t = nowT(); var ty = mtype || 'text';
       var gDay = (state && state.game && state.game.day) || 1;
       npc.engaged = true;
@@ -3282,6 +3878,7 @@
         if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
         var n = v.sb.npcs[name]; if (!n) return v;
         if (!n.dm_history) n.dm_history = [];
+        revealPendingNpc(n);   // ⏳ 和镜像同步：在路上的先落地，再接玩家这条
         var vObj = { sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay };
         if (extra) { for (var ek2 in extra) { if (extra.hasOwnProperty(ek2)) vObj[ek2] = extra[ek2]; } }
         n.dm_history.push(vObj);
@@ -3298,6 +3895,7 @@
       else if (ty === 'transfer') obLine = '（转账 ￥' + text + ' 给TA）';
       queueOutbox(name, obLine);
       input.value = '';
+      if (revealed) { openChat(name, npc); return; }   // ⏳ 有刚落地的消息 → 整页重画（顺序和分割线才对），不做局部插入
       var box = chatEl.querySelector('.sb-msgs');
       if (box) {
         var dvq = dividerBetween(prevQ, msgObj);   // 局部插入也补分割线（UWU）——不然重开聊天才出现；msgObj 已含 extra 字段
@@ -3308,6 +3906,8 @@
     }
     // 「发送」键：先把输入框里没发的也攒进去，再让这个人一次性回复攒的全部
     function sendReply() {
+      // 🎭 匿名群第一次开口前：给玩家一次改代号的机会（默认那个已经抽好了，直接确定就行）
+      if (npc.isGroup && npc.anon && !npc._handleAsked) { askAnonHandle(name, npc, sendReply); return; }
       var typed = input.value.trim();
       if (typed) { input.value = ''; queueMsg(typed, 'text'); }   // 先清空再排——不清的话上面那道守卫会把同一句再排一遍
       replyOne(name);
@@ -3349,7 +3949,7 @@
         mh += '<div style="padding:6px 13px 2px;font-size:10px;color:var(--ink-faint);">— 商城 · 发链接=买给我，TA懂的 —</div>';
         for (var pi = 0; pi < prods.length && pi < 12; pi++) mh += '<button data-lk="p' + pi + '">🛍️ ' + esc(prods[pi].n) + (prods[pi].p > 0 ? ' — ' + fmtCNY(prods[pi].p) : '') + '</button>';
       } else {
-        mh += '<div style="padding:6px 13px;font-size:10px;color:var(--ink-faint);">商城还没上货——去论坛/Elite 点🔄烤一期就有了</div>';
+        mh += '<div style="padding:6px 13px;font-size:10px;color:var(--ink-faint);">商城还没上货——去论坛/Elite 点右上角的刷新烤一期就有了</div>';
       }
       mh += '<button data-lk="">✕ 算了</button>';
       menu.innerHTML = mh;
@@ -3408,7 +4008,16 @@
       menu.className = 'sb-msgmenu';
       menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '14%';
       var mh = '';
-      if (isSE) {
+      if (isGrp) {
+        // 👥 群里能干的事比私聊少一截：钱只走私信一个口子，约见面也是两个人的事
+        mh += '<button data-pa="ground">' + sbIcon('refresh', 14) + ' 看看群里在聊什么</button>' +
+          '<button data-pa="photo">📷 发照片（自己描述）</button>' +
+          '<button data-pa="img">🎨 AI生图</button>' +
+          '<button data-pa="sticker">😀 发表情包</button>' +
+          '<button data-pa="voice">🎙️ 发语音（自己描述）</button>' +
+          '<button data-pa="members">' + sbIcon('group', 14) + ' 看成员</button>';
+        if (npc.anon) mh += '<button data-pa="handle">' + sbIcon('mask', 14) + ' 换我的代号</button>';
+      } else if (isSE) {
         mh += '<button data-pa="q0">📋 今日行程</button>' +
           '<button data-pa="q1">🍽️ 帮我订位</button>' +
           '<button data-pa="q2">🕵️ 查个人</button>' +
@@ -3446,6 +4055,11 @@
         else if (act === 'broke') { queueMsg(pickFrom(QUICK_POOLS.broke), 'text'); replyOne(name); }
         else if (act === 'selfie') { queueMsg(pickFrom(QUICK_POOLS.selfie), 'image'); replyOne(name); }
         else if (act.charAt(0) === 'q') { queueMsg(SE_Q[parseInt(act.slice(1), 10)], 'text'); replyOne(name); }
+        else if (act === 'ground') askGroupRound(name, npc.anon
+          ? 'User 没说话，只是刷了一下——大厅里的人自顾自接着聊'
+          : 'User 没说话，只是刷了一下群——群里的人接着刚才的话往下聊，或者起个新话头');
+        else if (act === 'members') openGroupMembers(name);
+        else if (act === 'handle') askAnonHandle(name, npc, function () { openChat(name, npc); });
         else if (act === 'sticker') openStickerPicker();
         else if (act === 'photo') askPhoto();
         else if (act === 'voice') {
@@ -3463,6 +4077,7 @@
           });
         }
         else if (act === 'pay') {
+          if (npc.blocked) { toast('warning', name + ' 已经把你拉黑了，转不过去'); return; }   // ⛔ 钱在扣之前就拦，别扣了再拒收
           panelPrompt('转多少给 ' + name + '？只填数字（从你钱包扣，余额 ' + fmtCNY((state && state.wallet && state.wallet.balance) || 0) + '）', '').then(function (d) {
             var amt = Math.round(parseFloat(String(d || '').replace(/[^0-9.]/g, ''))) || 0;
             if (amt <= 0) return;
@@ -3545,16 +4160,28 @@
     return null;
   }
 
-  function renderOneMsg(m, trName, trIdx, autoShow, canReroll, isLast) {
+  function renderOneMsg(m, trName, trIdx, autoShow, canReroll, isLast, prevWho) {
     var isU = m.sender === 'USER'; var cls = isU ? 'me' : 'them'; var type = (m.type || 'text').toLowerCase();
     var c = m.content || ''; var t = formatMsgTime(m); var n = m.note || '';   // 时间戳带日期（UWU）："4/16 09:20"，AI 和玩家都不再犯日期糊涂
     if (m.edited) t = (t ? t + ' · ' : '') + '已编辑';
     var tH = t ? '<span class="mt">' + esc(t) + '</span>' : '';
-    // 群聊气泡：内容开头的「S.：」/「Akuma：」拆成气泡上方的小名字
-    var gsp = '';
-    if (!isU && trName === GROUP_NAME) {
-      var gm = String(c).match(/^\s*(S\.|Akuma)\s*[:：]\s*/);
-      if (gm) { gsp = '<span class="gsp">' + gm[1] + '</span>'; c = String(c).slice(gm[0].length); }
+    // 👥 群气泡：上方一行小字标谁在说。说话人存在条目的 who 上；
+    //    老数据（私享版兄弟群）说话人还写在内容开头，兜底拆一次，别让历史记录变成没头没脑的一串话
+    var gsp = '', gWho = '';
+    if (!isU && trName != null && isGroupChat(trName)) {
+      var who = m.who || '';
+      if (!who) {
+        var sp = splitGroupSpeaker(c, groupMembersOf(trName));
+        if (sp.who) { who = sp.who; c = sp.text; }
+      }
+      gWho = who;
+      if (who && who !== prevWho) {   // 同一个人连发只在第一条标名（微信群就是这么长的）
+        var gNpc = npcOf(trName) || {};
+        var rst = (gNpc.roster && gNpc.roster[who]) || null;
+        // 已经和 User 私下聊过的代号，名字后面给一个只有 User 看得见的小尾巴
+        var tail = (rst && rst.revealed && rst.real) ? ' · ' + rst.real : '';
+        gsp = '<span class="gsp" data-who="' + esc(who) + '" style="color:' + speakerColor(who) + ';">' + esc(who + tail) + '</span>';
+      }
     }
     // 长按菜单：定位属性(nm/mi)现在**每种气泡都挂**（多选删除要能选中转账/礼物/撤回存根），
     // 但编辑/撤回/重roll 等动作属性只给原来那几类——转账钱已走账、礼物已入橱，删的只是消息本身。
@@ -3619,16 +4246,16 @@
         '<div class="dm">' + (dLen ? dLen + ' 字 · 调色盘/三面性/声音卡齐全' : '档案已过期') + '</div>';
       if (draft) {
         head += '<div class="da">' +
-          '<button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">🔄 不太对，再查一次</button>' +
+          '<button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">' + sbIcon('refresh', 14) + ' 不太对，再查一次</button>' +
           '<button class="sb-dsr-btn ok" data-dsr="save" data-n="' + esc(dName) + '">📖 存进世界书</button></div>';
       } else if (saved) {
-        head += '<div class="da"><button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">🔄 重新查一份</button>' +
+        head += '<div class="da"><button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">' + sbIcon('refresh', 14) + ' 重新查一份</button>' +
           '<span class="dok">✓ 已存进世界书</span></div>';
       } else {
-        head += '<div class="da"><button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">🔄 重新查一份</button></div>';
+        head += '<div class="da"><button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">' + sbIcon('refresh', 14) + ' 重新查一份</button></div>';
       }
       return head + tH + '</div>';
-    }    if (type === 'recall') return '<div class="sb-msg system"' + dataA + ' data-tp="recall">「' + (isU ? '你' : '对方') + '撤回了一条消息」' + tH + '</div>';   // 内容不显示——说了什么只有发的人自己记得
+    }    if (type === 'recall') return '<div class="sb-msg system"' + dataA + ' data-tp="recall">「' + (isU ? '你' : (gWho || '对方')) + '撤回了一条消息」' + tH + '</div>';   // 内容不显示——说了什么只有发的人自己记得
     if (type === 'system') return '<div class="sb-msg system"' + dataA + ' data-tp="system">' + esc(c) + '</div>';
     // 转发的账单/商品/帖子 → 小票收据卡（User 许愿的仪式感；内容还是同一行文字，只是穿了件衣服）
     if (isU && type === 'text') {
@@ -3977,8 +4604,21 @@
   // 悬浮球/面板/style 它管不着。脚本跑在自己的 iframe 里，被关掉时这个 iframe
   // 销毁 → 它自己的 window 派发 pagehide，在那儿收摊（官方推荐做法）。
   // 按 id 兜底再扫一遍：万一上面某个引用因异常没建起来，也不会漏下孤儿节点。
+  // ⏳ 每分钟看一眼有没有「在路上」的消息到点了（剧情钟不动时靠真实时间兜底）；只在真有送达时才重画，不打扰正在打字的输入框
+  var _revealTimer = setInterval(function () {
+    try {
+      if (!state) return;
+      var prevUn = totalUnread();
+      loadState();
+      if (!revealDue()) return;
+      refreshView();
+      if (totalUnread() > prevUn) triggerVibration();
+      setStatus('✓ 新消息 ' + nowT());
+    } catch (e) {}
+  }, 60000);
   function sbSelfCleanup() {
     try { clearInterval(_songTimer); } catch (e) {}
+    try { clearInterval(_revealTimer); } catch (e) {}
     try { clearTimeout(_bubTimer); } catch (e) {}
     try { if (_bubObs) _bubObs.disconnect(); } catch (e) {}                   // 气泡观察器：挂在 parent 的 DOM 上，必须自己断
     try { clearTimeout(_kvTimer); } catch (e) {}
@@ -4075,7 +4715,10 @@
       if (_msgMenu && !_msgMenu.contains(t)) closeMsgMenu();
       return;
     }
-  
+    // 👥 点群气泡上方那个名字 → 小菜单（匿名群里可以「私下加 TA」）
+    var gspEl = t && t.closest && t.closest('.gsp');
+    if (gspEl && gspEl.getAttribute('data-who')) { showSpeakerMenu(gspEl.getAttribute('data-who')); return; }
+
   // ── 🔊 真人语音播放（单例：点别条会把上一条掐掉，不会两个声音叠着放）──
   // 音频托管在服务器（Supabase Storage 公开桶），气泡上的 data-audio 就是直链。
   // 浏览器禁止无手势自动播放——这里是点击触发的，所以合法；被拦下也必须出声（铁律）。
@@ -4125,6 +4768,37 @@
   // 替代原来挂在每条气泡尾巴上的小按钮（玩家嫌难看）。触发：按住450ms，或桌面右键。
   var _lpTimer = null, _msgMenu = null;
   function closeMsgMenu() { if (_msgMenu && _msgMenu.parentNode) _msgMenu.parentNode.removeChild(_msgMenu); _msgMenu = null; }
+  // 👥 群气泡上的名字被点了：匿名群给「私下加 TA」，熟人群给「去和 TA 单聊」
+  function showSpeakerMenu(who) {
+    var gname = currentChatName;
+    var g = npcOf(gname);
+    if (!g || !g.isGroup) return;
+    closeMsgMenu();
+    var menu = DOC.createElement('div');
+    menu.className = 'sb-msgmenu';
+    menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '22%';
+    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">' + esc(who) + '</div>';
+    if (g.anon) {
+      var r = (g.roster && g.roster[who]) || {};
+      mh += r.real
+        ? '<button data-sp="dm">' + (r.revealed ? '💬 去和 TA 单聊' : '💌 私下加 TA') + '</button>'
+        : '<button data-sp="none">这个人还没露过底——再聊两句</button>';
+    } else {
+      mh += '<button data-sp="open">💬 去和 TA 单聊</button>';
+    }
+    mh += '<button data-sp="">✕ 算了</button>';
+    menu.innerHTML = mh;
+    panel.appendChild(menu);
+    menu.addEventListener('click', function (e) {
+      var pk = e.target && e.target.closest && e.target.closest('[data-sp]');
+      if (!pk) return;
+      var act = pk.getAttribute('data-sp');
+      closeMsgMenu(); _msgMenu = null;
+      if (act === 'dm') dmFromHandle(gname, who);
+      else if (act === 'open') { var n2 = npcOf(who); if (n2) openChat(who, n2); else toast('info', who + ' 不在通讯录里了'); }
+    });
+    _msgMenu = menu;
+  }
   function bubbleOf(t) { while (t && t !== chatEl) { if (t.classList && t.classList.contains('sb-msg')) return t; t = t.parentNode; } return null; }
   function showMsgMenu(b) {
     closeMsgMenu();
@@ -4140,7 +4814,7 @@
     } else {
       if (b.getAttribute('data-ed') === '1') items.push(['✏️ 编辑这条', 'ed']);
       if (b.getAttribute('data-rc') === '1') items.push(['↩️ 撤回这条', 'rc']);
-      if (b.getAttribute('data-rr') === '1') items.push(['🔄 重roll 这条回复', 'rr']);
+      if (b.getAttribute('data-rr') === '1') items.push([sbIcon('refresh', 14) + ' 重roll 这条回复', 'rr']);
       if (!isMe && !tp) items.push(['💬 引用回复', 'qt']);
       items.push(['🗑 删除这条', 'del']);
       items.push(['📋 复制文字', 'cp']);
