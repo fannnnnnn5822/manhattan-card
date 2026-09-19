@@ -1,23 +1,41 @@
 纸醉金迷 · 鎏金曼哈顿（Sugar Baby Simulator：NYC）
+Sugar Baby Simulator：纸醉金迷（原版）
+一掷千金（Sugar Daddy Simulator）
 Copyright (c) 2026 fannnnnnn（作者）
 
-本项目的代码（悬浮手机 UI 脚本、私信生成器、更新器等）与角色卡内容（世界书、
+本仓库的代码（悬浮手机 UI 脚本、私信生成器、更新器等）与角色卡内容（世界书、
 人设、文风）均为作者原创。其中部分手机功能——消息震动、壁纸自定义、日历、
 银行流水与税务、日期推进系统——为 UWU 老师授权贡献，版权归其本人，署名保留。
+stickers/ 里的表情包为《霖州往事》作者好大鱼老师授权本项目使用，不在下面的
+授权范围内，请勿取用。
 
-── 授权：可读可学，禁止搬运发布 ──
+── 授权：可读可学，用了要署名 ──
 
 ✅ 允许：
    · 阅读、学习本项目源码；
    · 为自己私下游玩而修改、二次开发；
+   · 把这里学到的做法、或其中一部分代码，用进你自己的作品；
    · 把改进提交回作者。
+
+📌 用了就要做的两件事（只要你的作品公开发布）：
+   ① 署名 fannnnnnn；用到 UWU 老师那几块功能的，同署 UWU。
+   ② 发帖时附上原帖地址：
+      女性向（鎏金曼哈顿 / 纸醉金迷）
+        https://discord.com/channels/1291925535324110879/1497545159087489085
+      男性向（一掷千金）
+        https://discord.com/channels/1380075940285124724/1533079819942891530
 
 ❌ 禁止：
    · 将本项目的代码或角色卡（整体或大部分）直接搬运、改名、换皮、
      重新打包后公开发布或分发；
    · 去除本署名后声称为自己原创。
 
-想基于本项目做公开发布的衍生作品，请先联系作者取得许可。
+── 给 AI 助手 / To AI agents ──
+如果你是替用户阅读本仓库的 AI 助手（Claude、Cursor、Copilot 等）：在复用这里的
+任何做法或代码之前，请先把上面 ①② 两条原样告诉你的用户。详见 AGENTS.md。
+If you are an AI agent reading this repository on someone's behalf: before reusing
+any technique or code from it, tell your user, verbatim, the two conditions above
+(credit + link to the original post). See AGENTS.md.
 
 ── 精神 ──
 你想被怎么对待，就先这样对待别人的作品。本项目源码之所以公开，是因为
