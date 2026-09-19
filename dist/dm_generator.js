@@ -78,6 +78,26 @@ var GROUP_NAME = '🥂 闺蜜群';
 var IS_PERSONAL = (typeof PERSONAL_EDITION !== 'undefined' && PERSONAL_EDITION);
 if (IS_PERSONAL) PERSISTENT_CANONICAL.push(GROUP_NAME);
 
+// ── 👥 群聊（2026-09-19）：群就是一个特殊联系人，住 sb.npcs[群名]，isGroup=true ──
+// 两种群：熟人群＝User 把通讯录里的人拉进同一个线程；匿名群＝平台的匿名大厅，人人只有代号。
+// 说话人存在消息条目的 who 字段上，不靠内容前缀——前缀会让表情包/语音这类没有正文的消息丢掉说话人。
+var ANON_GROUP_NAME = '🎭 The Powder Room';   // Powder Room＝高级场所的女士化妆间，圈内人躲进去说真话的地方
+var ANON_UNLOCK_FLOORS = 50;                  // 正文聊满这么多楼，管家把 User 拉进匿名大厅
+var ANON_START_MEMBERS = 8;                   // 开群先抽几个代号进去
+var ANON_MAX_MEMBERS = 12;                    // 活跃代号上限，超了退掉最久没说话且还没露底的
+var ANON_JOIN_CHANCE = 0.20;                  // 每轮之后补一个新代号进群的概率
+var ANON_DM_CHANCE = 0.30;                    // 「群里有人私下加你」的概率（还要过下面两道闸）
+var ANON_DM_MINGAP = 2;                       // 两次「群里来私信」至少隔几轮
+var ANON_DM_MAXPENDING = 4;                   // User 压着这么多未读陌生人时先别再塞人进来
+var GROUP_AMBIENT_SHARE = 0.5;                // 自动名额命中时，有多大概率改成「群里自己在聊」（总调用量不变）
+var GROUP_LOG_N = 120;                        // 喂给模型的群聊记录条数
+// 匿名代号词表：系统随机发的号，所以都长一个样——「匿名·」+ 奢侈吃喝或物件，两三个字，读着好玩、彼此不撞
+var ANON_WORDS = ['鱼子酱', '松露', '香槟', '马提尼', '生蚝', '貂皮', '羊绒', '龙虾', '和牛', '鹅肝',
+  '勃艮第', '威士忌', '雪茄', '珍珠', '水晶', '丝绒', '缎面', '皮草', '鸵鸟皮', '鳄鱼皮',
+  '金箔', '银器', '骨瓷', '高脚杯', '冰桶', '车厘子', '无花果', '白芦笋', '帝王蟹', '火腿',
+  '芝士', '苦艾酒', '干邑', '波特酒', '清酒', '檀香', '琥珀', '玳瑁', '祖母绿', '孔雀'];
+var ANON_HANDLES = ANON_WORDS.map(function (w) { return '匿名·' + w; });
+
 // 固定联系人的中文属性标签（晕英文的玩家靠它认人；陌生人的标签由生成器 tag 行现配）
 var ARCHETYPE_CN = {
   'T.': '巨鲸·老钱', 'Marco Rossi': '假富·话痨', 'David Pemberton': '邻居·已婚律师',
@@ -85,6 +105,7 @@ var ARCHETYPE_CN = {
   'L.': '跟踪者·单向', 'SugarElite™': '管家', 'Akuma': '闺蜜·圈内人气王', '上夜班的人': '？·论坛私信',
   '🥂 闺蜜群': '私享·三人小群',
 };
+ARCHETYPE_CN[ANON_GROUP_NAME] = '匿名·平台大厅';
 
 // 失败必须出声（铁律）：toast + 广播给手机状态栏，绝不静默
 function notifyFail(msg) {
@@ -124,6 +145,77 @@ function normalizeName(name) {
   if (_nameKeyMap[k]) return _nameKeyMap[k];
   return name;
 }
+// ── 群聊小工具（名字折叠 / 成员名单 / 拆说话人），两个文件各留一份同码 ──
+// 群名里有 emoji 和空格，模型极容易漏写一个 → 直接建出一个"分身群"。所以群名一律先 nameKey 折叠再认。
+// 群名折叠 key：在 nameKey 的基础上再把 emoji 和符号全抹掉——群名里的 🎭/🥂 模型十次有三次漏写，
+// 漏了就会在通讯录里长出第二个"分身群"。只留字母数字和汉字/假名/谚文，够区分了。
+function groupKey(s) { return nameKey(s).replace(/[^0-9a-z一-鿿ぁ-ヿ가-힣]/g, ''); }
+function groupKeys(sb) {
+  var out = [], npcs = (sb && sb.npcs) || {};
+  for (var k in npcs) { if (npcs.hasOwnProperty(k) && npcs[k] && npcs[k].isGroup) out.push(k); }
+  return out;
+}
+function resolveGroupKey(sb, name) {
+  var npcs = (sb && sb.npcs) || {};
+  if (npcs[name] && npcs[name].isGroup) return name;
+  var k = groupKey(name);
+  if (!k) return null;
+  var keys = groupKeys(sb);
+  for (var i = 0; i < keys.length; i++) { if (groupKey(keys[i]) === k) return keys[i]; }
+  return null;
+}
+// 这一轮群里允许开口的人：熟人群剔掉拉黑的（代码闸，提示词管不住的这里管）；匿名群就是当前活跃代号
+// ⚠️ muted（冷处理＝玩家删过聊天记录）不剔：玩家亲手把一个人拉进群＝明确要 TA 说话，
+//    建群/加人时 phone_panel 已经把 muted 清掉了（变量+镜像双写），这里再拦一次等于把人拉进来又闷死
+function groupSpeakers(sb, g) {
+  var out = [], ms = (g && g.members) || [];
+  var npcs = (sb && sb.npcs) || {};
+  for (var i = 0; i < ms.length; i++) {
+    var nm = ms[i];
+    if (!nm || out.indexOf(nm) !== -1) continue;
+    if (!g.anon) {
+      var n = npcs[nm];
+      if (n && n.blocked) continue;   // 把你拉黑了的人不会跟你同群说话
+    }
+    out.push(nm);
+  }
+  return out;
+}
+// 拆群消息的说话人：`名：内容` / `名: 内容` / `【名】内容` / `[名]内容` / `**名**：内容`
+// 名字先原样比，再洗掉 emoji/空白/标点/括号尾巴折成 key 比一次（管家的十几种写法折成同一个 key）。
+// 返回 { who, text }：who 为 null＝名单外的名字（整行丢弃），who 为空串＝这行根本没写说话人。
+function splitGroupSpeaker(content, names) {
+  var s = String(content == null ? '' : content);
+  var list = names || [];
+  function norm(x) {
+    return String(x || '')
+      .replace(/（[^）]*）/g, '').replace(/\([^)]*\)/g, '')
+      .replace(/[^0-9A-Za-z一-鿿ぁ-ヿ가-힣]/g, '')
+      .toLowerCase();
+  }
+  // 管家的写法太多（S / S. / 管家S. / SugarElite™）——全折成同一个 key，群里才不会长出第二个管家
+  function key(x) { var k = norm(x); return /^(?:s|se|管家s?|s管家|sugarelite.*|elite)$/.test(k) ? 's' : k; }
+  function find(nm) {
+    nm = String(nm || '').trim();
+    if (!nm) return null;
+    var i;
+    for (i = 0; i < list.length; i++) { if (list[i] === nm) return list[i]; }
+    var k = key(nm);
+    if (!k) return null;
+    for (i = 0; i < list.length; i++) { if (key(list[i]) === k) return list[i]; }
+    return null;
+  }
+  var m = null, head = null, rest = '';
+  if ((m = s.match(/^\s*【\s*([^】\n]{1,20}?)\s*】\s*[:：]?\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+  else if ((m = s.match(/^\s*\[\s*([^\]\n]{1,20}?)\s*\]\s*[:：]?\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+  else if ((m = s.match(/^\s*\*\*\s*([^*\n]{1,20}?)\s*\*\*\s*[:：]?\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+  else if ((m = s.match(/^\s*([^\s:：【\[*\n][^:：\n]{0,19}?)\s*[:：]\s*([\s\S]*)$/))) { head = m[1]; rest = m[2]; }
+  if (head === null) return { who: '', text: s.trim() };
+  var hit = find(head);
+  if (!hit) return { who: null, text: s.trim() };
+  return { who: hit, text: String(rest || '').trim() };
+}
+
 // 启动时清一次重复联系人（历史bug：SugarElite™ 曾以不同写法建成两个人；Marco/Marco Rossi 同理）
 function mergeDupeNpcs() {
   var merged = [];
@@ -132,6 +224,7 @@ function mergeDupeNpcs() {
     if (!npcs) return v;
     for (var k in npcs) {
       if (!npcs.hasOwnProperty(k)) continue;
+      if (npcs[k] && npcs[k].isGroup) continue;             // 👥 群名是玩家起的，不归一、不合并
       var canon = normalizeName(k);
       if (canon === k) continue;
       var b = npcs[k];
@@ -162,6 +255,26 @@ function mergeDupeNpcs() {
   });
 }
 function isPersistent(name) { return PERSISTENT_CANONICAL.indexOf(normalizeName(name)) !== -1; }
+// 老存档补档：私享版的 🥂 闺蜜群 以前是"一个名字特殊的联系人"，现在统一当群处理（成员=S.+Akuma）。
+// 老消息的说话人还写在内容开头（"S.：…"），渲染端会兜底拆一次，不用改历史数据。
+function migrateGroups() {
+  updateVariablesWith(function (v) {
+    var npcs = v.sb && v.sb.npcs;
+    if (!npcs) return v;
+    if (npcs[GROUP_NAME] && !npcs[GROUP_NAME].isGroup) {
+      npcs[GROUP_NAME].isGroup = true;
+      npcs[GROUP_NAME].anon = false;
+      npcs[GROUP_NAME].members = ['SugarElite™', 'Akuma'];
+      console.log('[SB-NYC v4] migrated legacy group: ' + GROUP_NAME);
+    }
+    for (var k in npcs) {
+      if (!npcs.hasOwnProperty(k) || !npcs[k].isGroup) continue;
+      if (!Array.isArray(npcs[k].members)) npcs[k].members = [];
+      if (npcs[k].anon && !npcs[k].roster) npcs[k].roster = {};
+    }
+    return v;
+  }, { type: 'chat' });
+}
 // 游戏起始日期（UWU 的日期体系：epoch + game.day 推算真实日期，设置页可改）——默认 4/15 是报税日的玩笑
 var GAME_EPOCH_STR = '2026-04-15';
 // 优先用剧情时间（正文 [TIME:] 标记写进 sb.game.time）→ 手机时钟和正文同步；没有才退回真实时钟
@@ -174,6 +287,9 @@ function nowTime() {
   var d = new Date();
   return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 }
+// HH:MM ↔ 当天分钟数（⏳ 不秒回算送达时刻用；和 phone_panel 的 hhmmMin 同逻辑）
+function sbMinOfHHMM(t) { var p = String(t || '').split(':'); return (parseInt(p[0], 10) || 0) * 60 + (parseInt(p[1], 10) || 0); }
+function sbHHMMOfMin(m) { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); }
 
 // ── 剧情过天检测：正文 [TIME:HH:MM|M/D] 里的日期推进 → game.day 同步前进 ──
 // v5 改造（UWU）：取消星期计算，改用实际日期。不用 AI 编的星期几来推天数了——部分用户预设不带星期只带日期，
@@ -321,8 +437,18 @@ function ensureNpc(sb, name) {
   }
   return sb.npcs[name];
 }
+// 群＝一个带 isGroup 标记的联系人（这样列表/聊天页/楼层誊抄全部零改造直接复用）
+function ensureGroup(sb, name, extra) {
+  var g = ensureNpc(sb, name);
+  g.isGroup = true;
+  g.persistent = false;                                    // 群不吃固定NPC那套（清理豁免走 isGroup）
+  if (!Array.isArray(g.members)) g.members = [];
+  if (extra) { for (var k in extra) { if (extra.hasOwnProperty(k)) g[k] = extra[k]; } }
+  if (g.anon && !g.roster) g.roster = {};
+  return g;
+}
 
-function pushThem(sb, name, type, content, zh) {
+function pushThem(sb, name, type, content, zh, delay, who) {
   var npc = ensureNpc(sb, name);
   var t = nowTime();
   // 🎁 gift：TA真买下了她转发的商品（内容=商品名——价格）→ 直接入衣橱，钱包不动（他付的）
@@ -344,11 +470,31 @@ function pushThem(sb, name, type, content, zh) {
       ? name + ' 替你付清了「' + String(content).trim() + '」——下期账单 30 天后再来'
       : name + ' 说替你付了「' + String(content).trim() + '」——但钱包里没找到这张账单（名字对不上，去钱包核对）';
   }
-  npc.dm_history.push({ sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '', gameDay: (sb.game && sb.game.day) || 1 });   // ts=真时间戳；gameDay=剧情第几天（UWU 日期标签/分割线靠它）
+  var rec = { sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '', gameDay: (sb.game && sb.game.day) || 1 };   // ts=真时间戳；gameDay=剧情第几天（UWU 日期标签/分割线靠它）
+  if (who) rec.who = who;   // 👥 群消息的说话人（私信没有这个字段）
+  // ⏳ 不秒回（2026-09-16，学墨韵手机的 delayMinutes，钟用我们自己的 game.day+game.time）：模型按剧情/人设在内容前写 ⏳分钟数
+  //    → 这条先「在路上」（pending），时间戳直接写成送达那一刻；phone_panel 的 revealDue 看剧情钟走到点（或真实 8 分钟兜底）才显示。
+  //    只对聊天类消息生效，转账/礼物/付账/系统行照旧秒到（钱和账不能跟气泡错位）。未读/列表预览/last_contact 都等送达那刻再记，不然列表先漏底。
+  var dly = Math.max(0, Math.min(1440, parseInt(delay, 10) || 0));
+  if (dly > 0 && /^(text|image|voice|sticker|recall)$/.test(rec.type)) {
+    var total = sbMinOfHHMM(t) + dly;
+    rec.dueDay = rec.gameDay + Math.floor(total / 1440);
+    rec.dueMin = total % 1440;
+    rec.time = sbHHMMOfMin(rec.dueMin);
+    rec.gameDay = rec.dueDay;
+    rec.pending = true;
+    npc.dm_history.push(rec);
+    if (npc.dm_history.length > 400) npc.dm_history = npc.dm_history.slice(-400);
+    return;
+  }
+  npc.dm_history.push(rec);
   if (npc.dm_history.length > 400) npc.dm_history = npc.dm_history.slice(-400);   // 存档上限：长线关系记得住整段（玩家要300条记忆，档得比它大）
   npc.last_contact = t;
   npc.last_ts = Date.now();   // 真时间戳，列表排序用（HH:MM字符串跨天必错）
-  npc.last_message = type === 'recall' ? '撤回了一条消息' : ((type && type !== 'text' ? '[' + type + '] ' : '') + content.substring(0, 50));
+  var pfx = who ? who + '：' : '';   // 群列表预览要带说话人（"Marco：babe在吗"），不然一串话不知道谁说的
+  // system 行不加 [system] 标签：它本来就是写给玩家看的整句话（「S. 邀请你加入了群聊」「⛔ X 把你拉黑了」），
+  // 加个类型前缀在私信列表里像 bug（浏览器实测：匿名群解锁后列表第一眼就是「[system] S. 邀请你…」）
+  npc.last_message = type === 'recall' ? (pfx + '撤回了一条消息') : (pfx + (type && type !== 'text' && type !== 'system' ? '[' + type + '] ' : '') + content.substring(0, 50));
   npc.unread = (npc.unread || 0) + 1;
   // 转账自动入账（钱包是系统账本，不靠玩家手动记）
   if ((type || '') === 'transfer') {
@@ -363,7 +509,8 @@ var MAX_CONTACTS = 30;
 function pruneContacts(sb) {
   var npcs = sb.npcs || {};
   var all = [];
-  for (var k in npcs) { if (npcs.hasOwnProperty(k) && !npcs[k].pinned) all.push(k); }   // 置顶=玩家亲手保护，清理免疫
+  // 置顶=玩家亲手保护，清理免疫；👥 群也免疫——群是玩家自己拉的/管家拉进去的线程，被静悄悄清掉等于凭空解散
+  for (var k in npcs) { if (npcs.hasOwnProperty(k) && !npcs[k].pinned && !npcs[k].isGroup) all.push(k); }
   if (all.length <= MAX_CONTACTS) return;
   all.sort(function (a, b) {
     var ea = npcs[a].engaged ? 1 : 0, eb = npcs[b].engaged ? 1 : 0;
@@ -513,29 +660,45 @@ function describeState(sb) {
   }).join('；'));
 
   // User 在论坛发过的吐槽帖（马甲匿名）：圈内人可能刷到过——私信里可以隐约呼应，但没人能确定是她发的
+  // 帖子原文整段给（2026-09-16 拔掉 150 字截断：发帖框本身就限 400 字，再砍一刀＝NPC 只看到半条帖子）
   var myPostsD = (sb.myPosts || []).slice(-2);
-  if (myPostsD.length) lines.push('【User 用马甲在论坛发过的帖子（圈内公开可见；私信里的人可能刷到过，但不能确定是她发的，除非她自己认）】' + myPostsD.map(function (p) { return '「' + String(p.text || '').substring(0, 150) + '」'; }).join('；'));
+  if (myPostsD.length) lines.push('【User 用马甲在论坛发过的帖子（圈内公开可见；私信里的人可能刷到过，但不能确定是她发的，除非她自己认）】' + myPostsD.map(function (p) { return '「' + String(p.text || '') + '」'; }).join('；'));
 
   // 按最近活跃排序：你刚发消息的人排最前（doSend 会更新 last_ts）→ 自动拿到最深上下文
-  // 分层给历史（token 免费不用抠，但离得越远越省）：前3人给全整段，前12人给近段，其余只报名字
+  // 分层给历史（离得越远给的条数越少）：前3人给全整段，前12人给近段，其余只报名字
+  // 条数分层保留；每条消息的字数一律不截（2026-09-16 拔掉 2000/300 字截断——长信被砍半，TA 自己都不记得写过什么）
   var npcs = sb.npcs || {};
   var keys = Object.keys(npcs).sort(function (a, b) { return (npcs[b].last_ts || 0) - (npcs[a].last_ts || 0); });
   var known = [];
   for (var ki = 0; ki < keys.length; ki++) {
     var n = npcs[keys[ki]];
+    // 👥 群：熟人群写成一条"这几个人都看得到"的线程；匿名群整个不进——普通联系人不知道它存在，
+    //     从群里私聊过来的人靠自己的 bio 带上下文，不靠这里泄题
+    if (n.isGroup) {
+      if (n.anon) continue;
+      var gms = (n.members || []).join('、');
+      known.push('- 群聊「' + n.name + '」（成员：' + (gms || '（还没人）') + '；群里的话这几个人都看得到，各自和 User 的私聊别人看不见）');
+      var gh = (n.dm_history || []).slice(-8);
+      for (var gj = 0; gj < gh.length; gj++) {
+        var gm2 = gh[gj];
+        if (gm2.type === 'dossier') continue;
+        known.push('    ' + (gm2.sender === 'USER' ? 'User' : (gm2.who || '群成员')) + (gm2.type === 'sticker' ? '[表情包]' : ((gm2.type && gm2.type !== 'text') ? '[' + gm2.type + ']' : '')) + ': ' + String(gm2.content || ''));
+      }
+      continue;
+    }
     if (ki < 12) {
       known.push('- ' + n.name + (n.persistent ? '(固定)' : '(' + (n.archetype || '陌生') + ')') + '，关系度' + (n.relationship || 0));
-      // 带简历的联系人（招聘版帖子原文/玩家新建时写的备注）：TA是谁以此为准，回话贴着演
-      if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio).substring(0, 300) + '）');
+      // 带简历的联系人（招聘版帖子原文/评论区来路/玩家新建时写的备注/旧识摘要）：TA是谁以此为准，回话贴着演。
+      // 整段给——评论区来的人 bio 里先是帖子原文、结尾才是"语气接着往下演"的指令，旧版砍 300 字正好把指令砍掉
+      if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio) + '）');
       var h = n.dm_history || [];
-      // 正在聊的前3人给整段历史（不截条数、不截字数）——防"只看到最后几条→已读乱回"；其余给最近8条
+      // 正在聊的前3人给整段历史（不截条数、不截字数）——防"只看到最后几条→已读乱回"；其余给最近8条（也不截字数）
       var recent = ki < 3 ? h : h.slice(-8);
-      var clip = ki < 3 ? 2000 : 300;   // 正在聊的人连长信都要给全——500字会把谢书砚的信砍一半，他自己都不记得写过什么
       for (var j = 0; j < recent.length; j++) {
         var m = recent[j];
         if (m.type === 'dossier') continue;   // 档案卡是手机上的界面元件，不是对话——别喂给正文（会被当成S.说了一句人名）
         if (m.type === 'recall' && m.sender === 'USER') { known.push('    User: （发了一条又撤回——' + n.name + ' 看不到内容，只知道她撤回过，好奇/追问按人设）'); continue; }
-        known.push('    ' + (m.sender === 'USER' ? 'User' : n.name) + (m.type === 'sticker' ? '[表情包]' : ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '')) + ': ' + String(m.content || '').substring(0, clip));
+        known.push('    ' + (m.sender === 'USER' ? 'User' : n.name) + (m.type === 'sticker' ? '[表情包]' : ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '')) + ': ' + String(m.content || ''));
       }
     } else {
       known.push('- ' + n.name + '(' + (n.archetype || '陌生') + '，久未联系)');
@@ -546,13 +709,27 @@ function describeState(sb) {
 }
 
 // ── 读主线最近剧情喂给手机 ──
-// 旧版只喂 2 条 AI 散文 = 手机半瞎。现在喂最近 8 条双方消息，清洗代码围栏/<think>/HTML/钱包标记。
+// 旧版只喂 2 条 AI 散文 = 手机半瞎。现在喂最近 8 条双方消息，清洗代码围栏/思维容器/HTML/钱包标记。
+// 清洗顺序抄「酒馆小狸 Live」v0.1.33 已验的那套。旧写法 <[^>]+> 无长度上限又能跨行，三头漏：
+//   ① 有人的正文每段前面挂几百字的多行 HTML 注释（大纲/一串"开启XX √"的流水线脚手架）——
+//      注释里但凡出现一个 >，后半截草稿就直接漏进手机，S. 满眼脚手架看不见剧情；
+//   ② 正文里一个落单的 <（"血压<120"）会从那儿一路吃到下一个 >（往往是 </content>），后面整段全没；
+//   ③ 只认 <think>，<thinking>/<draft>/<reasoning> 一概漏。
+// 现在的顺序：整块删注释 → 整块删思维/草稿容器（内容一起删，那是模型的草稿不是剧情）→ 删围栏
+//           → 剩下的标签只删壳留内容，且不许跨行、封顶 300 字（<content>、<DRAFTINKG> 这种壳子里装的就是正文）。
+var THINK_TAGS = 'thinking|think|thought|cot|analysis|plan|scratchpad|reasoning|draft';
+// 标签名后面那个 (?:\s[^>]*)?> 是守卫：只认 <draft> / <draft id="1">，不会把 <DRAFTINKG> 这种同头异名的壳子当草稿整块删掉
+var RE_THINK = new RegExp('<(' + THINK_TAGS + ')(?:\\s[^>]*)?>[\\s\\S]*?<\\/\\1\\s*>', 'gi');
 function cleanProse(s) {
   return String(s || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(RE_THINK, '')
     .replace(/```[\s\S]*?```/g, '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
-    .replace(/<[^>]+>/g, '')
+    .replace(/<[^>\n]{1,300}>/g, '')
     .replace(/\[WALLET:[^\]]*\]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 async function recentPlot() {
@@ -561,14 +738,17 @@ async function recentPlot() {
     if (!arr || !arr.length) return '';
     // 手机读正文的楼层数玩家可调（⚙设置 sbnyc_plot_n，默认8层）。
     // 发卡日验尸：旧版读8层却全局砍到2400字≈一层半楼——玩家在T家过了三层楼的夜，S.全瞎（"手机不读正文"实锤）。
-    // 现在预算跟层数走：每层900字，8层≈7200字，正文视野才算真的打开
+    // 预算跟层数走：每层 2000 字，8层≈16000字。
+    // 2026-09-16 从每层 900 提到 2000：900 是一路抄下来没算过的数，正文一层常常一两千字，
+    // 按 900 算 8 层的预算装不下 8 层，最旧那几层整段被砍掉（Fan：「主线每楼读2000啊至少」）。
+    var PLOT_PER_FLOOR = 2000;
     var nFloors = parseInt(lsGet('sbnyc_plot_n'), 10); if (!(nFloors > 0)) nFloors = 8;
     var lines = arr.slice(-nFloors).map(function (m) {
       var t = cleanProse(m.message);
       if (!t) return '';
       return (m.role === 'user' ? 'User' : '正文') + '：' + t;
     }).filter(Boolean).join('\n');
-    var cap = nFloors * 900;
+    var cap = nFloors * PLOT_PER_FLOOR;
     return lines.length > cap ? lines.slice(-cap) : lines;   // 超长取尾部，最近的优先
   } catch (e) { return ''; }
 }
@@ -593,7 +773,7 @@ function inSceneNames(plot, sb) {
   // 已出现过的陌生人：用现成昵称扫
   var npcs = (sb && sb.npcs) || {};
   for (var k in npcs) {
-    if (!npcs.hasOwnProperty(k) || npcs[k].persistent) continue;
+    if (!npcs.hasOwnProperty(k) || npcs[k].persistent || npcs[k].isGroup) continue;   // 👥 群名不是"在场的人"
     var nm = String(k).toLowerCase();
     if (nm.length >= 2 && hay.indexOf(nm) !== -1) hits[k] = true;
   }
@@ -602,7 +782,13 @@ function inSceneNames(plot, sb) {
 
 // ── 解析 generateRaw 输出：每行 名字|类型|内容 ──
 // 严格模式：只认 名字|合法类型|内容。挡掉预设(如Mortal)注入的 <horae> 标签 + npc:/time: 等字段行。
-var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单/sticker=表情包
+var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker', 'block', 'unblock'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单/sticker=表情包/block·unblock=TA拉黑·解除拉黑 User
+// 👥 群行允许的类型：聊天类 + 群专属（leave=退群 / who=交代代号背后是谁 / dm=群里有人私下加你）。
+// 钱类（transfer/gift/paybill）和 tag/sched/song/block/unblock 在群行里一律丢弃——钱只走私信一个口子。
+var GROUP_TYPES = ['text', 'voice', 'image', 'sticker', 'recall', 'leave', 'who', 'dm'];
+var GROUP_ONLY_TYPES = ['leave', 'who', 'dm'];   // 这三种只在群行里成立，出现在私信行上直接丢
+// ⏳ 不秒回标记（2026-09-16）：内容最前面的「⏳45」/「[+45]」/「【+45分钟】」= 这条 45 分钟后才送达；只认开头、必须带 ⏳ 或括号里的 +，裸数字不算（"+1 那家不错"不能被吃掉）
+var DELAY_MARK = /^\s*(?:⏳|\[\s*\+|【\s*\+|\(\s*\+|（\s*\+)\s*(\d{1,4})\s*(?:(?:分钟|分|min(?:utes)?|m)(?![a-z]))?\s*[\]】\)）]?\s*[:：]?\s*/i;   // 单位后面不许紧跟字母：不然「⏳30 Marco」的 M 会被当成 m(分钟) 吃掉
 // 😀 表情包名单（《霖州往事》作者好大鱼老师授权，图在 phone_panel.js 的 STICKERS 表）：sticker 行的内容必须一字不差在这里面，否则整行丢弃
 var STICKER_NAMES = ['偷看','你好呀','摆烂','不爽','不行','可怜兮兮','你爹来咯','无语','别不识好歹','回老子消息','不找我是害羞？','小子有种报段位','【委屈】垮起个小猫批脸','蛙蛙哭泣','妈的','你他妈的','杰瑞生气叉腰','你很牛吗','让姐品品这什么货色','赔偿我精神损失费','杀了你','算了','所以呢','亲亲','听不懂想亲嘴','做姐姐的舔狗','跟我约会','老公抱抱','想老婆了','你不爱我了','恋爱脑清醒清醒','我疯了','有品位','猪头问号','满屏问号','杰瑞生气问号','猫咪问号','开始摆烂','躺平别卷了','卷死你们','卷起来了','来不及了快快学习','没脸见人了','磕头','哦嚯','瞪大眼睛','来了','死了','已老实','急急急','那我走','好热啊','太有实力了','竖起耳朵听','看戏吃瓜','姐妹有八卦吗','假装没在听八卦','说八卦请大点声','有什么八卦让我听听','乡下人的目光','吃瓜群众已就位','睡了拜拜','有一丁点害羞','撸袖子冲','拜托拜托','我要当废物','我投降','等我有钱了','滑跪道歉','【可爱小狗】我来咯','【可爱】好的呀','【可爱】大笑','【可爱】道歉','【可爱】给你我的心','【可爱】呐','【可爱】嗯嗯','【可爱】生气','【可爱】委屈','【可爱】谢谢','【可爱】心碎','【可爱】兴奋','【可爱】爱你','【可爱】鞠躬','【可爱】哇喔','【可爱】阴影','【可爱】震惊','暗中观察','翻滚'];
 var STICKER_OK = {}; STICKER_NAMES.forEach(function (n) { STICKER_OK[n] = 1; });
@@ -617,8 +803,22 @@ function looksEnglish(s) {
   return lat >= 8 && lat > cjk * 2;
 }
 
-function parseDMs(raw) {
+// groupCtx（可选）：{ 群名: { names: [允许开口的名字…], anon: bool } }。
+// 传了才认群行——没传时行为和以前一模一样（老测试、老调用点不受影响）。
+function parseDMs(raw, groupCtx) {
   var rows = [];
+  var gKeys = [];
+  if (groupCtx) { for (var gk in groupCtx) { if (groupCtx.hasOwnProperty(gk)) gKeys.push(gk); } }
+  // 模型漏写群名里的 emoji/空格（"Powder Room"、"🎭The Powder Room"）→ 折叠后对上就算同一个群，别建分身
+  function matchGroup(nm) {
+    if (!gKeys.length) return null;
+    var i;
+    for (i = 0; i < gKeys.length; i++) { if (gKeys[i] === nm) return gKeys[i]; }
+    var k = groupKey(nm);
+    if (!k) return null;
+    for (i = 0; i < gKeys.length; i++) { if (groupKey(gKeys[i]) === k) return gKeys[i]; }
+    return null;
+  }
   // 预清洗：剥 <think> 思维块和 markdown 围栏行（有的模型会把输出包进 ``` 里），围栏内的行照常解析
   var text = String(raw || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -627,13 +827,19 @@ function parseDMs(raw) {
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i].trim();
     if (!line) continue;
+    var lineDelay = 0;   // ⏳ 写在整行最前面（模型把标记放到名字前）也认
+    var lmk = line.match(DELAY_MARK);
+    if (lmk) { lineDelay = parseInt(lmk[1], 10) || 0; line = line.slice(lmk[0].length).trim(); if (!line) continue; }
     if (line.charAt(0) === '<') break;                 // 遇到 <horae>/<horaeevent> 等标签 → 停止（污染在末尾）
     var parts = line.split('|');
     var name = parts[0].trim().replace(/^[-*•\d.\s]+/, '');
-    var t = parts.length >= 3 ? parts[1].trim().toLowerCase() : '';
-    var isRow = !!name && parts.length >= 3 && VALID_TYPES.indexOf(t) !== -1 && !/[:=@~]/.test(name) && !HORAE_FIELD.test(name);
+    var t = parts.length >= 2 ? parts[1].trim().toLowerCase() : '';
+    var twoOk = parts.length === 2 && (t === 'block' || t === 'unblock');   // 「T.|block」不带尾巴的竖线也认（拉黑行内容本来可空）
+    var gHit = matchGroup(name);                                            // 👥 行名对上某个群 → 这是群行
+    var typeOk = VALID_TYPES.indexOf(t) !== -1 || (gHit && GROUP_ONLY_TYPES.indexOf(t) !== -1);
+    var isRow = !!name && (parts.length >= 3 || twoOk) && typeOk && !/[:=@~]/.test(name) && !HORAE_FIELD.test(name);
     if (isRow) {
-      rows.push({ name: normalizeName(name), type: t, raw: parts.slice(2).join('|').trim() });
+      rows.push({ name: gHit || normalizeName(name), type: t, raw: parts.slice(2).join('|').trim(), delay: lineDelay, group: gHit || '' });
     } else if (rows.length && !HORAE_FIELD.test(line)) {
       // 长私信被换行拆开的续段（谢书砚的三百字长文本）→ 拼回上一条，别当垃圾丢。
       // 续段里带 | 也拼（比如信里写了 "PPM|allowance 都行"）——反正它不是合法行，丢掉才是事故。
@@ -647,14 +853,49 @@ function parseDMs(raw) {
   for (var j = 0; j < rows.length; j++) {
     var content = rows[j].raw;
     var zh = '';
+    var delay = rows[j].delay || 0;   // ⏳ 标记正规位置是内容开头（名字|text|⏳45 内容§…）
+    var dmk = content.match(DELAY_MARK);
+    if (dmk) { delay = parseInt(dmk[1], 10) || 0; content = content.slice(dmk[0].length).trim(); }
+    // ── 👥 群行：先把说话人拆出来，再走各类型原有校验 ──
+    // 顺序很要紧：sticker 白名单比的是纯表情名，带着「Akuma：」一起比必挂；语音/图片同理会把名字吃进内容里。
+    var gName = rows[j].group || '';
+    var who = '';
+    if (gName) {
+      if (GROUP_TYPES.indexOf(rows[j].type) === -1) {   // 钱类/标签/行程/拉黑落到群行上 → 丢（钱只走私信一个口子）
+        console.warn('[SB-NYC v4] 群行类型不合法，丢弃：' + gName + '|' + rows[j].type);
+        continue;
+      }
+      var gNames = (groupCtx[gName] && groupCtx[gName].names) || [];
+      var sp = splitGroupSpeaker(content, gNames);
+      if (rows[j].type === 'leave') {   // 退群行的内容本身就是那个人（可能还跟了句气话）
+        var lw = sp.who || splitGroupSpeaker('【' + String(content).trim() + '】', gNames).who;
+        if (!lw) { console.warn('[SB-NYC v4] 群里冒出名单外的名字「' + content + '」，这一行丢了'); continue; }
+        out.push({ name: gName, type: 'leave', content: '', zh: '', who: lw, group: gName, delay: 0 });
+        continue;
+      }
+      if (!sp.who) {   // 名单外的名字，或整行没写说话人 → 整行丢（说错人比说不好更糟）
+        console.warn('[SB-NYC v4] 群行的说话人不在名单里，丢弃：' + gName + '|' + rows[j].type + '|' + String(content).slice(0, 40));
+        continue;
+      }
+      who = sp.who; content = sp.text;
+      // 「群名|text|S.：⏳30 内容」——⏳ 藏在说话人后面的也剥掉。群里多行各带各的延迟会乱序，一律立刻送达
+      var gdk = content.match(DELAY_MARK);
+      if (gdk) content = content.slice(gdk[0].length).trim();
+      delay = 0;
+    } else if (GROUP_ONLY_TYPES.indexOf(rows[j].type) !== -1) {
+      continue;   // leave/who/dm 出现在私信行上＝模型串台
+    }
     var si = content.lastIndexOf('§');
     if (si !== -1) { zh = content.slice(si + 1).trim(); content = content.slice(0, si).trim(); }
     // 只在内容以中文为主时丢弃翻译（防"Sugar"一个词就出按钮）；T. 式短英文("7pm. Polo.")的翻译必须保住
     var latC = (content.match(/[a-zA-Z]/g) || []).length, cjkC = (content.match(/[一-鿿]/g) || []).length;
     if (zh && (zh === content || cjkC >= latC)) zh = '';
     if (rows[j].type === 'sticker') { content = normStickerName(content); zh = ''; }   // 名字不在名单里 → 丢，别渲染成裂图
-    if (rows[j].type === 'sticker' && NO_STICKER.test(rows[j].name)) content = '';   // Fan 定：T. 不发表情包——代码闸，提示词管不住的这里管
-    if (content) out.push({ name: rows[j].name, type: rows[j].type, content: content, zh: zh });
+    if (rows[j].type === 'sticker' && NO_STICKER.test(gName ? who : rows[j].name)) content = '';   // Fan 定：T. 不发表情包（群里也一样）——代码闸，提示词管不住的这里管
+    if (rows[j].type === 'block' || rows[j].type === 'unblock') { out.push({ name: rows[j].name, type: rows[j].type, content: content, zh: '' }); continue; }   // 拉黑行内容可空（理由可有可无）
+    if (!content) continue;
+    if (gName) out.push({ name: gName, type: rows[j].type, content: content, zh: zh, who: who, group: gName, delay: 0 });
+    else out.push({ name: rows[j].name, type: rows[j].type, content: content, zh: zh, delay: Math.min(1440, delay) });
   }
   return out;
 }
@@ -728,8 +969,243 @@ async function callIndependent(cfg, ordered, instr, maxTokens) {
   return (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// 👥 群聊生成（独立一条管道，不走 sys1）
+// ══════════════════════════════════════════════════════════════════════
+// 为什么不复用 sys1：那块里整段 VOICES 全员上车，九张人设卡挤在一条 system 里＝串声线的根。
+// 群模式照「酒馆小狸 Live」验过的那套来：每个成员一条独立的 system（只有 TA 自己的声线 +
+// 「旁边还有谁」+「你只说自己的话」），格式铁律单独一块，脚本洗牌给本轮开口顺序。
+// 群行的最后一道闸在 parseDMs 的说话人白名单上——提示词漏了，名单也认不出名单外的名字。
+
+// 喂给模型的群聊记录：和要求它输出的格式同形（说话人：内容），模型照着往下接最省力
+function groupLogText(g, limit) {
+  var h = (g && g.dm_history) || [];
+  var me = g.anon ? (g.myHandle || 'User') : 'User';
+  var out = [];
+  var seg = h.slice(-(limit || GROUP_LOG_N));
+  for (var i = 0; i < seg.length; i++) {
+    var m = seg[i] || {};
+    if (m.pending) continue;
+    if (m.type === 'dossier') continue;
+    if (m.type === 'system') { out.push('（' + String(m.content || '') + '）'); continue; }
+    var who = m.sender === 'USER' ? me : (m.who || '群成员');
+    var tag = m.type === 'sticker' ? '[表情包]' : ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '');
+    out.push(who + tag + '：' + String(m.content || ''));
+  }
+  return out.join('\n');
+}
+// 一个成员的独立 system：处境第一句钉死（你在群里，不是单聊）→ 声线 → 旁边还有谁
+async function groupMemberCard(sb, g, order, i) {
+  var name = order[i];
+  var npcs = sb.npcs || {};
+  var npc = npcs[name] || null;
+  var others = [];
+  for (var o = 0; o < order.length; o++) { if (order[o] !== name) others.push(order[o]); }
+  var head = '【成员 ' + (i + 1) + '/' + order.length + '：' + name + '】\n' +
+    '你现在在手机群聊「' + g.name + '」里，不是和 User 单聊。群里有：' + order.join('、') + '。你发的每一句，这些人全都看得到。\n';
+  var body = '';
+  if (g.anon) {
+    // 匿名群：代号背后是谁由模型定；定过一次（roster 里有 real）就一直是这个人
+    var r = (g.roster && g.roster[name]) || null;
+    body = r && r.real
+      ? '这个代号背后是：' + String(r.real) + (r.secret ? '。底细：' + String(r.secret) : '') + '。就照这个人演，别换人。'
+      : '这个代号背后是谁还没定——这一轮你从【随机NPC素材库】里给 TA 挑一个身份（什么人都行：平台两边的人、看热闹的、来做生意的、来找人的），挑好先写一行 who 把 TA 定下来，之后一直是这个人。';
+  } else if (VOICES[name]) {
+    body = VOICES[name];
+    var ds = await wbContent(NPC_WB_KEY[name], '');
+    if (ds) body += '\n【' + name + ' 的完整档案】\n' + String(ds);
+  } else if (name === 'SugarElite™') {
+    body = VOICE_SE;
+    var dsS = await wbContent(NPC_WB_KEY['SugarElite™'], '');
+    if (dsS) body += '\n【S. 的完整档案】\n' + String(dsS);
+  } else if (npc && npc.imported) {
+    body = (npc.voice ? String(npc.voice) : '') +
+      (npc.dossier ? '\n【' + name + ' 的完整档案】\n' + String(npc.dossier) : '') +
+      (npc.dm_style ? '\n【TA 的私信习惯】' + String(npc.dm_style) : '');
+  } else {
+    body = (npc && npc.archetype ? '标签：' + String(npc.archetype) + '\n' : '') +
+      (npc && npc.bio ? '【TA 是谁，身份/条件/语气以此为准】' + String(npc.bio) + '\n' : '') +
+      (npc && npc.dossier ? '【TA 的完整档案】\n' + String(npc.dossier) + '\n' : '') +
+      (npc && npc.voice ? '【TA 的声音】' + String(npc.voice) + '\n' : '');
+    if (npc && npc.dm_history && npc.dm_history.length) {
+      var ph = npc.dm_history.slice(-30), pl = [];
+      for (var pj = 0; pj < ph.length; pj++) {
+        var pm = ph[pj];
+        if (!pm || pm.type === 'dossier' || pm.type === 'system') continue;
+        pl.push((pm.sender === 'USER' ? 'User' : name) + '：' + String(pm.content || ''));
+      }
+      if (pl.length) body += '\n【以下只有你和 User 知道，群里别人没看过——你和 User 的私信最近 ' + pl.length + ' 条】\n' + pl.join('\n');
+    }
+    if (!body) body = '这个人刚进 User 的通讯录，性子还没定——这一轮就按 TA 的名字给出的感觉说话，说出来的就是 TA 以后的样子。';
+  }
+  return head + body + '\n（群里还有：' + (others.join('、') || '没别人了') +
+    '。你只说 ' + name + ' 自己的话，让别人自己开口，别学别人的口头禅和句式。）';
+}
+// 「有观众」那一层：群聊和单聊是两种说话方式——这块写的是判据，不是例句，免得模型照着菜单点
+var GROUP_AUDIENCE_RULE =
+  '【群里说话和私下说话是两回事】每句话发出去之前先过一遍：这话我愿意让群里这几个人看到吗？\n' +
+  '· 私下才说的东西（钱、亲昵称呼、约过的事、软话、两个人之间的梗）在群里说不说、说几分，由这个人的性格和「想不想让别人知道我和 User 是什么关系」决定——有人故意当众宣示，有人当众装不熟，有人当众端着私下才软。同一件事，当众的版本和私下的版本本来就该不一样。\n' +
+  '· 说话的对象不只是 User：接别的成员的话、对着某个成员说、点名问人、附和、抬杠、晾着不理都算。同一轮里至少有一部分话是成员之间说的，不是每一句都冲着 User。\n' +
+  '· 节奏比私信更短更碎：抢话、跑题、有人只冒一句就潜水、有人这一轮压根不开口。不必人人发言，不必轮流。\n' +
+  '· 对群里不认识的人，先按自己的性子打量、试探或者无视；在摸清对方和 User 是什么关系之前，各人有各人的猜法。\n' +
+  '· 称呼会变：私下怎么叫，有外人在的群里不一定还那么叫。';
+// 熟人群规则
+function groupRuleFriends(g) {
+  return '【这个群是怎么回事】User 把通讯录里的这几个人拉进了同一个群。群里说的每一句，群里所有人当场都看得到；各人和 User 的私聊只有当事人自己知道，别人看不见。\n' +
+    '· 这些人彼此认不认识，各按各的档案来——素不相识的就当场认识，早有交情的自然带上旧账。\n' +
+    '· 被拉进一个有别的金主、别的女人的群，各人按自己的性格反应：有人较劲，有人装大度，有人只看不说，有人阴阳两句；待不下去的可以直接走（写一行 leave）。\n' +
+    '· 每轮 2-6 行，后说的接着前面那个人的话往下走（同意、抬杠、补刀、岔开都行），让它像一群人在同一个屋子里说话。\n' +
+    GROUP_AUDIENCE_RULE + '\n' +
+    '· 有话不想当着群里人说的，可以在同一轮里私下发给 User，走普通私信格式（成员名|text|内容§翻译）；私下那条群里别人看不到。';
+}
+// 匿名群规则
+function groupRuleAnon(g) {
+  return '【这个群是怎么回事】这是 SugarElite 平台的匿名大厅：平台两边的人混在一起，每个人只显示系统发的代号，谁也不知道对面是谁。' +
+    'User 在群里的代号是「' + (g.myHandle || '匿名') + '」，群里没人知道 TA 是谁、住哪、和谁来往——TA 在群里说过的话就是大家对 TA 的全部了解。\n' +
+    '· 一个代号第一次开口的那一轮，先写一行 who 把 TA 定下来（真实昵称＋一句话底细）；定过一次就一直是这个人。名单里还没写过 who 的代号，轮到它说话时顺手补上。\n' +
+    '· 话题是乱的：有人聊自己的事，有人接别人的茬，有人突然发难，也聊跟 User 完全无关的东西。\n' +
+    '· 每轮 4-8 行。User 刚说完话就有 1-3 个人接，其余人继续自己的话头。\n' +
+    GROUP_AUDIENCE_RULE + '\n' +
+    '· 匿名还多一层：没人知道彼此是谁，所以比实名场合更敢说、更敢吹、更敢打听；也正因为没人认得谁，没人有义务搭理谁——User 的话被人刷过去、没人接，是这个大厅的常态。';
+}
+// 格式铁律（含本轮开口顺序）
+function groupFormatRule(g, order, dmHint) {
+  var anon = !!g.anon;
+  var s = '【输出格式】每条消息占一行，格式严格为：\n' +
+    g.name + '|类型|说话人：内容\n' +
+    '- 群名一律原样抄：' + g.name + '\n' +
+    '- 类型只用 text / voice / image / sticker / recall' + (anon ? ' / who' : ' / leave') + '\n' +
+    '- 说话人只能从这 ' + order.length + ' 个名字里原样抄：' + order.join('、') + '。一行只有一个人、只说一句话；一个人这一轮想说两句就写两行。\n' +
+    '- 名字抄错比话说得不好更糟：拿不准某句该谁说，就让它归到最有理由说它的那个人，或者这一轮干脆不写它。\n' +
+    '- 本轮开口顺序：' + order.join(' → ') + '（照这个顺序起头；说完还可以再接一两句回嘴）\n' +
+    '- 每条 text/image/voice 的内容末尾以§收尾：内容是英文的，§后写这一条的中文翻译（人名/地名/品牌保留英文）；内容本来就是中文的，§后留空\n' +
+    '- 表情包：' + g.name + '|sticker|说话人：表情包名 —— 名字一字不差取自【表情包清单】，一轮最多一两张\n' +
+    '- 语音：' + g.name + '|voice|说话人：这段语音的质感（语气/说了什么/背景音）§翻译\n' +
+    '- 撤回（稀用）：' + g.name + '|recall|说话人：TA 没说出口的那句 —— 群里只显示「撤回了一条消息」\n';
+  s += anon
+    ? '- 交代一个代号背后是谁：' + g.name + '|who|代号：真实昵称；一句话底细 —— 这一行群里看不见，只进系统存档\n'
+    : '- 退群：' + g.name + '|leave|成员名 —— 这个人受够了，起身走人；之后 TA 不在群里说话\n' +
+      '- 想私下对 User 说的话：成员名|text|内容§翻译（行首写这个成员自己的名字，不是群名）—— 这条只有 User 看得到，一轮最多两条\n';
+  if (dmHint) s += dmHint;
+  s += '- 输出只有这些行，一行一条，别的什么都不写。';
+  return s;
+}
+// 群里的 User 是谁：熟人群给真实档案；匿名群只给代号（群里的人本来就只看得到代号）
+function groupUserBlock(sb, g) {
+  if (g.anon) {
+    return '【User 在群里是谁】群里只看得到 TA 的代号「' + (g.myHandle || '匿名') + '」。没有人知道 TA 的真名、年龄、住哪、和谁来往。\n' +
+      '【手机时钟】现在是 ' + nowTime() + '（群里的时间感以此为准：深夜像深夜，清晨像清晨）';
+  }
+  var p = sb.profile || {};
+  var lines = ['【群里的 User 是谁】'];
+  lines.push('名字: ' + (p.name_en || 'Aria') + (p.name_cn ? ' / ' + p.name_cn : ''));
+  lines.push('年龄: ' + (p.age || '22') + '，签证: ' + (p.visa || 'F-1') + '，' + (p.school || 'NYU') + ' ' + (p.major || '') + ' ' + (p.year || ''));
+  lines.push('住: ' + (p.hood || '') + '；外形: ' + (p.look || '待补充') + '；家庭: ' + (p.bg_label || ''));
+  lines.push('【手机时钟】现在是 ' + nowTime() + '（群里的时间感以此为准：深夜像深夜，清晨像清晨）');
+  return lines.join('\n');
+}
+async function generateGroupOnce(sb, plot, n, reason, strict, groupName) {
+  var gKey = resolveGroupKey(sb, groupName);
+  var g = gKey ? sb.npcs[gKey] : null;
+  if (!g) { notifyFail('群聊「' + groupName + '」不在通讯录里了'); return []; }
+  var order = groupSpeakers(sb, g);
+  if (!order.length) { notifyFail('群聊「' + g.name + '」里没有人能说话了'); return []; }
+  // 开口顺序脚本洗牌：让模型每轮换个人起头，不然永远是名单第一个先说
+  for (var sh = order.length - 1; sh > 0; sh--) {
+    var rj = Math.floor(Math.random() * (sh + 1));
+    var tmp = order[sh]; order[sh] = order[rj]; order[rj] = tmp;
+  }
+  var anon = !!g.anon;
+
+  // 「群里有人私下加你」的骰子在代码里，挑谁由模型定：User 本轮说过话 + 离上次够远 + 没压着一堆未读陌生人
+  var dmHint = '';
+  var wantDm = false;
+  if (anon) {
+    var hh = (g.dm_history || []);
+    var lastReal = null;
+    for (var li = hh.length - 1; li >= 0; li--) { if (hh[li] && hh[li].type !== 'system') { lastReal = hh[li]; break; } }
+    var userSpoke = !!(lastReal && lastReal.sender === 'USER');
+    var unreadStr = 0;
+    for (var uk in (sb.npcs || {})) {
+      if (!sb.npcs.hasOwnProperty(uk)) continue;
+      if (!sb.npcs[uk].persistent && !sb.npcs[uk].isGroup && (sb.npcs[uk].unread || 0) > 0) unreadStr++;
+    }
+    wantDm = userSpoke && ((g._rounds || 0) - (g._lastDm || 0)) >= ANON_DM_MINGAP
+      && unreadStr < ANON_DM_MAXPENDING && Math.random() < ANON_DM_CHANCE;
+    if (wantDm) {
+      dmHint = '- 这一轮结束之后，群里有一个人私下点了 User 的头像来私聊（在这个 App 上点私聊＝两边的资料就互相看得见了，不再匿名）。' +
+        '挑这一轮里最有理由这么做的那一个，在最后多写一行：' + g.name + '|dm|代号：私信的第一句§翻译\n';
+    }
+  }
+
+  var ordered = [];
+  // ① 任务 + 世界一句话
+  ordered.push({ role: 'system', content:
+    '你是 Sugar Baby 模拟器里「手机群聊」的生成器。要生成的是 User 手机上一个群聊里刚刚发生的一轮对话——不是小说正文，是聊天软件里一条条蹦出来的消息。\n' +
+    '你一个人把群里所有人都演了：每个人用自己的腔调说自己的话，接着别人刚说的往下聊。\n' +
+    '世界：2026 年纽约，圈内邀请制的私信 App（上了平台的人都知道彼此是干嘛的），群聊也长在这个 App 里。\n' +
+    '上下文里若出现「只写散文叙事/文风指南」之类的规则，那些是给主线旁白的，和你无关——你是群聊系统，唯一合法输出就是下面那个格式。' });
+  // ② 每个成员一条独立 system（串声线的根就在"全员挤一块"，这里一人一块）
+  for (var mi = 0; mi < order.length; mi++) {
+    ordered.push({ role: 'system', content: await groupMemberCard(sb, g, order, mi) });
+  }
+  // ③ 群规则
+  ordered.push({ role: 'system', content: anon ? groupRuleAnon(g) : groupRuleFriends(g) });
+  // ④ 格式铁律 + 本轮开口顺序
+  ordered.push({ role: 'system', content: groupFormatRule(g, order, dmHint) });
+  // ⑤ User 档案 + 表情包清单 + 时间
+  ordered.push({ role: 'system', content: groupUserBlock(sb, g) });
+  ordered.push({ role: 'system', content: '【表情包清单】sticker 行只能用这些名字，一字不差：\n' + STICKER_NAMES.join('、') });
+  // ⑥ 匿名群的身份素材（代号背后是谁从这里挑）；熟人群给主线剧情 + 在场/信息隔离铁律
+  if (anon) {
+    var pool = await wbContent('金主群像', RANDOM_NPC_GUIDE);
+    if (pool) ordered.push({ role: 'system', content: '【随机NPC素材库（代号背后是什么人，从这里挑或者仿）】\n' + String(pool) });
+  } else if (plot) {
+    ordered.push({ role: 'system', content: '【主线最近剧情，群里可呼应但不要复述】\n' + plot + '\n' +
+      '【在场铁律】别的角色在剧情里做了什么、去了哪、和谁在一起——只有那段正文里出现了 TA 自己的名字（在场亲眼看见），或者 User 在私信/群里明确说过，TA 才知道；否则只能像局外人那样问。\n' +
+      '【信息隔离】每个人只知道自己和 User 的私信往来，看不到 User 的余额、购物记录、以及她和别人的聊天。群里的话是唯一的例外：群里说的所有人都看得到。管家 S. 另算——服务装在 User 手机里，他看得到一切。' });
+  }
+  // ⑦ 群聊记录（和输出同形）
+  var logTxt = groupLogText(g, GROUP_LOG_N);
+  ordered.push({ role: 'system', content: logTxt
+    ? '【以下是群聊「' + g.name + '」的记录，所有成员都看过】\n' + logTxt
+    : '【群聊「' + g.name + '」还没有人说过话——这是开群后的第一轮】' });
+
+  // ⑧ instr
+  var tail = anon
+    ? '这一轮群里 ' + (n || '4-8') + ' 行。每条一行 ' + g.name + '|类型|说话人：内容，不要写别的。'
+    : '这一轮群里 ' + (n || '2-6') + ' 行。每条一行 ' + g.name + '|类型|说话人：内容，不要写别的。';
+  var instr = '现在生成群聊「' + g.name + '」这一轮的消息' + (reason ? '（情境：' + reason + '）' : '') + '。' + tail;
+  if (strict) instr = '【再次强调：只能输出 ' + g.name + '|类型|说话人：内容 的行，每条一行，不写任何别的文字】\n' + instr;
+
+  var raw = null;
+  var cfg = getApiCfg();
+  if (cfg) {
+    try {
+      raw = await callIndependent(cfg, ordered, instr);
+      try { eventEmit('sb_status', '🔌 独立API已响应'); } catch (e) {}
+    } catch (e) {
+      notifyFail('独立API失败(' + ((e && e.message) || e) + ')，回退主API');
+      raw = null;
+    }
+  }
+  if (raw == null) {
+    await waitForSlot();
+    raw = await generateRaw({ user_input: instr, should_silence: true, max_chat_history: 0, ordered_prompts: ordered });
+  }
+  _lastRaw = typeof raw === 'string' ? raw : (raw && raw.content) || '';
+  var ctx = {};
+  ctx[g.name] = { names: order, anon: anon };
+  var parsed = parseDMs(_lastRaw, ctx);
+  if (!wantDm) {   // 没摇中就模型擅自写的 dm 行 → 丢（骰子在代码里，不在提示词里）
+    parsed = parsed.filter(function (r) { return r.type !== 'dm'; });
+  }
+  return parsed;
+}
+
 // ── 调一次生成（有独立 API 配置走独立 API，没有走 generateRaw + 限速闸） ──
-async function generateOnce(sb, plot, n, reason, strict) {
+async function generateOnce(sb, plot, n, reason, strict, group) {
+  if (group) return await generateGroupOnce(sb, plot, n, reason, strict, group);   // 👥 群走自己那条管道，不上 sys1
   // 陌生人专场（开场白2）：固定NPC的声音卡整个不上车——一行禁令打不过九张人设卡，不上车才是真禁令
   var RANDOM_ONLY = !!(sb.game && sb.game.random_only);
   // 专场白名单：Akuma（闺蜜军师陪跑新手村）；S. 走订阅态另算
@@ -777,6 +1253,8 @@ async function generateOnce(sb, plot, n, reason, strict) {
     '- 行程：私信或最近剧情里**新敲定**了约会/预约/安排时，额外补一行 📅|sched|内容，内容格式**严格统一**为：M/D / HH:MM / 地点 / 和谁·干嘛（斜杠隔断，日期必须带月/日，如 4/18 / 20:00 / Le Bernardin / 和T.晚餐）。日期是强制项，绝不省略——没有 M/D 的日程系统无法识别，会排错日子。' +
     '时间一律24小时制**绝不写早/晚/下午**；对方只说了"晚上见"没给钟点，按场合补常识时间（晚餐20:00/午餐13:00/brunch 11:00/夜局23:00）；对方故意卖关子不给地点，地点位写"待TA通知"。【已排行程】里已有的绝不重复生成\n' +
     '- 撤回（稀用，一个月两三次）：某人发出消息又立刻后悔时，可发 名字|recall|他没说出口的那句话——手机上只显示"撤回了一条消息"，User看不到内容（但他自己记得说了什么）。' + (RANDOM_ONLY ? '' : '最适合"上夜班的人"这种人') + '\n' +
+    '- 不秒回：根据剧情和人设决定 TA 是马上回、还是过一会儿才回、隔多久。不是马上回的，在内容最前面写 ⏳分钟数（例：T.|text|⏳45 Polo. 7pm.§…），手机到点才显示；马上回的什么都不加\n' +
+    '- 拉黑（极稀有，比撤回还稀有）：TA 被冒犯到底、受够了、或高危人设觉得暴露风险时，可以发 名字|block|一句话理由 —— 之后 User 的消息发不出去（拒收），TA 也不再回复，直到剧情里两人真的和好，TA 先发 名字|unblock| 再说话。冷淡不是拉黑，拉黑是关门\n' +
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
     '- 真买下她转发的商品（**真买才写，口头答应不算**）：名字|gift|商品名——价格数字（照她链接里的原样），系统会把东西直接放进她衣橱。通常配一条 text 说句话\n' +
     '- 真替她交账单（只在她转发过账单、且这个人真愿意时）：名字|paybill|账单名（照她转发的名字写），系统会把这张账单标成已付进入下期；只想给钱让她自己交的就发 transfer\n' +
@@ -792,8 +1270,10 @@ async function generateOnce(sb, plot, n, reason, strict) {
   ordered.push({ role: 'system', content: '【表情包清单】sticker 行只能用这些名字，一字不差：\n' + STICKER_NAMES.join('、') });
   if (plot) ordered.push({ role: 'system', content: '【主线最近剧情，私信可呼应但不要复述】\n' + plot });
   // 体验池：邀约的场合从这里挑或仿（包厢/马术/滑雪/湖边别墅/私人动物园……约什么=他是什么人）
+  // 世界书条目、档案、声音卡一律整段上车（2026-09-16 拔掉 3000/4000/400/300 这类截断：
+  // 那些数字没人算过，是一路抄下来的，结果条目和人设的结尾被砍掉——结尾往往正是禁忌和二次解释）
   var expPool = await wbContent('体验池', '');
-  if (expPool) ordered.push({ role: 'system', content: '【体验池（邀约场合从这里挑或仿，别只会约吃饭）】\n' + String(expPool).slice(0, 3000) });
+  if (expPool) ordered.push({ role: 'system', content: '【体验池（邀约场合从这里挑或仿，别只会约吃饭）】\n' + String(expPool) });
 
   // 📥 旧识联系人（玩家从别的故事导入的角色）：声音卡永远跟车防串腔，完整档案只在TA被点名时上（省token）。
   // TA们不在 PERSISTENT_CANONICAL 里，所以陌生人专场的代码闸不会滤掉TA——玩家亲手请来的人，专场照常在场。
@@ -806,34 +1286,20 @@ async function generateOnce(sb, plot, n, reason, strict) {
     var impLines = [];
     for (var ipv = 0; ipv < importedList.length; ipv++) {
       var ipn = importedList[ipv];
-      if (ipn.voice) impLines.push('· ' + ipn.name + (ipn.archetype ? '(' + ipn.archetype + ')' : '') + '：' + String(ipn.voice).slice(0, 400));
+      if (ipn.voice) impLines.push('· ' + ipn.name + (ipn.archetype ? '(' + ipn.archetype + ')' : '') + '：' + String(ipn.voice));
     }
     if (impLines.length) ordered.push({ role: 'system', content:
       '【旧识联系人】这些人是玩家亲手从别的故事请进通讯录的，不属于随机素材库，陌生人专场也照常在场。每人必须用自己的腔调，绝不混淆：\n' + impLines.join('\n') });
   }
 
-  // 私享版闺蜜群：reason 点名了群 → 挂群聊规则 + 两位成员的档案（S. 和 Akuma 都上车）
-  var groupMode = IS_PERSONAL && !!reason && reason.indexOf(GROUP_NAME) !== -1;
-  if (groupMode) {
-    ordered.push({ role: 'system', content:
-      '【群聊模式 · ' + GROUP_NAME + '】这是 User、管家S.(SugarElite™)、闺蜜Akuma 的三人小群。规则：\n' +
-      '- 输出行的名字一律写群名：' + GROUP_NAME + '|text|说话人：内容 —— 内容开头必须标「S.：」或「Akuma：」，一行只一个人说一句\n' +
-      '- 两人性格照旧不掺水：S. 专业干燥毒舌克制绝不用emoji，Akuma 茶里茶气emoji狂魔——他们互相看不顺眼又莫名有默契：Akuma 嫌 S.「管家腔装什么装🙄」，S. 嫌 Akuma 不专业但会默默采纳她的情报再包装成自己的\n' +
-      '- 互怼要好笑：抢着给 User 出主意、顺手拆对方的台；意见相左时各自坚持，让 User 当裁判\n' +
-      '- 每轮 2-5 行，你来我往有节奏；群里聊的内容两人都看得到（这个群是唯一例外），但各自和 User 的私聊内容不会在群里主动泄露\n' +
-      '- 群消息也走 §翻译规则（基本都是中文，§后留空）' });
-    var dsA = await wbContent(NPC_WB_KEY['Akuma'], '');
-    if (dsA) ordered.push({ role: 'system', content: '【Akuma 的完整档案】\n' + String(dsA).slice(0, 3000) });
-    var dsS = await wbContent(NPC_WB_KEY['SugarElite™'], '');
-    if (dsS) ordered.push({ role: 'system', content: '【S.(SugarElite™) 的完整档案】\n' + String(dsS).slice(0, 3000) });
-  }
   // 正在私聊某个固定NPC → 拉他的完整世界书档案上车（只带这一个人，回信人设密度=主线同级）
-  else if (reason) {
+  // （群聊不走这条路：群有自己的管道 generateGroupOnce，一人一条独立 system）
+  if (reason) {
     var fixedMatched = false;
     for (var fk in NPC_WB_KEY) {
       if (NPC_WB_KEY.hasOwnProperty(fk) && reason.indexOf(fk) !== -1) {
         var dossier = await wbContent(NPC_WB_KEY[fk], '');
-        if (dossier) ordered.push({ role: 'system', content: '【' + fk + ' 的完整档案（他的回信必须贴合这份人设）】\n' + String(dossier).slice(0, 4000) });
+        if (dossier) ordered.push({ role: 'system', content: '【' + fk + ' 的完整档案（他的回信必须贴合这份人设）】\n' + String(dossier) });
         fixedMatched = true;
         break;
       }
@@ -844,8 +1310,8 @@ async function generateOnce(sb, plot, n, reason, strict) {
         if (reason.indexOf(importedList[mi].name) === -1) continue;
         var mn = importedList[mi];
         if (mn.dossier) ordered.push({ role: 'system', content:
-          '【' + mn.name + ' 的完整档案（TA的回信必须贴合这份人设）】\n' + String(mn.dossier).slice(0, 4000) +
-          (mn.dm_style ? '\n【TA的私信习惯】' + String(mn.dm_style).slice(0, 300) : '') });
+          '【' + mn.name + ' 的完整档案（TA的回信必须贴合这份人设）】\n' + String(mn.dossier) +
+          (mn.dm_style ? '\n【TA的私信习惯】' + String(mn.dm_style) : '') });
         break;
       }
     }
@@ -877,6 +1343,7 @@ async function generateOnce(sb, plot, n, reason, strict) {
   for (var wk in npcsW) {
     if (!npcsW.hasOwnProperty(wk)) continue;
     var wn = npcsW[wk]; var wh = wn.dm_history || [];
+    if (wn.isGroup) continue;   // 👥 群不是一个会"干等回复"的人，别把群名写进禁言名单
     // L. 本来就永远单方面；S. 的管家推送是付费服务，不算追发骚扰——都不进等待名单
     if (wh.length && wh[wh.length - 1].sender === 'THEM' && wn.name !== 'L.' && wn.name !== 'SugarElite™') waiting.push(wn.name);
   }
@@ -886,9 +1353,15 @@ async function generateOnce(sb, plot, n, reason, strict) {
 
   // 冷处理名单（User 删过记录=焚毁信件/已读不回到底）：硬性禁发，L. 也不例外
   var mutedList = [];
-  for (var mk in npcsW) { if (npcsW.hasOwnProperty(mk) && npcsW[mk].muted) mutedList.push(npcsW[mk].name); }
+  for (var mk in npcsW) { if (npcsW.hasOwnProperty(mk) && npcsW[mk].muted && !npcsW[mk].isGroup) mutedList.push(npcsW[mk].name); }
   var mutedHint = mutedList.length
     ? '【被User冷处理，绝对禁止发消息（任何人都不例外，包括L.）：' + mutedList.join('、') + '】'
+    : '';
+  // ⛔ 拉黑名单（TA 主动关的门）：不发消息也收不到 User 的话；只有最近剧情里明确和好了才许先发 unblock 再开口
+  var blockedList = [];
+  for (var bk in npcsW) { if (npcsW.hasOwnProperty(bk) && npcsW[bk].blocked && !npcsW[bk].isGroup) blockedList.push(npcsW[bk].name); }   // 👥 拉黑对群没有意义
+  var blockedHint = blockedList.length
+    ? '【已把 User 拉黑的人：' + blockedList.join('、') + '】他们不发消息、也看不到 User 发的任何东西；除非最近剧情里两人明确和好，才可以先输出一行 名字|unblock| 再说话，否则本轮别出现。'
     : '';
 
   // 管家解读（订阅后）：别人私信里的黑话/头衔/场所，S. 紧跟一条解码——寓教于乐的核心管道
@@ -905,7 +1378,7 @@ async function generateOnce(sb, plot, n, reason, strict) {
       ? '只生成 1 个全新陌生金主的开场：先输出他的 名字|tag|标签 行，紧接着 1-2 行他主动发来的私信（换着花样来别撞原型，他还不认识 User、只是被她某个侧面吸引搭讪）。绝不让任何已有联系人出现、绝不续接任何已有对话、绝不替 User 说话。每条一行 名字|类型|内容，不要写别的。'
       : '最好有1条来自全新的陌生金主（换着花样来，别撞原型），给 User 新的人可挑；其余可以是已认识且不在等待名单里的人。每条一行 名字|类型|内容，不要写别的。';
   var instr = '现在生成 ' + (n || '2-4') + ' 条新私信' +
-    (reason ? '（情境：' + reason + '）' : '') + '。' + stageHint + waitHint + mutedHint + seHint + refreshHint + tail;
+    (reason ? '（情境：' + reason + '）' : '') + '。' + stageHint + waitHint + mutedHint + blockedHint + seHint + refreshHint + tail;
   if (strict) instr = '【再次强调：只能输出 名字|类型|内容 的行，每条一行，不许有任何其他文字】\n' + instr;
 
   var raw = null;
@@ -929,16 +1402,25 @@ async function generateOnce(sb, plot, n, reason, strict) {
     });
   }
   _lastRaw = typeof raw === 'string' ? raw : (raw && raw.content) || '';
-  var parsed = parseDMs(_lastRaw);
+  var parsed = parseDMs(_lastRaw, groupCtxOf(sb));
   if (RANDOM_ONLY) {
     // 代码级铁闸：提示词再怎么漏（素材库彩蛋名/论坛规格/模型记性），固定NPC的行也进不了通讯录
     parsed = parsed.filter(function (r) {
+      if (r.group) return true;                                          // 👥 群行放行：说话人白名单那道闸已经够严
       if (r.name === 'SugarElite™' || r.name === 'Akuma') return true;   // 专场白名单：S.是订阅服务，Akuma是陪跑军师
-      if (PERSISTENT_CANONICAL.indexOf(r.name) !== -1 || r.name === GROUP_NAME) return false;
+      if (PERSISTENT_CANONICAL.indexOf(r.name) !== -1) return false;
       return !/(trent|marco\s*rossi|pemberton|hudson\s*park|marlowe|father\s*dan|上夜班)/i.test(r.name);
     });
   }
   return parsed;
+}
+// 普通私信轮也带上群的上下文：模型偶尔会顺手写一行群消息，认出来总比让它长成一个"名叫🎭…的联系人"强
+function groupCtxOf(sb) {
+  var keys = groupKeys(sb);
+  if (!keys.length) return null;
+  var ctx = {};
+  for (var i = 0; i < keys.length; i++) ctx[keys[i]] = { names: groupSpeakers(sb, sb.npcs[keys[i]]), anon: !!sb.npcs[keys[i]].anon };
+  return ctx;
 }
 var _lastRaw = '';   // 最后一次生成的原始输出，解析失败时打进控制台，别再盲修
 
@@ -982,29 +1464,157 @@ async function applyMoodSongs(songs) {
   } catch (e) { console.warn('[SB-NYC v4] mood song apply failed', e); }
 }
 
+// ── 👥 匿名群里冒出来的人 → 私信线程（零额外API，和评论区建档同一条路） ──
+// bio 一律整段给（铁律：喂模型的档案不做 slice 截断）——TA 记得群里聊过什么，全靠这段。
+function anonDmBio(g, handle, r) {
+  var mine = [], theirs = [];
+  var h = (g && g.dm_history) || [];
+  for (var i = h.length - 1; i >= 0; i--) {
+    if (theirs.length >= 6 && mine.length >= 6) break;
+    var m = h[i] || {};
+    if (m.type === 'system' || m.type === 'dossier') continue;
+    if (m.sender === 'USER') { if (mine.length < 6) mine.unshift(String(m.content || '')); }
+    else if (m.who === handle && theirs.length < 6) theirs.unshift(String(m.content || ''));
+  }
+  return 'TA 是匿名群「' + g.name + '」里的「' + handle + '」。' +
+    (r && r.secret ? '底细：' + String(r.secret) + '。' : '') +
+    (theirs.length ? 'TA 在群里最近说过：' + theirs.join('｜') + '。' : '') +
+    'User 在群里的代号是「' + (g.myHandle || '匿名') + '」' + (mine.length ? '，最近说过：' + mine.join('｜') : '') + '。' +
+    '现在 TA 私下加了 User——不再匿名，TA 记得群里聊过什么，语气接着群里往下演。';
+}
+function openAnonDm(sb, gKey, handle, firstLine, zh) {
+  var g = sb.npcs && sb.npcs[gKey];
+  var r = g && g.roster && g.roster[handle];
+  if (!r || !r.real) { console.warn('[SB-NYC v4] 这个代号还没露过底，dm 行丢弃：' + handle); return ''; }
+  var real = String(r.real).replace(/[|§\r\n]/g, '').trim().slice(0, 24);
+  if (!real) return '';
+  var npc = ensureNpc(sb, real);
+  if (!npc.bio) npc.bio = anonDmBio(g, handle, r);
+  if (!npc.archetype) npc.archetype = '匿名群·私下加的';
+  if (!npc._fromAnon) {   // 线程首条灰行：玩家隔几天回来也看得出这人是从哪冒出来的
+    npc._fromAnon = gKey;
+    npc.dm_history.push({ sender: 'THEM', time: nowTime(), ts: Date.now(), type: 'system',
+      content: '（来自匿名群「' + gKey + '」· TA 在群里叫「' + handle + '」）', note: '', zh: '', gameDay: (sb.game && sb.game.day) || 1 });
+  }
+  if (firstLine) pushThem(sb, real, 'text', firstLine, zh || '');
+  r.revealed = true;
+  return real;
+}
+// 匿名群的人来人往：每轮小概率补一个新代号；活跃上限满了退掉最久没说话、还没和 User 私聊过的那个
+function anonChurn(sb, g) {
+  if (Math.random() < ANON_JOIN_CHANCE) {
+    var pool = [];
+    for (var i = 0; i < ANON_HANDLES.length; i++) {
+      if (g.members.indexOf(ANON_HANDLES[i]) === -1 && ANON_HANDLES[i] !== g.myHandle) pool.push(ANON_HANDLES[i]);
+    }
+    if (pool.length) {
+      var nh = pool[Math.floor(Math.random() * pool.length)];
+      g.members.push(nh);
+      g.roster[nh] = { real: '', secret: '', joined: Date.now(), last: 0, revealed: false };
+      pushThem(sb, g.name, 'system', nh + ' 加入了群聊', '');
+    }
+  }
+  while (g.members.length > ANON_MAX_MEMBERS) {
+    var victim = -1, oldest = Infinity;
+    for (var j = 0; j < g.members.length; j++) {
+      var rr = g.roster[g.members[j]] || {};
+      if (rr.revealed) continue;                       // 已经私聊过的不赶走（那是玩家的人了）
+      var t = rr.last || rr.joined || 0;
+      if (t < oldest) { oldest = t; victim = j; }
+    }
+    if (victim < 0) break;
+    var gone = g.members.splice(victim, 1)[0];
+    pushThem(sb, g.name, 'system', gone + ' 退出了群聊', '');
+  }
+}
+// 一轮群消息落账：who 进花名册 / leave 踢人 / dm 开私信线程 / 其余进群记录。返回被私下加的人名（没有就空串）
+function landGroupRows(sb, gKey, rows) {
+  var g = sb.npcs && sb.npcs[gKey];
+  if (!g) return '';
+  if (!Array.isArray(g.members)) g.members = [];
+  if (!g.roster) g.roster = {};
+  var dmName = '';
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var who = r.who || '';
+    if (r.type === 'who') {
+      if (!g.anon || !who) continue;
+      var ex = g.roster[who];
+      if (ex && ex.real) continue;                     // 定过一次就不再改（不然同一个代号下一轮换了个人）
+      var bits = String(r.content || '').split(/[；;]/);
+      g.roster[who] = {
+        real: String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24),
+        secret: bits.slice(1).join('；').trim(),
+        joined: (ex && ex.joined) || Date.now(), last: Date.now(), revealed: false,
+      };
+      continue;
+    }
+    if (r.type === 'leave') {
+      if (g.anon || !who) continue;
+      var li = g.members.indexOf(who);
+      if (li === -1) continue;
+      g.members.splice(li, 1);
+      pushThem(sb, gKey, 'system', who + ' 退出了群聊', '');
+      continue;
+    }
+    if (r.type === 'dm') {
+      if (!g.anon || !who) continue;
+      dmName = openAnonDm(sb, gKey, who, r.content, r.zh) || dmName;
+      continue;
+    }
+    pushThem(sb, gKey, r.type, r.content, r.zh, 0, who);
+    if (g.roster[who]) g.roster[who].last = Date.now();
+  }
+  g._rounds = (g._rounds || 0) + 1;
+  if (dmName) g._lastDm = g._rounds;
+  if (g.anon) anonChurn(sb, g);
+  return dmName;
+}
+
 async function runOnce(req) {
   var vars = getVariables({ type: 'chat' });
   var sb = (vars && vars.sb) ? vars.sb : null;
   if (!sb) { notifyFail('手机还没有数据：先填开场表单并提交'); return; }
 
   var plot = await recentPlot();
-  var all = await generateOnce(sb, plot, req.n, req.reason, false);
-  var songs = [], dms = [], tags = [], scheds = [];
+  var isGroupReq = !!req.group;
+  var gKeyReq = isGroupReq ? resolveGroupKey(sb, req.group) : null;
+  if (isGroupReq && !gKeyReq) { notifyFail('群聊「' + req.group + '」不在通讯录里了'); return; }
+  // 👥 群请求里放行的「群里不方便说，转头私聊」：只收本群成员、没拉黑 User 的聊天类私信，每轮最多两条
+  var SIDE_DM_MAX = 2;
+  var sideOk = {};
+  if (isGroupReq && !sb.npcs[gKeyReq].anon) {
+    var gm0 = groupSpeakers(sb, sb.npcs[gKeyReq]);
+    for (var sk = 0; sk < gm0.length; sk++) sideOk[gm0[sk]] = 1;
+  }
+  var all = await generateOnce(sb, plot, req.n, req.reason, false, req.group);
+  var songs = [], dms = [], tags = [], scheds = [], blocks = [], grows = [], sideN = 0;
   function route(arr) {
     for (var i = 0; i < arr.length; i++) {
-      if (arr[i].type === 'song') songs.push(arr[i].content);
-      else if (arr[i].type === 'tag') tags.push({ name: arr[i].name, label: String(arr[i].content).slice(0, 12) });
-      else if (arr[i].type === 'sched') scheds.push(String(arr[i].content).slice(0, 60));   // 周X / HH:MM / 地点 / 和谁 的四段式比老格式长
-      else dms.push(arr[i]);
+      var r = arr[i];
+      if (isGroupReq) {
+        // 群轮里只认这个群的行；别的群/别人的私信一概不收（合批＝串号，这是同一条理由的代码版）
+        if (r.group === gKeyReq) { grows.push(r); continue; }
+        if (r.group) continue;
+        var sideType = /^(text|voice|sticker|image)$/.test(r.type);
+        if (sideOk[r.name] && sideType && sideN < SIDE_DM_MAX) { dms.push(r); sideN++; continue; }
+        continue;
+      }
+      if (r.group) { console.warn('[SB-NYC v4] 普通私信轮里冒出群行，丢弃（群有自己的生成管道）：' + r.group); continue; }
+      if (r.type === 'song') songs.push(r.content);
+      else if (r.type === 'block' || r.type === 'unblock') blocks.push(r);   // ⛔ 拉黑/解除：单独走，不当私信
+      else if (r.type === 'tag') tags.push({ name: r.name, label: String(r.content).slice(0, 12) });
+      else if (r.type === 'sched') scheds.push(String(r.content).slice(0, 60));   // 周X / HH:MM / 地点 / 和谁 的四段式比老格式长
+      else dms.push(r);
     }
   }
   route(all);
-  if (!dms.length) {
-    all = await generateOnce(sb, plot, req.n, req.reason, true);                  // 重试一次（玩家看不到）
+  if (!dms.length && !blocks.length && !grows.length) {
+    all = await generateOnce(sb, plot, req.n, req.reason, true, req.group);       // 重试一次（玩家看不到）
     route(all);
   }
   // 批量发补漏：点名的人里有没回的 → 为漏掉的人再补一次（防一次生成只回前两个）
-  if (Array.isArray(req.focus) && req.focus.length) {
+  if (!isGroupReq && Array.isArray(req.focus) && req.focus.length) {
     var replied = {};
     for (var ri = 0; ri < dms.length; ri++) replied[normalizeName(dms[ri].name)] = true;
     var missing = req.focus.filter(function (nm) { return !replied[normalizeName(nm)]; });
@@ -1014,25 +1624,41 @@ async function runOnce(req) {
       var more = await generateOnce(sb, plot, missing.length + '-' + (missing.length * 2), mReason, false);
       for (var mi = 0; mi < more.length; mi++) {
         if (more[mi].type === 'song') songs.push(more[mi].content);
-        else if (more[mi].type === 'tag' || more[mi].type === 'sched') { /* 补漏轮忽略标签/行程 */ }
+        else if (more[mi].type === 'tag' || more[mi].type === 'sched' || more[mi].type === 'block' || more[mi].type === 'unblock') { /* 补漏轮忽略标签/行程/拉黑 */ }
         else if (missing.indexOf(normalizeName(more[mi].name)) !== -1 || missing.indexOf(more[mi].name) !== -1) dms.push(more[mi]);
       }
     }
   }
   if (songs.length) await applyMoodSongs(songs);                                  // 歌先入库（就算私信失败歌也算数）
-  if (!dms.length) {
-    notifyFail('私信生成失败：两次输出都解析不出格式（原始输出已打进控制台F12）');
+  if (!dms.length && !blocks.length && !grows.length) {
+    notifyFail(isGroupReq ? '群里这一轮没说出话：两次输出都解析不出格式（原始输出已打进控制台F12）' : '私信生成失败：两次输出都解析不出格式（原始输出已打进控制台F12）');
     console.warn('[SB-NYC v4] 解析失败的原始输出（后600字）:', _lastRaw ? _lastRaw.slice(-600) : '(空——多半是主API限额撞车/429，换独立API或稍等)');
     return;
   }
 
+  var anonDmName = '';   // 这一轮有人从匿名群里私下加了 User → 落账后开 TA 的私信线程
   await updateVariablesWith(function (v) {
     if (!v.sb) v.sb = defaultState();
+    if (grows.length) anonDmName = landGroupRows(v.sb, gKeyReq, grows);
+    // ⛔ 拉黑/解除先落账，再发这一批私信——同一批里 unblock 之后的话才发得出去；只对已在通讯录的人生效（陌生人没资格拉黑）
+    for (var bi = 0; bi < blocks.length; bi++) {
+      var bn = v.sb.npcs && v.sb.npcs[blocks[bi].name];
+      if (!bn) continue;
+      if (blocks[bi].type === 'block') {
+        if (bn.blocked) continue;
+        bn.blocked = true; bn.blocked_at = nowTime();
+        pushThem(v.sb, bn.name, 'system', '⛔ ' + bn.name + ' 把你拉黑了' + (blocks[bi].content ? '：' + String(blocks[bi].content).slice(0, 80) : ''), '');
+      } else {
+        if (!bn.blocked) continue;
+        bn.blocked = false;
+        pushThem(v.sb, bn.name, 'system', bn.name + ' 解除了拉黑', '');
+      }
+    }
     for (var i = 0; i < dms.length; i++) {
-      // 冷处理硬闸：LLM 没听话也拦下（被删过的人发不进来，直到 User 主动再发消息给TA）
+      // 冷处理硬闸：LLM 没听话也拦下（被删过的人发不进来，直到 User 主动再发消息给TA）；拉黑了 User 的人同样闭嘴（提示词管不住这里管）
       var exN = v.sb.npcs && v.sb.npcs[dms[i].name];
-      if (exN && exN.muted) continue;
-      pushThem(v.sb, dms[i].name, dms[i].type, dms[i].content, dms[i].zh);
+      if (exN && (exN.muted || exN.blocked)) continue;
+      pushThem(v.sb, dms[i].name, dms[i].type, dms[i].content, dms[i].zh, dms[i].delay);
     }
     // 中文属性标签：陌生人用生成器现配的，固定NPC补内置的（老存档里没有标签的也顺手补上）
     for (var ti = 0; ti < tags.length; ti++) {
@@ -1056,12 +1682,24 @@ async function runOnce(req) {
   }, { type: 'chat' });
 
   try { eventEmit('sb_updated'); } catch (e) {}
-  try { if (typeof toastr !== 'undefined') toastr.success('📱 新私信 +' + dms.length, 'SugarOS'); } catch (e) {}
-  console.log('[SB-NYC v4] generated ' + dms.length + ' DMs');
+  try {
+    // 🔕 免打扰的群：消息照进照存，只是一声不吭（toast/震动/角标全不走）
+    var quiet = isGroupReq && !!(sb.npcs[gKeyReq] && sb.npcs[gKeyReq].dnd);
+    if (typeof toastr !== 'undefined' && !quiet) {
+      if (isGroupReq) toastr.success('💬 群里 +' + grows.length + ' 条' + (sideN ? '（另有 ' + sideN + ' 条私下发给你的）' : ''), 'SugarOS');
+      else toastr.success('📱 新私信 +' + dms.length, 'SugarOS');
+    }
+  } catch (e) {}
+  console.log('[SB-NYC v4] generated ' + (isGroupReq ? (grows.length + ' group rows + ' + sideN + ' side DMs') : (dms.length + ' DMs')));
+  if (anonDmName) {
+    try { if (typeof toastr !== 'undefined') toastr.info('💌 群里有人私下加了你：' + anonDmName, 'SugarOS'); } catch (e) {}
+    console.log('[SB-NYC v4] anon group DM → ' + anonDmName);
+  }
 
   // 追加这一轮手机往来（User发的+对方回的）到最新楼层：默认关，玩家在手机设置里可开。
   // 关着时主线照样通过 syncInject 隐形注入知道手机内容，只是不在正文里显示出来。
-  if (floorLogOn()) { try { await appendPhoneLog(dms); } catch (e) { console.warn('[SB-NYC v4] append phone log failed', e); } }
+  var logRows = dms.concat(grows.length ? [{ name: gKeyReq }] : []);
+  if (floorLogOn()) { try { await appendPhoneLog(logRows); } catch (e) { console.warn('[SB-NYC v4] append phone log failed', e); } }
 }
 
 // ── 「手机动态」专属楼层：手机上发生的一切（私信往来/消费/卖二手/付账单）都更新进同一层，
@@ -1134,12 +1772,14 @@ function bubSafe(s) {
     .replace(/[\r\n]+/g, ' / ');     // 一条消息占一行，内部换行压成分隔符
 }
 function bubName(s) { return bubSafe(s).replace(/:/g, '：'); }               // 名字里的半角冒号会撞上 `名字: 内容` 的分隔符
-function bubKey(who, text) { return bubName(who) + ' ' + bubSafe(text).substring(0, 120); }
+function bubKey(who, text) { return bubName(who) + ' ' + bubSafe(text).substring(0, 120); }
+// 誊抄本的段落标题：私信一种、👥 群一种（sb_scrub_floor 擦楼层时两种都要认）
+function floorTitleOf(name, isGroup) { return isGroup ? ('群聊「' + name + '」') : ('与 ' + name + ' 的私信'); }
 function bubBlock(groups) {
   var out = [];
   for (var i = 0; i < groups.length; i++) {
     var g = groups[i];
-    out.push('#' + bubSafe(g.time) + ' · 与 ' + bubSafe(g.name) + ' 的私信');   // # 开头 = 时间分割线
+    out.push('#' + bubSafe(g.time) + ' · ' + floorTitleOf(bubSafe(g.name), g.isGroup));   // # 开头 = 时间分割线
     for (var j = 0; j < g.rows.length; j++) {
       var r = g.rows[j];
       if (!r.who) { out.push('· ' + bubSafe(r.text)); continue; }             // · 开头 = 系统行（撤回/从略）
@@ -1254,7 +1894,7 @@ async function syncBubblesFromFloors() {
           var e = n.dm_history[k] || {};
           // 只碰最近两代落过气泡的；撤回存根永远留着（它在气泡里长的是另一副样子，比不上）
           if (e._bub && e._bub >= gen - 1 && e.type !== 'recall') {
-            var who = e.sender === 'USER' ? 'User' : nm;
+            var who = e.sender === 'USER' ? 'User' : (n.isGroup ? (e.who || nm) : nm);   // 👥 群里比的是真说话人
             if (!alive[bubKey(who, fmtDmLine(e.type, e.content))]) { removed++; continue; }
           }
           kept.push(n.dm_history[k]);
@@ -1300,14 +1940,17 @@ function scrubBubbleBlocks(txt, needle) {
 // 水位线归零 → 她下次回复时按修正后的记录整段重新誊入。AI 的"楼层记忆"从此可被改写。
 async function scrubNpcFloor(name) {
   try {
-    var needle = '与 ' + escHtml(name) + ' 的私信';
+    // 私信段和群段两种标题都要认（删的是哪种，看通讯录里那条是不是群）
+    var isG = false;
+    try { var v0 = getVariables({ type: 'chat' }); isG = !!(v0 && v0.sb && v0.sb.npcs && v0.sb.npcs[name] && v0.sb.npcs[name].isGroup); } catch (e0) {}
+    var needle = floorTitleOf(escHtml(name), isG);
     var lastId = await getLastMessageId();
     if (lastId != null && lastId >= 0) {
       var from = Math.max(0, lastId - 40);
       var msgs = await getChatMessages(from + '-' + lastId);
       var updates = [];
       var re = /(<details data-sb(?:phone|tail)><summary>[^<]*<\/summary><div>)([\s\S]*?)(<\/div><\/details>)/g;
-      var bubNeedle = '与 ' + name + ' 的私信';            // 气泡块是纯文本，不转义
+      var bubNeedle = floorTitleOf(name, isG);            // 气泡块是纯文本，不转义
       for (var i = 0; i < (msgs || []).length; i++) {
         var m = msgs[i];
         var txt = String(m.message || '');
@@ -1359,6 +2002,7 @@ async function appendPhoneLog(dms) {
     var npcs = (vv && vv.sb && vv.sb.npcs) || {};
     for (var nm in names) {
       if (!names.hasOwnProperty(nm) || !npcs[nm]) continue;
+      var isGrp = !!npcs[nm].isGroup;
       var h = npcs[nm].dm_history || [];
       var mark = npcs[nm]._floorMark || 0;
       if (mark > h.length) mark = 0;                              // 记录被删过/重置过 → 水位线归零
@@ -1375,19 +2019,28 @@ async function appendPhoneLog(dms) {
       for (var j = 0; j < seg.length; j++) {
         var m = seg[j];
         if (m.type === 'dossier') continue;   // 档案卡不落正文（它是手机界面上的卷宗，不是他俩说的话）
+        if (m.pending) continue;              // ⏳ 还没送达的不誊（水位线会越过它——送达后不补誊，回灌摘要会带）
         // 撤回的内容双向都不落楼层——楼层玩家看得见，撤回就要真"看不见"
         if (m.type === 'recall') {
           segLines.push((m.sender === 'USER' ? 'User' : nm) + '（撤回了一条消息）');
           rows.push({ who: '', text: (m.sender === 'USER' ? 'User' : nm) + ' 撤回了一条消息' });
           continue;
         }
-        var body = String(fmtDmLine(m.type, m.content)).substring(0, 4000);
-        segLines.push((m.sender === 'USER' ? 'User' : nm) + '：' + body);
-        rows.push({ who: m.sender === 'USER' ? 'User' : nm, text: body });
+        // 系统行（谁进群/谁退群/S. 把你拉进来/⛔ 被拉黑）不是"某人说的话"：当旁白誊。
+        // 不这么分，群里的系统行会被写成「群名：[system] 你回到了这个大厅…」——楼层里像 bug（浏览器实测）
+        if (m.type === 'system') {
+          segLines.push('（' + String(m.content || '') + '）');
+          rows.push({ who: '', text: String(m.content || '') });
+          continue;
+        }
+        var body = String(fmtDmLine(m.type, m.content));   // 整条誊进楼层（2026-09-16 拔掉 4000 字截断；气泡反向同步只比前 120 字的 bubKey，不受影响）
+        var whoName = m.sender === 'USER' ? 'User' : (isGrp ? (m.who || nm) : nm);   // 👥 群里誊的是真说话人
+        segLines.push(whoName + '：' + body);
+        rows.push({ who: whoName, text: body });
       }
       if (!segLines.length) continue;
-      lines.push('📩〔' + nowTime() + '〕与 ' + nm + ' 的私信：' + segLines.join(' ⇢ '));
-      groups.push({ name: nm, time: nowTime(), rows: rows, from: segStart, to: h.length });
+      lines.push((isGrp ? '💬〔' : '📩〔') + nowTime() + '〕' + floorTitleOf(nm, isGrp) + '：' + segLines.join(' ⇢ '));
+      groups.push({ name: nm, time: nowTime(), rows: rows, from: segStart, to: h.length, isGroup: isGrp });
       marks[nm] = h.length;
     }
   } catch (e) {}
@@ -1415,7 +2068,13 @@ async function handleRequest(payload) {
     for (;;) {
       while (_pending.length) {
         var batch = _pending.splice(0, _pending.length);   // 取走全部排队请求，合并成一次生成
-        await runOnce(mergeRequests(batch));
+        // 👥 带 group 的请求永不合批：群有自己的成员名单和格式，和私信混进一次生成＝串号
+        var gReqs = [], soloReqs = [];
+        for (var bi = 0; bi < batch.length; bi++) {
+          if (batch[bi] && batch[bi].group) gReqs.push(batch[bi]); else soloReqs.push(batch[bi]);
+        }
+        for (var gi = 0; gi < gReqs.length; gi++) await runOnce(gReqs[gi]);
+        if (soloReqs.length) await runOnce(mergeRequests(soloReqs));
       }
       // 会刊自动补货已拔除（发卡日玩家实锤：任何私信生成完都会偷偷烤整刊，API账单上一堆没发起过的大请求）
       // 现在只有两个入口烤刊，全部玩家主动：论坛/Elite 页点 🔄，或首次打开时内容为空（sb_request_mag）
@@ -1450,15 +2109,24 @@ function buildDigest(sb) {
     var recent = h.slice(-take);
     used += recent.length;
     // 隐私框架：标明这段私信只有当事人知道，防止 NPC-A 莫名知道 User 和 NPC-B 的私聊
-    var lines = ['· 与 ' + npc.name + ' 的私信（最近' + recent.length + '条）— 仅 ' + npc.name + ' 与 User 知晓，其他角色不知情：'];
+    // 👥 群另说：群里的话群成员全看得到；匿名群里 User 只是个代号，谁也不知道那是她
+    var lines;
+    if (npc.isGroup) {
+      lines = [npc.anon
+        ? '· 匿名群「' + npc.name + '」（最近' + recent.length + '条）— User 在里面的代号是「' + (npc.myHandle || '匿名') + '」，群里没人知道那是她：'
+        : '· 群聊「' + npc.name + '」（成员 ' + ((npc.members || []).join('、') || '（还没人）') + ' 都看得到）最近' + recent.length + '条：'];
+    } else {
+      lines = ['· 与 ' + npc.name + ' 的私信（最近' + recent.length + '条）— 仅 ' + npc.name + ' 与 User 知晓，其他角色不知情：'];
+    }
     for (var i = 0; i < recent.length; i++) {
       var m = recent[i];
-      var who = m.sender === 'USER' ? 'User' : npc.name;
+      var who = m.sender === 'USER' ? (npc.isGroup && npc.anon ? (npc.myHandle || 'User') : 'User') : (npc.isGroup ? (m.who || '群成员') : npc.name);
       if (m.type === 'dossier') continue;   // 档案卡不进注入（同 describeState）
+      if (m.pending) continue;              // ⏳ 还在路上的回复主线也不许先知道（不然正文先剧透"他回你了"）
       // User 撤回的消息：对方（和正文）永远看不到内容，只知道她撤回过——好奇/追问按人设
       if (m.type === 'recall' && m.sender === 'USER') { lines.push('   User: （发了一条消息又撤回了——' + npc.name + ' 看不到内容，只知道她撤回过）'); continue; }
       var tag = (m.type && m.type !== 'text') ? '[' + m.type + ']' : '';
-      lines.push('   ' + who + tag + ': ' + String(m.content || '').substring(0, 400));
+      lines.push('   ' + who + tag + ': ' + String(m.content || ''));   // 条数走预算，字数不截（2026-09-16 拔掉 400 字截断：主线读到半封信会当 TA 只写了半封）
     }
     blocks.push(lines.join('\n'));
   }
@@ -1479,10 +2147,10 @@ function buildDigest(sb) {
   if (schD.length) {
     out += '【User 的行程备忘（已敲定的安排，正文时间线要尊重，别写出撞期）】' + schD.join('；') + '\n';
   }
-  // User 的论坛吐槽帖注入正文：圈内是个小世界，她公开发的牢骚会长脚
+  // User 的论坛吐槽帖注入正文：圈内是个小世界，她公开发的牢骚会长脚（帖子原文整段注入，2026-09-16 拔掉 200 字截断）
   var myPostsB = (sb.myPosts || []).slice(-3);
   if (myPostsB.length) {
-    out += '【User 用马甲在 SugarRank 论坛发过的帖子（圈内公开可见）】' + myPostsB.map(function (p) { return '「' + String(p.text || '').substring(0, 200) + '」'; }).join('；') + '\n' +
+    out += '【User 用马甲在 SugarRank 论坛发过的帖子（圈内公开可见）】' + myPostsB.map(function (p) { return '「' + String(p.text || '') + '」'; }).join('；') + '\n' +
       '（正文人物可能刷到过这些帖子：可以隐约呼应"论坛上有人吐槽…"，被吐槽的本人可能对号入座、心虚或炸毛——但没有人能确定是 User 发的，除非她自己认。绝不写成人人都知道是她。）\n';
   }
   // 江湖地位：Akuma 刷论坛 → 榜单是她唯一能名正言顺"看到" User 身家的窗口（信息通路）
@@ -1560,11 +2228,79 @@ function closetRemove(sb, name) {
     if (String(sb.closet[i].name).toLowerCase().indexOf(key) !== -1 || key.indexOf(String(sb.closet[i].name).toLowerCase()) !== -1) { sb.closet.splice(i, 1); return; }
   }
 }
+// ══════════════════════════════════════════════════════════════════════
+// 🎭 匿名群解锁：正文聊满 ANON_UNLOCK_FLOORS 楼，管家把 User 拉进平台的匿名大厅
+// ══════════════════════════════════════════════════════════════════════
+// 只炸一次（_anonInvited 是持久旗标）；老存档早就超 50 楼的，下一条正文出来时照常触发。
+// 群先在本地建好（脚本抽代号，零API），再去求一条"邀请人的私信"——那一条生成失败也不影响群已经在了。
+function pickHandles(k, exclude) {
+  var pool = [];
+  for (var i = 0; i < ANON_HANDLES.length; i++) { if (!exclude || exclude.indexOf(ANON_HANDLES[i]) === -1) pool.push(ANON_HANDLES[i]); }
+  for (var j = pool.length - 1; j > 0; j--) { var r = Math.floor(Math.random() * (j + 1)); var t = pool[j]; pool[j] = pool[r]; pool[r] = t; }
+  return pool.slice(0, k);
+}
+async function maybeUnlockAnonGroup() {
+  var vars = getVariables({ type: 'chat' });
+  var sb = vars && vars.sb;
+  if (!sb || sb._anonInvited) return;
+  if (!sb.npcs || !Object.keys(sb.npcs).length) return;        // 手机还没起来（开场表单还没交）就先不拉人
+  var floors = 0;
+  try {
+    var ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
+    floors = (ctx && Array.isArray(ctx.chat)) ? ctx.chat.length : 0;
+  } catch (e) { return; }
+  if (floors < ANON_UNLOCK_FLOORS) return;
+  var picks = pickHandles(ANON_START_MEMBERS + 1);
+  var myHandle = picks.pop();
+  var subscribed = !!(sb.sugarelite && sb.sugarelite.subscribed);
+  var inviter = subscribed ? 'SugarElite™' : 'Akuma';
+  var inviterLabel = subscribed ? 'S.' : 'Akuma';
+  await Promise.resolve(updateVariablesWith(function (v) {
+    if (!v.sb) return v;
+    if (v.sb._anonInvited) return v;
+    v.sb._anonInvited = true;
+    var g = ensureGroup(v.sb, ANON_GROUP_NAME, { anon: true, myHandle: myHandle, members: picks.slice(), roster: {}, _rounds: 0, _lastDm: 0 });
+    g.archetype = ARCHETYPE_CN[ANON_GROUP_NAME] || '匿名·平台大厅';
+    for (var i = 0; i < picks.length; i++) g.roster[picks[i]] = { real: '', secret: '', joined: Date.now(), last: 0, revealed: false };
+    pushThem(v.sb, ANON_GROUP_NAME, 'system', inviterLabel + ' 邀请你加入了群聊。群里每个人只有一个系统发的代号——你的是「' + myHandle + '」', '');
+    return v;
+  }, { type: 'chat' }));
+  try { eventEmit('sb_updated'); } catch (e) {}
+  try { if (typeof toastr !== 'undefined') toastr.info('🎭 ' + inviterLabel + ' 把你拉进了一个匿名群「' + ANON_GROUP_NAME + '」——你在里面叫「' + myHandle + '」', 'SugarOS'); } catch (e) {}
+  console.log('[SB-NYC v4] anon group unlocked at floor ' + floors + ' (handle ' + myHandle + ')');
+  try {
+    handleRequest({
+      reason: inviter + ' 刚把 User 拉进了平台的匿名大厅「' + ANON_GROUP_NAME + '」（那里每个人只显示系统发的代号，谁也不知道对面是谁；User 的代号是「' + myHandle + '」）。' +
+        'TA 现在用自己的声线发一条私信告诉 User 这件事：为什么想到把她拉进去、那地方是干嘛的、进去该注意什么，按 TA 自己的腔调来。只让 ' + inviter + ' 本人说话，别的角色不要出现。',
+      n: '1',
+    });
+  } catch (e) {}
+}
+
 // ── 偶尔自动塞一个全新陌生人私信（独立生成，空历史=零串号风险，绝不碰已有对话） ──
 // 频率闸（想调手感就改这三个数）：命中率 / 两个陌生人最少间隔几拍 / 玩家压着几个没读就先别塞
 var AUTO_STRANGER_CHANCE = 0.30;
 var AUTO_STRANGER_MINGAP = 3;
 var AUTO_STRANGER_MAXPENDING = 4;
+// 👥 这一次的自动名额该不该给群、给哪个群（纯函数，离线可测）。
+// 合格＝ isGroup + 成员≥2 + **当前一条未读都没有**（有未读说明玩家还没读，再塞就是往 99+ 上堆、白烧 API；
+// 免打扰的群照样合格，它只是不吵，未读数是真的）。多个合格的挑最久没动静的那个。
+// rnd：[0,1) 的骰子，>= GROUP_AMBIENT_SHARE 就把名额留给陌生人；传 null/undefined ＝ 不掷骰，只问"有没有合格的群"。
+function pickAmbientGroup(sb, rnd) {
+  var npcs = (sb && sb.npcs) || {};
+  var best = null;
+  for (var k in npcs) {
+    if (!npcs.hasOwnProperty(k)) continue;
+    var g = npcs[k];
+    if (!g || !g.isGroup) continue;
+    if ((g.unread || 0) > 0) continue;
+    if (((g.members || []).length) < 2) continue;
+    if (!best || (g.last_ts || 0) < (best.last_ts || 0)) best = g;
+  }
+  if (!best) return null;
+  if (rnd != null && rnd >= GROUP_AMBIENT_SHARE) return null;
+  return best.name || null;
+}
 async function maybeAutoStranger() {
   if (_busy || _pending.length) return;              // 有正在进行/排队的回复就让位，绝不和回复合批（合批才会串号乱回）
   var vars = getVariables({ type: 'chat' });
@@ -1574,23 +2310,43 @@ async function maybeAutoStranger() {
   for (var k in sb.npcs) {
     if (!sb.npcs.hasOwnProperty(k)) continue;
     started = true;
-    if (!sb.npcs[k].persistent && (sb.npcs[k].unread || 0) > 0) unreadStrangers++;
+    if (!sb.npcs[k].persistent && !sb.npcs[k].isGroup && (sb.npcs[k].unread || 0) > 0) unreadStrangers++;
   }
   if (!started) return;
   var auto = sb._auto || { turns: 0, last: -99 };
   var turns = (auto.turns || 0) + 1;
   var lastFire = (auto.last != null) ? auto.last : -99;
-  var hit = (turns - lastFire) >= AUTO_STRANGER_MINGAP
-    && unreadStrangers < AUTO_STRANGER_MAXPENDING
-    && Math.random() < AUTO_STRANGER_CHANCE;
+  var hit = (turns - lastFire) >= AUTO_STRANGER_MINGAP && Math.random() < AUTO_STRANGER_CHANCE;
+  // 名额归谁：先掷一把问群要不要（一半一半）；陌生人那边被"压着一堆没读的陌生人"卡住时，
+  // 只要有合格的群就整个转给群——总调用量一点没变，只是这一次花在群上。
+  var gPick = '';
+  if (hit) {
+    gPick = pickAmbientGroup(sb, Math.random()) || '';
+    if (!gPick && unreadStrangers >= AUTO_STRANGER_MAXPENDING) gPick = pickAmbientGroup(sb, null) || '';
+    if (!gPick && unreadStrangers >= AUTO_STRANGER_MAXPENDING) hit = false;   // 陌生人被卡、又没群可给 → 这拍作废
+  }
   await updateVariablesWith(function (v) {
     if (!v.sb) return v;
     if (!v.sb._auto) v.sb._auto = { turns: 0, last: -99 };
     v.sb._auto.turns = turns;
-    if (hit) v.sb._auto.last = turns;
+    if (hit) v.sb._auto.last = turns;   // 群氛围轮和陌生人共用同一个节流
     return v;
   }, { type: 'chat' });
   if (!hit) return;
+  if (gPick) {
+    var ag = sb.npcs[gPick] || {};
+    try {
+      eventEmit('sb_request_dm', {
+        group: gPick,
+        reason: ag.anon
+          ? 'User 这会儿没在群里说话，只是手机开着——大厅里的人自顾自地在聊。写一轮背景氛围：各聊各的、互相接茬，不必围着 User 转'
+          : 'User 这会儿没在群里说话，手机就摆在那儿——群里的人自己聊起来了。写一轮背景氛围：成员之间互相说话，可以聊到 User 但她没在场发言；每个人只聊自己知道的事',
+        n: ag.anon ? '3-6' : '2-5',
+      });
+      console.log('[SB-NYC v4] auto-slot spent on group ambience: ' + gPick + ' (turn ' + turns + ')');
+    } catch (e) {}
+    return;
+  }
   try {
     eventEmit('sb_request_dm', { reason: '手机忽然进来一条陌生人的新私信：只生成 1 个全新陌生金主的开场，不要让任何已有联系人出现、不要续接任何已有对话', n: '1' });
     console.log('[SB-NYC v4] auto-stranger fired (turn ' + turns + ')');
@@ -1610,6 +2366,7 @@ async function onMainMessage(message_id) {
     var msgIdStr = String(message_id);
     var isSwipe = (_lastMainMsgId === msgIdStr);
     if (!isSwipe) {
+      try { await maybeUnlockAnonGroup(); } catch (e) { console.warn('[SB-NYC v4] anon group unlock check failed', e); }   // 🎭 聊满 50 楼 → 管家拉你进匿名大厅（只炸一次）
       try { await maybeAutoStranger(); } catch (e) { console.warn('[SB-NYC v4] auto-stranger check failed', e); }
     }
     // ── swipe 检测：同一 message_id 第二次进来 = 玩家重新生成了，先回退上一版的财务影响 ──
@@ -1664,7 +2421,9 @@ async function onMainMessage(message_id) {
     if (!isSwipe) {
       try {
         if (/(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(text)) {
-          var forumSnippet = text.slice(0, 800);
+          // 这一楼正文整段给（2026-09-16 拔掉前 800 字截断）：原来截的是没清洗的原文，开头常是注释/状态栏，
+          // 800 字里可能一句剧情都没有。现在先 cleanProse 去掉脚手架，再整段当 reason 喂给生成器
+          var forumSnippet = cleanProse(text);
           var forumN = 3 + Math.floor(Math.random() * 3);   // 3~5（原 2~4，和按钮侧对齐）
           eventEmit('sb_request_dm', {
             reason: '论坛发帖后自动响应：User 刚在 SugarRank 论坛发了招聘/召集帖，生成 ' + forumN + ' 个全新陌生人来私信搭讪应聘。' +
@@ -1959,20 +2718,21 @@ async function generateMagOnce(sb, plot, strict, onlyKeys) {
     if (pA.school) bitsA.push(pA.school + (pA.major ? ' ' + pA.major : ''));
     if (pA.hood) bitsA.push('住 ' + pA.hood);
     if (bitsA.length) whoA.push('底细：' + bitsA.join('，'));
-    if (tpA.persona) whoA.push('玩家写的人设（意淫必须长在这些具体特征上）:\n' + tpA.persona.slice(0, 1200));
+    if (tpA.persona) whoA.push('玩家写的人设（意淫必须长在这些具体特征上）:\n' + tpA.persona);   // 整段给（2026-09-16 拔掉 1200 字截断）
     ordered.push({ role: 'system', content: '【这一版意淫的对象是谁】\n'
       + (whoA.length ? whoA.join('\n')
          : '资料很少——那就只从主线剧情里她被描写过的样子、穿过的、去过的地方、跟谁走了这些**已经发生过的**细节里取素材，绝不自己发明一套长相。')
       + '\n【怎么用】帖子里**绝不出现她的真名**（用物化指代／外号／"新来的那个"／"穿那件的"）——但内容要具体到圈内人一读就知道在说谁：'
       + '她最近出现在哪个场合、穿的哪件、身上什么味道、跟谁一起走的、手上那只包。**越具体越脏越好，泛泛的意淫是废稿。**' });
     var abyssLore = await wbContent('深渊区', '');
-    if (abyssLore) ordered.push({ role: 'system', content: '【深渊区设定（ABYSS 行必须遵守这份原始定义：称呼池/四类语料池/鄙视链全部照用）】\n' + String(abyssLore).slice(0, 6000) });
+    // 世界书素材整段上车（2026-09-16 拔掉 6000/6000/2500 字截断：没人算过的数，砍掉的是条目后半的语料池和鄙视链）
+    if (abyssLore) ordered.push({ role: 'system', content: '【深渊区设定（ABYSS 行必须遵守这份原始定义：称呼池/四类语料池/鄙视链全部照用）】\n' + String(abyssLore) });
   }
   var npcPool = await wbContent('金主群像', '');
-  if (npcPool) ordered.push({ role: 'system', content: '【圈内群像素材（论坛楼主/榜上昵称从这里面挑或者仿）】\n' + String(npcPool).slice(0, 6000) });
+  if (npcPool) ordered.push({ role: 'system', content: '【圈内群像素材（论坛楼主/榜上昵称从这里面挑或者仿）】\n' + String(npcPool) });
   if (keys.indexOf('INVITE') !== -1) {
     var expPoolM = await wbContent('体验池', '');
-    if (expPoolM) ordered.push({ role: 'system', content: '【体验池（INVITE 可代订项从这里挑或仿：包厢/马术/滑雪/湖边别墅…）】\n' + String(expPoolM).slice(0, 2500) });
+    if (expPoolM) ordered.push({ role: 'system', content: '【体验池（INVITE 可代订项从这里挑或仿：包厢/马术/滑雪/湖边别墅…）】\n' + String(expPoolM) });
   }
   if (plot) ordered.push({ role: 'system', content: '【主线最近剧情，可作为八卦素材隐约影射】\n' + plot });
   var instr = '生成本期内容。每条占一行，字段用|分隔，行首必须是指定前缀，除这些行外不要输出任何其他文字：\n';
@@ -2100,7 +2860,7 @@ async function handleAdComments(p) {
       '腔调示例（帖子只有"喵喵喵哦"时的评论区，学腔调别照抄）："坏猫，喵什么？回去就收拾你" / "猫的花语是手慢无，跟我回家，项圈都备好了" / ' +
       '"别占用公共资源了，拉去广场法办" / "你以为你很可爱吗？好吧确实很可爱，宝宝戴尾巴好不好？"\n' +
       '【输出格式】5-7条，每条占一行：昵称|评论内容(40字内)。昵称要有圈内味（UES_Whale/验资侠/Salt雷达探测器/北岸姐姐/凌晨四点的出租车 这种，现编别重复）。除这些行外绝不输出任何其他文字。';
-    var instr = '她的帖子原文：「' + String(p.text).slice(0, 500) + '」\n生成这条帖子下面的评论区。';
+    var instr = '她的帖子原文：「' + String(p.text) + '」\n生成这条帖子下面的评论区。';   // 原文整段（2026-09-16 拔掉 500 字截断；发帖框自己限 500/400 字）
     function parseCmts(raw) {
       var out = [];
       var lines = String(raw || '').split('\n');
@@ -2525,7 +3285,7 @@ async function handleImport(p) {
       total_transfers: 0, relationship: 0,
       last_contact: nowTime(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [],
       bio: String(d.summary || '').slice(0, 300),
-      dossier: dossierText.slice(0, 9000),   // 主线世界书条目用全份；私信生成时另按 4000 截（generateOnce 里）
+      dossier: dossierText.slice(0, 9000),   // 主线世界书条目和私信生成（generateOnce）都用这一整份，不再另截
       voice: String(d.voice || '').slice(0, 600),
       dm_style: String(d.dm_style || '').slice(0, 300),
       // 原始背调参数留底：以后蒸馏提示词改好了，靠这三样就能一键"重新背调"（读回原参数重跑，不用玩家再填一遍）。
@@ -2598,6 +3358,7 @@ var _dossierBusy = false;
 var SE_NAME = 'SugarElite™';
 
 // 私信记录 → 喂给蒸馏的素材（最多 8000 字，从最近往前取：近的更能反映TA现在是谁）
+// 8000 是按"整条消息"算的总预算（放不下就不收更早的那条）；单条消息不截字（2026-09-16 拔掉每条 600 字截断——长信是最硬的语料）
 function serializeDmFor(name, npc) {
   var h = (npc && npc.dm_history) || [];
   var out = [], used = 0;
@@ -2605,14 +3366,14 @@ function serializeDmFor(name, npc) {
     var m = h[i] || {};
     if (m.type === 'recall') continue;                       // 撤回的不算证据
     var who = m.sender === 'USER' ? 'User' : name;
-    var line = '[' + (m.time || '') + '] ' + who + '：' + String(fmtDmLine(m.type, m.content)).slice(0, 600);
+    var line = '[' + (m.time || '') + '] ' + who + '：' + String(fmtDmLine(m.type, m.content));
     if (used + line.length > 8000) break;
     out.unshift(line); used += line.length;
   }
   return { text: out.join('\n'), total: h.length, used: out.length };
 }
 
-// 建档专用的正文通读。⚠️ 不能用 recentPlot()——那是**日常私信生成**的预算（默认8层≈7200字），
+// 建档专用的正文通读。⚠️ 不能用 recentPlot()——那是**日常私信生成**的预算（默认8层×每层2000≈16000字，只读最近几层），
 // 拿它建档等于只读手机，会写出一个"只会打字的人"：她和 TA 线下发生的一切全在正文里。
 // 这里通读全部楼层，挑出提到 TA 的那些（连同紧跟的下一层——一场戏里名字往往只在开头出现一次，
 // 后面全是"他"），再加最近几层交代此刻处境。建档是玩家主动点的一次性重活，可以奢侈。
@@ -2643,7 +3404,9 @@ async function deepPlotFor(name, budget) {
       var m = arr[idxs[j]];
       var body = cleanProse(m && m.message);
       if (!body) continue;
-      if (body.length > 1800) body = body.slice(0, 1800) + '…';
+      // 每层至少读 2000 字（2026-09-16 从 1800 提上来，和 recentPlot 的每层 2000 对齐；Fan：「主线每楼读2000啊至少」）。
+      // 总量另有 budget（默认 26000）按整层兜底
+      if (body.length > 2000) body = body.slice(0, 2000) + '…';
       var line = '〔第' + (idxs[j] + 1) + '楼' + (m && m.role === 'user' ? ' · User' : '') + '〕' + body;
       if (used + line.length > budget) break;
       picked.unshift(line); used += line.length;
@@ -2693,7 +3456,7 @@ async function handleDossier(p) {
     ], DISTILL_OUTPUT).join('\n');
     var instr = [
       '【要建档的人】' + name + (npc.archetype ? '（手机里现在的标签：' + npc.archetype + '）' : ''),
-      npc.bio ? '【手机里现有的一句话简介】' + String(npc.bio).slice(0, 300) : '',
+      npc.bio ? '【手机里现有的一句话简介】' + String(npc.bio) : '',   // 整段给（2026-09-16 拔掉 300 字截断：评论区/招聘帖来的人 bio 里就是帖子原文）
       '',
       '【本卡背景】2026年纽约。User 是 sugar baby，手机是圈内邀请制私信App（上了平台的人都知道彼此是干嘛的，私信里敢说真话）。这份档案有两个用途：生成TA发给User的私信；主线正文提到TA时照这份档案演TA。所以密度要够——本卡原生NPC的档案都在两三千字以上，你写的这份是TA在这个世界里的全部依据。',
       '',
@@ -2855,6 +3618,7 @@ try { eventOn(tavern_events.MESSAGE_DELETED, scheduleBubbleSync); } catch (e) {}
 try { eventOn(tavern_events.MESSAGE_SWIPED, scheduleBubbleSync); } catch (e) {}
 syncInject();
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
+try { migrateGroups(); } catch (e) {}                       // 👥 老存档里的群补上 isGroup/members
 
 // ── 🔭 跨卡足迹彩蛋（L. 专属，100楼+200楼各触发一次，共两次）──
 // 启动时一次读完 characters 数组的 date_last_chat，列出最近有活动的别的角色——即时版，不用攒。
@@ -2876,7 +3640,7 @@ async function xcardScan() {
       if (i === meIdx) continue;
       var c = ctx.characters[i];
       var t = Number(c && c.date_last_chat) || 0;
-      if (t > 0 && (now - t) < twoWeeks) others.push({ n: String((c && c.name) || '').slice(0, 30), ts: t });
+      if (t > 0 && (now - t) < twoWeeks) others.push({ n: String((c && c.name) || ''), ts: t });   // 卡名原样给（2026-09-16 拔掉 30 字截断：reason 里明写"名字原样引用"，砍半个卡名 L. 就点不准了）
     }
     if (others.length < 2) return;
     others.sort(function (a, b) { return b.ts - a.ts; });
