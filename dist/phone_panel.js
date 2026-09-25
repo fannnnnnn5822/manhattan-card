@@ -235,9 +235,17 @@
     var why = '玩家在私信里对 ' + name + ' 说了：' + lines.map(function (s) { return '「' + s + '」'; }).join('、') +
       '。只让 ' + name + ' 本人回应这些，别的角色不要出现、不要插话。';
     delete ob[name]; saveOutbox(ob);
-    SBemit('sb_request_dm', { reason: why, n: '1-2' });
-    setStatus('⏳ ' + name + ' 回复中…');
-    showTyping(name);
+    // ⏳ 你追着发了 → TA 在路上的那条先落地（时间改成此刻、排到你的话后面），再让 TA 接着回你后来说的
+    var tNow = nowT(), dNow = (state && state.game && state.game.day) || 1;
+    var fire = function () {
+      SBemit('sb_request_dm', { reason: why, n: '1-2', to: [name] });
+      setStatus('⏳ ' + name + ' 回复中…');
+      showTyping(name);
+    };
+    if (landPendingNow(npcB, tNow, dNow)) {
+      openChat(name, npcB);
+      SBupdate(function (v) { var n = v.sb && v.sb.npcs && v.sb.npcs[name]; if (n) landPendingNow(n, tNow, dNow); return v; }).then(fire);
+    } else fire();
   }
   // 🔄 重roll：删掉这人尾部一连串对方消息（本轮回复），基于上一句 User 的话重新单发生成
   function rerollLast(name) {
@@ -275,7 +283,7 @@
     // 链式等 SBupdate 落账后再触发重新生成（防竞态：生成器读到旧数据）
     SBupdate(function (v2) { return v2; }).then(function () {
       if (isG) { askGroupRound(name, hint); return; }
-      SBemit('sb_request_dm', { reason: hint, n: '1-2' });
+      SBemit('sb_request_dm', { reason: hint, n: '1-2', to: [name] });
       setStatus('⏳ ' + name + ' 重新回复中…');
       showTyping(name);
     });
@@ -608,16 +616,18 @@
     var n = 0; var npcs = (sbObj && sbObj.npcs) || {};
     for (var k in npcs) {
       if (!npcs.hasOwnProperty(k)) continue;
-      var npc = npcs[k]; var h = npc.dm_history || [];
+      var npc = npcs[k]; var h = npc.dm_history || []; var landed = [];
       for (var i = 0; i < h.length; i++) {
         var m = h[i]; if (!m || !m.pending) continue;
         var left = ((m.dueDay || now.day) - now.day) * 1440 + ((m.dueMin || 0) - now.min);
         if (left > 0 && (real - (m.ts || 0)) < PENDING_REAL_MS) continue;
-        delete m.pending;
+        delete m.pending; landed.push(m);
         npc.unread = (npc.unread || 0) + 1;
         npc.last_message = lastPreview(m); npc.last_contact = m.time || npc.last_contact; npc.last_ts = real;
         n++;
       }
+      // 送达＝排到末尾：等它的这段时间里你补发的话在它前面（不然渲染出来他 22:32 的回复压在你 21:50 那句上面）
+      if (landed.length) npc.dm_history = h.filter(function (x) { return landed.indexOf(x) < 0; }).concat(landed);
     }
     return n;
   }
@@ -627,6 +637,28 @@
     var n = revealIn(state, now, real);
     if (n) SBupdate(function (v) { if (v.sb) revealIn(v.sb, now, real); return v; });
     return n;
+  }
+  // 👁 已读（2026-09-25）：TA 读了但这一轮没回（回复还在路上 ⏳，或模型这轮干脆没写 TA）→ 你最后一句下面挂「已读 HH:MM」。
+  // 不然晾你和 API 坏了长得一模一样（上线两周玩家全以为是卡了）。readTs/readTime 由生成器在点名回复落账时写。
+  function hasPendingNpc(npc) { var h = (npc && npc.dm_history) || []; for (var i = 0; i < h.length; i++) if (h[i] && h[i].pending) return true; return false; }
+  function readMark(npc) {
+    if (!npc || npc.isGroup || npc.blocked) return null;
+    var h = npc.dm_history || [], last = null;
+    for (var i = h.length - 1; i >= 0; i--) { if (h[i] && !h[i].pending) { last = h[i]; break; } }
+    if (!last || last.sender !== 'USER') return null;
+    if (!hasPendingNpc(npc) && !(npc.readTs && npc.readTs >= (last.ts || 0))) return null;   // 有话在路上＝你后面补的也都读了
+    return { time: npc.readTime || '', fresh: Date.now() - (npc.readTs || 0) < 8000 };
+  }
+  function landPendingNow(npc, t, day) {   // 你点了发送 → 在路上的那条现在落地，时间改成此刻、排到你的话后面；不算未读（你正看着）
+    var h = (npc && npc.dm_history) || [], keep = [], out = [];
+    for (var i = 0; i < h.length; i++) {
+      var m = h[i];
+      if (m && m.pending) { delete m.pending; delete m.dueDay; delete m.dueMin; m.time = t; m.gameDay = day; out.push(m); } else keep.push(m);
+    }
+    if (!out.length) return 0;
+    npc.dm_history = keep.concat(out);
+    npc.last_message = lastPreview(out[out.length - 1]); npc.last_contact = t; npc.last_ts = Date.now();
+    return out.length;
   }
   function revealPendingNpc(npc) {   // 玩家给 TA 发消息 = TA 在路上的话先落地（他看见你上线了）；不算未读，你正看着呢
     var h = (npc && npc.dm_history) || [], n = 0;
@@ -818,6 +850,11 @@
     // 「正在输入…」气泡 + 键盘抬升的平移动画
     '#sbnyc-panel .sb-typing{font-style:italic;animation:sbtype 1.2s ease-in-out infinite;}',
     '@keyframes sbtype{0%,100%{opacity:.35;}50%{opacity:.8;}}',
+    // 👁 已读：只挂在你最后一句下面，和气泡时间戳一个字号的灰字；刚读的那一下等「正在输入…」退场后再淡进来
+    '#sbnyc-panel .sb-read{align-self:flex-end;font-size:10px;letter-spacing:.06em;color:var(--ink-faint);margin:-4px 6px 2px 0;}',
+    '#sbnyc-panel .sb-read.fresh{animation:sbread .6s ease .3s both;}',
+    '@keyframes sbread{from{opacity:0;transform:translateY(-2px);}to{opacity:1;transform:none;}}',
+    '#sbnyc-panel .sb-rd{color:var(--ink-faint);}',
     '#sbnyc-panel{transition:transform .15s ease-out;}',
     // 论坛：排行榜行 / 帖子卡 / 深渊区暗色 / 购买按钮
     '#sbnyc-panel .sb-rank{display:flex;align-items:center;gap:10px;margin:0 12px 6px;padding:10px 12px;background:var(--paper-2);border:.5px solid var(--line);border-radius:12px;}',
@@ -1305,7 +1342,7 @@
         ? (npc.anon ? '匿名' : ((npc.members || []).length + ' 人'))
         : (npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已拉黑你' : '');
       if (tagsR) h += '<div class="sb-dmtags">' + esc(tagsR) + '</div>';
-      h += '<div class="sb-dmlast">' + esc(npc.last_message || '') + '</div></div>';
+      h += '<div class="sb-dmlast">' + esc(npc.last_message || '') + (readMark(npc) ? '<span class="sb-rd"> · 已读</span>' : '') + '</div></div>';
       // 🔕 免打扰的群：红角标换成一个小灰点（占原来角标的位置，知道有动静就行）
       if (npc.unread > 0) h += quiet ? '<span class="sb-dnd-dot"></span>' : '<span class="sb-badge">' + npc.unread + '</span>';
       h += '</div>';
@@ -3796,11 +3833,13 @@
         if (dv) { h += dividerHtml(dv); prevWho = ''; }   // 隔了时间条就重新报一次名字
         var autoTr = !!(_pendingTrs[name + '|' + i] && hist[i].zh);
         if (autoTr) delete _pendingTrs[name + '|' + i];   // 刚才点了兜底翻译的那条：翻好自动展开（字典各销各的账）
-        h += renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx, i === hist.length - 1, prevWho);   // 对方最后一条挂 reroll；自己的最后一条挂撤回
+        h += renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx && !hasPendingNpc(npc), i === hist.length - 1, prevWho);   // 对方最后一条挂 reroll；自己的最后一条挂撤回
         prevMsg = hist[i];
         prevWho = (isGrp && hist[i].sender === 'THEM' && hist[i].type !== 'system') ? (hist[i].who || '') : '';
       }
     }
+    var rdM = readMark(npc);
+    if (rdM) h += '<div class="sb-read' + (rdM.fresh ? ' fresh' : '') + '">已读' + (rdM.time ? ' ' + esc(rdM.time) : '') + '</div>';
     h += '</div>';
     // 所有动作收进输入栏左边的 ➕（User 定稿：按钮太散，收在一起）——快捷键/照片/语音/定位/转账/发链接全在里面
     h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
@@ -3887,7 +3926,7 @@
         toast('warning', name + ' 已经把你拉黑了');
         return;
       }
-      var revealed = revealPendingNpc(npc);   // ⏳ 你开口了 → TA 在路上的消息先落地（变量那份在下面 SBupdate 里同步）
+      var revealed = chatEl.querySelector('.sb-read') ? 1 : 0;   // 👁 「已读」在场 → 整页重画（有话在路上就挪到你新这句下面，没有就消失）；在路上的话等你点「发送」才落地
       var t = nowT(); var ty = mtype || 'text';
       var gDay = (state && state.game && state.game.day) || 1;
       npc.engaged = true;
@@ -3901,7 +3940,6 @@
         if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
         var n = v.sb.npcs[name]; if (!n) return v;
         if (!n.dm_history) n.dm_history = [];
-        revealPendingNpc(n);   // ⏳ 和镜像同步：在路上的先落地，再接玩家这条
         var vObj = { sender: 'USER', time: t, ts: Date.now(), type: ty, content: text, note: '', gameDay: gDay };
         if (extra) { for (var ek2 in extra) { if (extra.hasOwnProperty(ek2)) vObj[ek2] = extra[ek2]; } }
         n.dm_history.push(vObj);
@@ -5184,8 +5222,10 @@
   });
   SBon('sb_updated', function () {
     var prevUn = totalUnread();   // 震动只在未读涨了才触发（UWU 功能 + 守门：自己发消息/改设置不抖）
-    setStatus('✓ 新消息 ' + nowT());
     refreshView();
+    var rdN = currentChatName && state && state.npcs && state.npcs[currentChatName];
+    var rdS = rdN && readMark(rdN);
+    setStatus(rdS && rdS.fresh ? currentChatName + ' 已读' : '✓ 新消息 ' + nowT());
     if (totalUnread() > prevUn) triggerVibration();
   });
   // 🧾 税务题目就绪（UWU）：流水页税务中心开着就地刷新
