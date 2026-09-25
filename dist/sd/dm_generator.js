@@ -1597,7 +1597,9 @@ function mergeRequests(batch) {
     if (Array.isArray(p.focus)) for (var f = 0; f < p.focus.length; f++) if (focus.indexOf(p.focus[f]) === -1) focus.push(p.focus[f]);
   }
   var n = (batch.length === 1 && batch[0] && batch[0].n) ? batch[0].n : (batch.length > 1 ? batch.length + '-' + (batch.length + 2) : '2-4');
-  return { reason: reasons.join('；同时：'), n: n, focus: focus };
+  var to = [];   // 👁 点名要回复的人（落账时记「已读」）
+  for (var j = 0; j < batch.length; j++) { var tj = (batch[j] && batch[j].to) || []; for (var tk = 0; tk < tj.length; tk++) if (to.indexOf(tj[tk]) === -1) to.push(tj[tk]); }
+  return { reason: reasons.join('；同时：'), n: n, focus: focus, to: to };
 }
 
 // 情绪歌：私信顺带的 ♪|song| 行插到歌单最前（panel 的轮播从 0 开始 → 新歌立刻上岛）
@@ -1825,6 +1827,13 @@ async function runOnce(req) {
       if (exN && (exN.muted || exN.blocked)) continue;   // ⛔ 拉黑了 User 的人同样闭嘴（提示词管不住这里管）
       pushThem(v.sb, dms[i].name, dms[i].type, dms[i].content, dms[i].zh, dms[i].delay);
       sideLanded++;
+    }
+    // 👁 已读（2026-09-25）：点名回复的人这一轮读过了——没回（⏳ 在路上 / 模型没写 TA）手机就挂「已读 HH:MM」，不再和 API 坏了长一样
+    if (!isGroupReq && Array.isArray(req.to)) {
+      for (var ri = 0; ri < req.to.length; ri++) {
+        var rn = v.sb.npcs && v.sb.npcs[req.to[ri]];
+        if (rn && !rn.isGroup) { rn.readTs = Date.now(); rn.readTime = nowTime(); }
+      }
     }
     // 👥 真有人转头私聊了才记账——下一次至少隔 SIDE_DM_MINGAP 轮（landGroupRows 刚把 _rounds 加过）
     if (isGroupReq && sideLanded && v.sb.npcs && v.sb.npcs[gKeyReq]) v.sb.npcs[gKeyReq]._lastSide = v.sb.npcs[gKeyReq]._rounds || 0;
