@@ -5282,3 +5282,475 @@
   refreshView();
   console.log('[SB-S v4] phone panel mounted (floating, no regex, no markdown + UWU: vibrate/wallpaper/calendar/statement-tax/date-labels/time-adjust)');
 })();
+
+;
+// ═══════════════════════════════════════════════════════════════════
+// SB实验室 · 语音 (lab_tts.js)  v0.2  2026-10-06（+Fish Audio，随手机脚本下发）
+//
+// 让 NPC 的语音条真的出声。【独立实验脚本】：
+//   · 不改 phone_panel.js / dm_generator.js 一行——纯外挂装饰器
+//   · 盯着 #sbnyc-panel，给 NPC 语音条(.sb-msg.voice)的波形行挂一个 🔊 按钮
+//   · 点了才合成（费钱），合成过的存 IndexedDB，反复听不重复烧钱
+//   · 点 🔊 只出声不展开文字；点气泡其他地方还是原来的「展开文字」——两不耽误
+//   · 卸载 = 关掉这个脚本，其他一切如常
+//
+// ★ 云 TTS（OpenAI/Gemini/MiniMax）会拒念露骨台词——而那正是这卡最想听的。
+//   所以「本地服务」(CosyVoice / GPT-SoVITS) 是主力后端：跑你自己显卡上，
+//   没有内容策略，还能克隆音色。云的留给日常对话。
+//
+// 安装：酒馆助手 → 脚本库 → 新建脚本 → 粘贴本文件全文 → 启用
+// 配置：手机顶栏状态条多出一个 🎙 图标 → 点开填
+// ═══════════════════════════════════════════════════════════════════
+(function () {
+  'use strict';
+  var DOC;
+  try { DOC = window.parent.document; } catch (e) { return; }
+  if (!DOC) return;
+
+  // ── NPC 音色表（初版 Fable 填的，按人设配的；玩家可在 localStorage sbnyc_npc_voice 覆盖）──
+  // local 列 = CosyVoice/GPT-SoVITS 的 speaker_id，要玩家在自己本地服务里注册后填，
+  //            这列才是灵魂：给每个 NPC 找 3-10 秒参考音频 → 真正独一无二的声音。空 = 用服务默认音色。
+  // 云列是罐头音色里挑最贴的：OpenAI 男声只有 3 个可选，撞车难免，能用就行。
+  var NPC_VOICE = {
+    'T.':              { local: '', openai: 'onyx',    gemini: 'Charon',    minimax: 'male-qn-badao' },     // 41岁巨鲸：低沉、权威、不解释
+    'Marco Rossi':     { local: '', openai: 'echo',    gemini: 'Fenrir',    minimax: 'male-qn-daxuesheng' },// 假富话痨：亢奋、油、自来熟
+    'David Pemberton': { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律师：气声、压低、像在门口耳语
+    'Hudson Park':     { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 男公关战友：松弛、干燥幽默
+    'Cole Marlowe':    { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 破碎乐手：慢、飘、凌晨三点的嗓子
+    'Father Dan':      { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 神父：清晰、克制、忏悔室音量
+    'L.':              { local: '', openai: 'onyx',    gemini: 'Schedar',   minimax: 'presenter_male' },    // 58岁仪式化stalker：慢、平、从不提高音量（他不发语音，备着）
+    '上夜班的人':        { local: '', openai: 'onyx',    gemini: 'Alnilam',   minimax: 'male-qn-jingying' },  // 谢书砚：专业冷静、短句、中文是卸妆水——MiniMax中文音色对他最重要
+    'Akuma':           { local: '', openai: 'nova',    gemini: 'Leda',      minimax: 'female-tianmei' },    // 闺蜜：甜、亮、茶里茶气上扬尾音
+    'S.':              { local: '', openai: 'shimmer', gemini: 'Kore',      minimax: 'presenter_female' },  // 管家服务：礼貌、匀速、没有情绪
+    // ── 纸醉金迷原版（S市）的固定NPC ──
+    // 一个脚本同时伺候两张卡：表按名字取，多几个键不占运行开销，玩家一次也只开一张卡。
+    //「上夜班的人」「Akuma」「S.」两个世界本来就是同一个人，用上面那几行即可。
+    // 音色按原型对齐 NYC 的同类角色（隔壁已婚律师、男公关战友、破碎乐手、禁忌神职），省得重新试音。
+    '纪司柏':           { local: '', openai: 'onyx',    gemini: 'Algieba',   minimax: 'male-qn-qingse' },    // 28岁高段位假富：好听、不急不慢、从不用感叹号
+    '顾维':             { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律所合伙人：压低、体面、把命令说成建议
+    '楚何河':           { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默
+    '祈星':             { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 22岁破碎乐手：慢、飘、凌晨三点的嗓子
+    '释空':             { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 高僧：清晰、克制、讲经的音量
+  };
+
+  var CFG_KEY = 'sbnyc_tts_cfg';
+  var store = null; try { store = DOC.defaultView.localStorage; } catch (e) { try { store = localStorage; } catch (e2) {} }
+
+  function getCfg() {
+    try {
+      var raw = store && store.getItem(CFG_KEY);
+      var c = raw ? JSON.parse(raw) : null;
+      // local 后端没有 key（审核抓的 bug：只查 key 会把本地玩家判死）
+      if (c && (c.key || c.backend === 'local')) return c;
+    } catch (e) {}
+    return null;
+  }
+  function saveCfg(c) { try { store.setItem(CFG_KEY, JSON.stringify(c)); return true; } catch (e) { toast('语音配置存不进去', 'err'); return false; } }
+  function voiceOf(name, backend) {
+    var over = {};
+    try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
+    var v = (over[name]) || NPC_VOICE[name] || {};
+    return v[backend] != null ? v[backend] : ({ local: '', fish: '', openai: 'nova', gemini: 'Kore', minimax: 'female-shaonv' })[backend];
+  }
+
+  // 每人音色：存 localStorage sbnyc_npc_voice（{名字:{后端:音色}}），配置面板里按行编辑
+  function npcVoiceText(backend) {
+    var over = {}; try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
+    return Object.keys(over).filter(function (n) { return over[n] && over[n][backend]; })
+      .map(function (n) { return n + '=' + over[n][backend]; }).join('\n');
+  }
+  function saveNpcVoice(backend, txt) {
+    var over = {}; try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
+    Object.keys(over).forEach(function (n) { if (over[n]) delete over[n][backend]; });
+    String(txt || '').split(/\n/).forEach(function (line) {
+      var i = line.search(/[=＝]/); if (i < 1) return;
+      var n = line.slice(0, i).trim(), v = line.slice(i + 1).trim(); if (!n || !v) return;
+      over[n] = Object.assign({}, NPC_VOICE[n] || {}, over[n] || {}); over[n][backend] = v;
+    });
+    try { store.setItem('sbnyc_npc_voice', JSON.stringify(over)); } catch (e) {}
+  }
+
+  function toast(msg, kind) {
+    try {
+      var t = DOC.createElement('div');
+      t.textContent = (kind === 'err' ? '🎙❌ ' : '🎙 ') + msg;
+      t.style.cssText = 'position:fixed;left:50%;bottom:14%;transform:translateX(-50%);z-index:2147483647;' +
+        'background:' + (kind === 'err' ? '#8c2f39' : '#1a2a3a') + ';color:#fff;padding:9px 16px;border-radius:999px;' +
+        'font-size:13px;font-family:system-ui;box-shadow:0 6px 20px rgba(0,0,0,.35);max-width:80vw;';
+      DOC.body.appendChild(t);
+      setTimeout(function () { try { t.remove(); } catch (e) {} }, 3600);
+    } catch (e) {}
+  }
+
+  // ── 存储层：和生图脚本同一个 IndexedDB（键不撞：这边前缀 |tts|）──
+  var DB = 'sbnyc_media_lab';
+  function idb() {
+    return new Promise(function (res, rej) {
+      var W = DOC.defaultView || window;
+      var rq = W.indexedDB.open(DB, 1);
+      rq.onupgradeneeded = function (e) {
+        var d = e.target.result;
+        if (!d.objectStoreNames.contains('blobs')) d.createObjectStore('blobs');
+        if (!d.objectStoreNames.contains('refs')) d.createObjectStore('refs');
+      };
+      rq.onsuccess = function (e) { res(e.target.result); };
+      rq.onerror = function () { rej(new Error('IndexedDB 打不开')); };
+    });
+  }
+  function dbPut(sn, k, v) {
+    return idb().then(function (d) {
+      return new Promise(function (res, rej) {
+        var tx = d.transaction(sn, 'readwrite');
+        tx.objectStore(sn).put(v, k);
+        tx.oncomplete = function () { res(); };
+        tx.onerror = function () { rej(new Error('存不进去')); };
+      });
+    });
+  }
+  function dbGet(sn, k) {
+    return idb().then(function (d) {
+      return new Promise(function (res) {
+        var rq = d.transaction(sn, 'readonly').objectStore(sn).get(k);
+        rq.onsuccess = function () { res(rq.result || null); };
+        rq.onerror = function () { res(null); };
+      });
+    }).catch(function () { return null; });
+  }
+  function hash(s) { var h = 5381; for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(36); }
+  function keyOf(name, text) { return name + '|tts|' + hash(String(text)); }
+
+  function fetchTimeout(url, opts, ms) {
+    var ctrl = new AbortController();
+    var t = setTimeout(function () { ctrl.abort(); }, ms || 60000);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+      .catch(function (e) { throw (e && e.name === 'AbortError') ? new Error('超时（' + Math.round((ms || 60000) / 1000) + '秒没响应）') : e; })
+      .finally(function () { clearTimeout(t); });
+  }
+  async function ttsErr(r, who) {
+    var detail = '';
+    try { detail = (await r.text()).slice(0, 160); } catch (e) {}
+    if (r.status === 401 || r.status === 403) return who + ' 的 key 不对';
+    if (r.status === 402) return who + ' 额度用完了';
+    if (r.status === 429) return who + ' 限流了，等一会儿再试';
+    if (r.status === 400) return who + ' 念不了这段（多半是内容策略——换本地后端）：' + detail;
+    return who + ' 出声失败 HTTP ' + r.status;
+  }
+
+  // ── 四家 TTS 后端 ──
+  async function callTtsApi(cfg, text, npcName) {
+    var url = String(cfg.url || '').replace(/\/+$/, '');
+    var voice = voiceOf(npcName, cfg.backend);
+
+    // ── 本地服务（CosyVoice / GPT-SoVITS / 任何 POST /tts → wav 的）：NSFW 唯一的路 ──
+    if (cfg.backend === 'local') {
+      var lr;
+      try {
+        // 请求体同时带 CosyVoice 系和 GPT-SoVITS api_v2 两套字段——各家忽略自己不认识的键，一个形状通吃
+        // GPT-SoVITS 必填：text_lang / ref_audio_path / prompt_lang；NPC_VOICE 的 local 列填每人的参考音频路径
+        lr = await fetchTimeout((url || 'http://127.0.0.1:9880') + '/tts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: text,
+            voice: cfg.model || '',
+            speaker_id: voice,
+            prompt_text: cfg.promptText || '',
+            mode: cfg.mode || 'zero_shot',
+            speed: Number(cfg.speed) || 1.0,
+            pitch: 0, format: 'wav',
+            // ↓ GPT-SoVITS api_v2 字段
+            text_lang: cfg.textLang || 'zh',
+            prompt_lang: cfg.promptLang || 'zh',
+            ref_audio_path: voice || cfg.refAudio || '',   // 优先每 NPC 的音色（local 列），没有用全局默认
+            text_split_method: 'cut5',
+            speed_factor: Number(cfg.speed) || 1.0,
+            media_type: 'wav',
+            streaming_mode: false,
+          }),
+        }, 180000);   // 本地推理慢，给足 3 分钟
+      } catch (e) {
+        throw new Error('连不上本地语音服务（' + (url || 'http://127.0.0.1:9880') + '）——服务开着吗？CORS 加了吗？（详见使用说明）');
+      }
+      if (!lr.ok) throw new Error(await ttsErr(lr, '本地语音服务'));
+      var ct = lr.headers.get('content-type') || '';
+      if (ct.indexOf('application/json') >= 0) {
+        var lj = await lr.json();
+        if (lj.error) throw new Error('本地语音服务：' + lj.error);
+        if (!lj.audio_base64) throw new Error('本地语音服务没返回音频');
+        return 'data:audio/wav;base64,' + lj.audio_base64;
+      }
+      return abToDataUrl(await lr.arrayBuffer(), /audio/.test(ct) ? ct.split(';')[0] : 'audio/wav');
+    }
+
+    // ── Fish Audio（2026-10-06 上线；官方或公益中转都行）──
+    // 官方 OpenAI 兼容端点 /compat/v1/audio/speech，Fish 自家参数塞 provider.options['fish-audio']；
+    // 有的公益站只开 /v1/audio/speech（纯 OpenAI 形状）→ 第一条 404 自动换第二条，记住哪条通。
+    // voice = Fish 音色 ID（fish.audio 音色页网址里那串）；没配的 NPC 用配置里的「默认音色」。
+    if (cfg.backend === 'fish') {
+      var fbase = url || 'https://api.fish.audio';
+      var fm = cfg.model || 's2.1-pro-free';
+      var fv = voice || cfg.voice || '';
+      var fh = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key };
+      var spd = Number(cfg.speed) || 1.0;
+      var routes = [
+        { path: '/compat/v1/audio/speech', body: { model: fm.indexOf('/') >= 0 ? fm : 'fish-audio/' + fm, input: text, voice: fv, response_format: 'mp3',
+            provider: { options: { 'fish-audio': { prosody: { speed: spd }, latency: 'balanced' } } } } },
+        { path: '/v1/audio/speech', body: { model: fm, input: text, voice: fv, response_format: 'mp3', speed: spd } },
+      ];
+      var fk = 'sbnyc_tts_fish_route|' + fbase;
+      var first = 0; try { first = Number(store.getItem(fk)) || 0; } catch (e) {}
+      if (first) routes.reverse();
+      var fr = null, fErr = null;
+      for (var ri = 0; ri < routes.length; ri++) {
+        try {
+          fr = await fetchTimeout(fbase + routes[ri].path, { method: 'POST', headers: fh, body: JSON.stringify(routes[ri].body) }, 90000);
+        } catch (e) { fErr = e; fr = null; continue; }
+        if (fr.status === 404 || fr.status === 405) { fr = null; continue; }
+        try { store.setItem(fk, String(routes[ri].path === '/v1/audio/speech' ? 1 : 0)); } catch (e) {}
+        break;
+      }
+      if (!fr) throw new Error(fErr ? ('连不上 Fish（' + fbase + '）——地址对吗？中转开了跨域吗？') : ('Fish 地址里两条路都找不到（' + fbase + '）'));
+      if (!fr.ok) throw new Error(await ttsErr(fr, 'Fish'));
+      var fct = fr.headers.get('content-type') || '';
+      if (fct.indexOf('json') >= 0) { var fj = ''; try { fj = JSON.stringify(await fr.json()).slice(0, 160); } catch (e) {} throw new Error('Fish 没返回音频：' + fj); }
+      return abToDataUrl(await fr.arrayBuffer(), /audio/.test(fct) ? fct.split(';')[0] : 'audio/mpeg');
+    }
+
+    // ── OpenAI 兼容（官方/硅基流动/中转站；返回 mp3 二进制零转换；拒念 NSFW）──
+    if (cfg.backend === 'openai') {
+      var r = await fetchTimeout((url || 'https://api.openai.com') + '/v1/audio/speech', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
+        body: JSON.stringify({ model: cfg.model || 'tts-1', input: text, voice: voice, speed: Number(cfg.speed) || 1.0, response_format: 'mp3' }),
+      }, 60000);
+      if (!r.ok) throw new Error(await ttsErr(r, 'OpenAI'));
+      return abToDataUrl(await r.arrayBuffer(), 'audio/mpeg');
+    }
+
+    // ── Gemini（免费额度；吐裸 PCM 24kHz/16bit/mono，要自己包 44 字节 WAV 头）──
+    if (cfg.backend === 'gemini') {
+      var gr = await fetchTimeout(
+        (url || 'https://generativelanguage.googleapis.com') + '/v1beta/models/' + (cfg.model || 'gemini-2.5-flash-preview-tts') + ':generateContent?key=' + cfg.key,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: text }] }],
+            generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
+          }) }, 60000);
+      if (!gr.ok) throw new Error(await ttsErr(gr, 'Gemini'));
+      var gj = await gr.json();
+      var part = ((((gj.candidates || [])[0] || {}).content || {}).parts || []).find(function (p) { return p.inlineData; });
+      if (!part) throw new Error('Gemini 没返回音频（可能被内容策略拦了——换本地后端）');
+      return abToDataUrl(pcmToWav(b64ToBytes(part.inlineData.data), 24000, 1, 16), 'audio/wav');
+    }
+
+    // ── MiniMax（中文音色最好；音频是 hex 字符串不是 base64！）──
+    var mr = await fetchTimeout((url || 'https://api.minimax.chat') + '/v1/t2a_v2' + (cfg.groupId ? ('?GroupId=' + cfg.groupId) : ''), {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
+      body: JSON.stringify({
+        model: cfg.model || 'speech-02-turbo', text: text, stream: false,
+        voice_setting: { voice_id: voice, speed: Number(cfg.speed) || 1.0, vol: 1, pitch: 0 },
+        audio_setting: { format: 'mp3', sample_rate: 32000 },
+      }),
+    }, 60000);
+    if (!mr.ok) throw new Error(await ttsErr(mr, 'MiniMax'));
+    var mj = await mr.json();
+    var hex = (mj.data || {}).audio || '';
+    if (!hex) throw new Error('MiniMax 没返回音频：' + (((mj.base_resp || {}).status_msg) || '未知'));
+    return abToDataUrl(hexToBytes(hex).buffer, 'audio/mpeg');
+  }
+
+  function pcmToWav(pcm, rate, ch, bits) {
+    var ba = ch * bits / 8, buf = new ArrayBuffer(44 + pcm.length), dv = new DataView(buf);
+    function tag(o, s) { for (var i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); }
+    tag(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, ch, true);
+    dv.setUint32(24, rate, true); dv.setUint32(28, rate * ba, true); dv.setUint16(32, ba, true); dv.setUint16(34, bits, true);
+    tag(36, 'data'); dv.setUint32(40, pcm.length, true);
+    new Uint8Array(buf, 44).set(pcm);
+    return buf;
+  }
+  function b64ToBytes(b64) { var b = atob(b64), o = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) o[i] = b.charCodeAt(i); return o; }
+  function hexToBytes(hex) { var o = new Uint8Array(hex.length / 2); for (var i = 0; i < o.length; i++) o[i] = parseInt(hex.substr(i * 2, 2), 16); return o; }
+  function abToDataUrl(ab, mime) {
+    var b = new Uint8Array(ab), s = '', C = 0x8000;
+    for (var i = 0; i < b.length; i += C) s += String.fromCharCode.apply(null, b.subarray(i, i + C));
+    return 'data:' + mime + ';base64,' + btoa(s);
+  }
+
+  // ── 从语音条抠文字和 NPC 名 ──
+  function bubbleInfo(el) {
+    var name = el.getAttribute('data-nm') || '';
+    var gsp = el.querySelector('.gsp');
+    if (gsp && gsp.textContent) name = gsp.textContent.trim();
+    var txtEl = el.querySelector('.sb-vc-txt');
+    var text = txtEl ? (txtEl.innerText || txtEl.textContent || '').trim() : '';
+    return { name: name, text: text };
+  }
+
+  // ── 播放：同一时间只让一个人说话 ──
+  var cur = null, curBtn = null;
+  function stopCur() {
+    if (cur) { try { cur.pause(); } catch (e) {} cur = null; }
+    if (curBtn) { curBtn.textContent = '🔊'; curBtn = null; }
+  }
+  async function playRef(k, btn) {
+    var src = await dbGet('blobs', k);
+    if (!src) return false;
+    stopCur();
+    cur = new Audio(src);
+    curBtn = btn;
+    btn.textContent = '⏹';
+    cur.onended = function () { stopCur(); };
+    cur.play().catch(function () { toast('浏览器不让出声，再点一次试试', 'err'); stopCur(); });
+    return true;
+  }
+
+  var busy = {};
+  async function onSpeak(el, btn) {
+    var info = bubbleInfo(el);
+    if (!info.text) { toast('这条语音没有文字内容', 'err'); return; }
+    var k = keyOf(info.name, info.text);
+    if (cur && curBtn === btn) { stopCur(); return; }          // 再点=停
+    if (await playRef(k, btn)) return;                          // 有缓存直接播
+    var cfg = getCfg();
+    if (!cfg) { toast('还没配语音 API——点手机顶栏的 🎙 图标去填', 'err'); openCfg(); return; }
+    if (busy[k]) return;
+    busy[k] = true;
+    var text = info.text;
+    var cap = Number(cfg.maxLen) || 240;                        // 对齐 CosyVoice adapter 默认 240
+    if (text.length > cap) { toast('这段太长（' + text.length + '字），截到 ' + cap + ' 字念'); text = text.slice(0, cap); }
+    btn.textContent = '⏳';
+    toast('正在合成…');
+    try {
+      var dataUrl = await callTtsApi(cfg, text, info.name);
+      await dbPut('blobs', k, dataUrl);
+      await playRef(k, btn);
+    } catch (e) {
+      toast('没念成：' + (e && e.message || '未知错误'), 'err');
+      btn.textContent = '🔊';
+    } finally { delete busy[k]; }
+  }
+
+  // ── 装饰器：给 NPC 语音条的波形行挂 🔊 ──
+  function decorate() {
+    var panel = DOC.getElementById('sbnyc-panel');
+    if (!panel) return;
+    if (panel.querySelector('.sb-mselbar')) return;             // 多选删除模式：不掺和
+    panel.querySelectorAll('.sb-msg.voice:not(.me):not([data-sblabv])').forEach(function (el) {
+      el.setAttribute('data-sblabv', '1');
+      var row = el.querySelector('.sb-vc');
+      if (!row) return;
+      var btn = DOC.createElement('button');
+      btn.className = 'sblab-speak';
+      btn.textContent = '🔊';
+      btn.title = '真的听 TA 说（SB实验室）';
+      btn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:14px;padding:0 2px;opacity:.8;flex-shrink:0;';
+      btn.onclick = function (ev) { ev.stopPropagation(); onSpeak(el, btn); };   // 血泪教训2 + 不stop会把文字也展开
+      row.appendChild(btn);
+      // 已有缓存的悄悄换个色，示意"这条点了秒响"
+      dbGet('blobs', keyOf(bubbleInfo(el).name, bubbleInfo(el).text)).then(function (d) { if (d) btn.style.opacity = '1'; });
+    });
+  }
+
+  // ── 配置面板 ──
+  function openCfg() {
+    var panel = DOC.getElementById('sbnyc-panel');
+    var host = panel && panel.querySelector('.sb-screen');
+    if (!host) { toast('先打开手机面板再点', 'err'); return; }
+    var old = host.querySelector('#sblab-ttscfg'); if (old) { old.remove(); return; }
+    var c = getCfg() || {};
+    var ov = DOC.createElement('div');
+    ov.id = 'sblab-ttscfg';
+    ov.style.cssText = 'position:absolute;inset:0;z-index:95;background:#f6f2ea;color:#1a2a3a;padding:16px;overflow:auto;font-family:system-ui;font-size:13px;';
+    var KEYATTRS = 'autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" style="-webkit-text-security:disc;width:100%;box-sizing:border-box;padding:6px;border:1px solid #ccc;border-radius:6px;"';
+    var INP = 'style="width:100%;box-sizing:border-box;padding:6px;border:1px solid #ccc;border-radius:6px;"';
+    function opt(v, label) { return '<option value="' + v + '"' + ((c.backend || 'fish') === v ? ' selected' : '') + '>' + label + '</option>'; }
+    ov.innerHTML =
+      '<h3 style="margin:4px 0 12px;">🎙 语音配置 <small style="font-weight:400;opacity:.6;">SB实验室</small></h3>' +
+      '<label style="display:block;margin-bottom:10px;">后端<br><select id="lt-backend" ' + INP + '>' +
+        opt('fish', 'Fish Audio（官方或公益中转）') +
+        opt('local', '本地服务（CosyVoice等）· 能克隆音色 · NSFW不受限 · 要自己部署') +
+        opt('openai', 'OpenAI 兼容（最省事）') +
+        opt('gemini', 'Gemini（免费额度）') +
+        opt('minimax', 'MiniMax（中文音色最好）') +
+      '</select></label>' +
+      '<label style="display:block;margin-bottom:10px;">URL（Fish 公益站填中转地址；本地默认 http://127.0.0.1:9880；云端留空走官方）<br><input id="lt-url" ' + INP + ' value="' + (c.url || '') + '"></label>' +
+      '<label style="display:block;margin-bottom:10px;">Key（本地服务不用填）<br><input id="lt-key" ' + KEYATTRS + ' value="' + (c.key || '') + '"></label>' +
+      '<label style="display:block;margin-bottom:10px;">模型（留空走默认）<br><input id="lt-model" ' + INP + ' value="' + (c.model || '') + '"></label>' +
+      '<label style="display:block;margin-bottom:10px;">默认音色 ID（Fish：没单独配的人都用它；音色页网址末尾那串）<br><input id="lt-voice" ' + INP + ' value="' + (c.voice || '') + '"></label>' +
+      '<label style="display:block;margin-bottom:10px;">每人的音色（一行一个：名字=音色ID，跟着上面选的后端走）<br><textarea id="lt-npcv" rows="5" ' + INP + ' placeholder="T.=音色ID&#10;Akuma=音色ID">' + npcVoiceText(c.backend || 'fish') + '</textarea></label>' +
+      '<label style="display:block;margin-bottom:10px;">参考音频路径（仅本地/GPT-SoVITS：服务器上那个 wav 的路径，如 D:/voice/akuma.wav）<br><input id="lt-ref" ' + INP + ' value="' + (c.refAudio || '') + '"></label>' +
+      '<label style="display:block;margin-bottom:10px;">参考音频那句话（仅本地克隆用：和参考音频逐字对应，对不上克隆出来会怪）<br><input id="lt-prompt" ' + INP + ' value="' + (c.promptText || '') + '"></label>' +
+      '<label style="display:block;margin-bottom:10px;">GroupId（仅 MiniMax）<br><input id="lt-group" ' + INP + ' value="' + (c.groupId || '') + '"></label>' +
+      '<label style="display:block;margin-bottom:10px;">语速 <input id="lt-speed" type="number" step="0.1" min="0.5" max="2" value="' + (c.speed || 1) + '" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:6px;"></label>' +
+      '<small style="display:block;opacity:.65;margin-bottom:12px;">⚠️ 云端 TTS 拒念露骨台词——要听那种话必须本地服务。本地服务要开 CORS（使用说明有教程）；酒馆跑在 https 上时连不了 http 本地服务。</small>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<button id="lt-test" style="flex:1;padding:9px;border:none;border-radius:999px;background:#b89968;color:#fff;cursor:pointer;">🔊 试听</button>' +
+        '<button id="lt-save" style="flex:1;padding:9px;border:none;border-radius:999px;background:#1a2a3a;color:#fff;cursor:pointer;">保存</button>' +
+        '<button id="lt-close" style="flex:1;padding:9px;border:none;border-radius:999px;background:#ddd;cursor:pointer;">关闭</button>' +
+      '</div>';
+    host.appendChild(ov);
+    function readForm() {
+      return {
+        backend: ov.querySelector('#lt-backend').value,
+        url: ov.querySelector('#lt-url').value.trim(),
+        key: ov.querySelector('#lt-key').value.trim(),
+        model: ov.querySelector('#lt-model').value.trim(),
+        refAudio: ov.querySelector('#lt-ref').value.trim(),
+        promptText: ov.querySelector('#lt-prompt').value.trim(),
+        groupId: ov.querySelector('#lt-group').value.trim(),
+        voice: ov.querySelector('#lt-voice').value.trim(),
+        speed: Number(ov.querySelector('#lt-speed').value) || 1,
+      };
+    }
+    ov.querySelector('#lt-backend').onchange = function () { ov.querySelector('#lt-npcv').value = npcVoiceText(this.value); };
+    ov.querySelector('#lt-close').onclick = function () { ov.remove(); };
+    ov.querySelector('#lt-save').onclick = function () {
+      var nc = readForm();
+      if (nc.backend !== 'local' && !nc.key) { toast('云端后端要填 Key（本地才可以不填）', 'err'); return; }
+      saveNpcVoice(nc.backend, ov.querySelector('#lt-npcv').value);
+      if (saveCfg(nc)) { toast('语音配置已保存'); ov.remove(); }
+    };
+    ov.querySelector('#lt-test').onclick = async function () {   // 试听：不用等真消息，当场验配置
+      var nc = readForm();
+      if (nc.backend !== 'local' && !nc.key) { toast('先填 Key 再试听', 'err'); return; }
+      toast('试听合成中…');
+      try {
+        saveNpcVoice(nc.backend, ov.querySelector('#lt-npcv').value);
+        var d = await callTtsApi(nc, '晚上好，这里是 SugarOS。今晚外面在下雨。', 'Akuma');
+        stopCur(); cur = new Audio(d); cur.play();
+        toast('✅ 这条链是通的');
+      } catch (e) { toast('试听失败：' + (e && e.message || '未知'), 'err'); }
+    };
+  }
+
+  // ── 顶栏图标 + 观察者 ──
+  var mo = null;
+  function ensureHooks() {
+    var panel = DOC.getElementById('sbnyc-panel');
+    if (!panel) return;
+    var bar = DOC.getElementById('sbnyc-bar');
+    if (bar && !bar.querySelector('#sblab-tts-gear')) {
+      var slot = bar.children[bar.children.length - 1];
+      var g = DOC.createElement('span');
+      g.id = 'sblab-tts-gear';
+      g.className = 'sb-gear';
+      g.title = '语音配置（SB实验室）';
+      g.textContent = ' 🎙';
+      g.style.cursor = 'pointer';
+      g.onclick = function (ev) { ev.stopPropagation(); openCfg(); };
+      (slot || bar).appendChild(g);
+    }
+    if (!panel._sblabTtsMo) {
+      panel._sblabTtsMo = true;
+      if (mo) try { mo.disconnect(); } catch (e) {}
+      var pending = null;
+      mo = new MutationObserver(function () {
+        if (pending) return;
+        pending = setTimeout(function () { pending = null; decorate(); }, 250);
+      });
+      mo.observe(panel, { childList: true, subtree: true });
+      decorate();
+    }
+  }
+  setInterval(ensureHooks, 1500);
+  ensureHooks();
+})();
