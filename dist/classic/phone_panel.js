@@ -426,6 +426,13 @@
         if (m.type === 'transfer') {
           var amt = parseFloat(String(m.content).replace(/[^0-9.]/g, '')) || 0;
           if (amt > 0) { walletObj.balance = Math.max(0, (walletObj.balance || 0) - amt); reversedAmt += amt; }
+        } else if (m.type === 'skin') {
+          if (!silent) {   // 调用方会再用 v.sb 静默跑一遍，皮肤这边一次管两头（镜像 + 变量）
+            var skk = String(m.content || '');
+            if (state && state.skins && Array.isArray(state.skins.owned)) { var ix = state.skins.owned.indexOf(skk); if (ix !== -1) state.skins.owned.splice(ix, 1); if (state.skins.active === skk) state.skins.active = ''; }
+            SBupdate(function (v) { var ss = v.sb && v.sb.skins; if (ss && Array.isArray(ss.owned)) { var ix2 = ss.owned.indexOf(skk); if (ix2 !== -1) ss.owned.splice(ix2, 1); if (ss.active === skk) ss.active = ''; } return v; });
+            try { if (typeof toastr !== 'undefined') toastr.info('✨ 回退：收回了 S. 送的气泡皮肤', 'SugarOS'); } catch (e) {}
+          }
         } else if (m.type === 'gift') {
           var gm = String(m.content).match(/^(.*?)(?:—+|--)\s*\$?([\d,.]+)\s*$/);
           var gName = (gm ? gm[1] : String(m.content)).trim().slice(0, 40);
@@ -572,6 +579,62 @@
     return lat >= 6 && lat > cjk * 2;   // T.式短英文("7pm. Polo.")也要能出兜底按钮
   }
   function fmtCNY(n) { var v = Number(n) || 0; return '￥' + v.toLocaleString('en-US'); }
+  // ✨ 气泡皮肤（2026-10-09，Fan 定）：商城买 / S. 当礼物送；开场一律原版。玩家拥有第一套之后，
+  //    几位有自己风格的人（NPC_SKIN）才换上签名款，其余人和所有陌生人永远原版。存 sb.skins={owned:[],active:''}
+  var SKINS = [['gold', '古典金', 8800], ['moon', '月光银', 5500], ['jade', '翡翠', 6800], ['bubbly', '香槟', 3900], ['velvet', '红丝绒', 7500], ['robin', '知更鸟蓝', 8200], ['lace', '粉色蕾丝', 4800], ['iron', '哥特铁艺', 6200], ['neon', '霓虹', 3300], ['leopard', '豹纹', 2600], ['galaxy', '星河', 9900], ['holo', '全息', 11800], ['bling', '金光闪闪', 19800], ['unicorn', '独角兽', 58000]];
+  var SKIN_BY = {}; for (var _si = 0; _si < SKINS.length; _si++) SKIN_BY[SKINS[_si][0]] = SKINS[_si];
+  var NPC_SKIN = { 'SugarElite™': 'gold', 'Akuma': 'lace', '纪司柏': 'bling', '祈星': 'neon' };
+  var NPC_SKIN_ALIAS = { 'S.': 'SugarElite™', 'SugarElite': 'SugarElite™' };
+  var _seenThem = {};   // 连发淡入：每个会话上次画了几条（非 pending），超出的就是刚落地的
+  function skinsOf() { var s = (state && state.skins) || {}; return { owned: Array.isArray(s.owned) ? s.owned : [], active: (s.active && SKIN_BY[s.active]) ? s.active : '' }; }
+  function skinClass(isU, who) {
+    var s = skinsOf();
+    if (isU) return s.active ? ' sk-' + s.active : '';
+    if (!s.owned.length) return '';   // 没拥有过皮肤 → 全世界原版
+    var k = NPC_SKIN[who] || NPC_SKIN[NPC_SKIN_ALIAS[who] || ''];
+    return k ? ' sk-' + k : '';
+  }
+  function setSkinActive(k) {
+    if (!state) return;
+    if (!state.skins || typeof state.skins !== 'object') state.skins = { owned: [], active: '' };
+    state.skins.active = k || '';
+    SBupdate(function (v) { if (!v.sb) return v; if (!v.sb.skins || typeof v.sb.skins !== 'object') v.sb.skins = { owned: [], active: '' }; v.sb.skins.active = k || ''; return v; });
+  }
+  function skinShopHtml() {
+    var s = skinsOf();
+    var h = '<div class="sb-sec">Signature Bubbles · 气泡皮肤</div>';
+    h += '<div class="sb-empty" style="padding:2px 16px 6px;">换你自己气泡的样子。有了第一套之后，几位有自己风格的人也会露出他们的款。</div>';
+    h += '<div class="sb-skgrid">';
+    h += '<div class="sb-skcard"><div class="sb-msg me">原版</div><div class="sk-n"><span>原版</span><button class="sb-skbtn' + (s.active ? '' : ' on') + '" data-sk="">' + (s.active ? '换上' : '使用中') + '</button></div></div>';
+    for (var i = 0; i < SKINS.length; i++) {
+      var k = SKINS[i][0], cn = SKINS[i][1], p = SKINS[i][2], own = s.owned.indexOf(k) !== -1;
+      h += '<div class="sb-skcard"><div class="sb-msg me sk-' + k + '">' + cn + '</div><div class="sk-n"><span>' + cn + (own ? '' : ' <span class="sk-p">' + fmtCNY(p) + '</span>') + '</span>' +
+        '<button class="sb-skbtn' + (own ? (s.active === k ? ' on' : '') : ' off') + '" data-sk="' + k + '">' + (own ? (s.active === k ? '使用中' : '换上') : '买') + '</button></div></div>';
+    }
+    return h + '</div>';
+  }
+  function bindSkinShop(scope) {
+    var bs = scope.querySelectorAll('.sb-skbtn');
+    for (var i = 0; i < bs.length; i++) {
+      (function (b) {
+        b.addEventListener('click', function () {
+          var k = b.getAttribute('data-sk') || '', s = skinsOf();
+          if (!k || s.owned.indexOf(k) !== -1) { if (k !== s.active) { setSkinActive(k); openElite(); } return; }
+          var sk = SKIN_BY[k]; if (!sk) return;
+          var okc = true;
+          try { okc = (DOC.defaultView || window).confirm('花 ' + fmtCNY(sk[2]) + ' 买下「' + sk[1] + '」气泡皮肤？'); } catch (e) {}
+          if (!okc) return;
+          if (!debit(sk[2], '气泡皮肤 · ' + sk[1], 'SugarElite')) return;
+          if (!state.skins || typeof state.skins !== 'object') state.skins = { owned: [], active: '' };
+          if (!Array.isArray(state.skins.owned)) state.skins.owned = [];
+          state.skins.owned.push(k); state.skins.active = k;
+          SBupdate(function (v) { if (!v.sb) return v; if (!v.sb.skins || typeof v.sb.skins !== 'object') v.sb.skins = { owned: [], active: '' }; if (!Array.isArray(v.sb.skins.owned)) v.sb.skins.owned = []; if (v.sb.skins.owned.indexOf(k) === -1) v.sb.skins.owned.push(k); v.sb.skins.active = k; return v; });
+          toast('success', '✨ 「' + sk[1] + '」已换上');
+          openElite();
+        });
+      })(bs[i]);
+    }
+  }
   // 优先剧情时间（正文 [TIME:] 标记 → sb.game.time）：手机时钟和正文同步，没有才退回真实时钟
   function nowT() {
     try { var v = SBgetVars(); var gt = v && v.sb && v.sb.game && v.sb.game.time; if (gt && /^\d{1,2}:\d{2}$/.test(String(gt).trim())) return String(gt).trim(); } catch (e) {}
@@ -989,6 +1052,84 @@
     '#sbnyc-panel .sb-wp-upload input{display:none;}',
     '#sbnyc-panel .sb-wp-clear{cursor:pointer;color:var(--red);border:.5px solid var(--red);border-radius:999px;padding:3px 10px;font-size:11px;margin-left:4px;opacity:.7;}',
     '#sbnyc-panel .sb-wp-clear:hover{opacity:1;}',
+    /* ✨ 气泡皮肤（2026-10-09）：选择器写双份 .sk-x.sk-x 是为了压过宿主 .night .sb-msg.them 那条同权重规则 */
+    '#sbnyc-panel .sb-msg[class*=" sk-"]{position:relative;margin-top:5px;margin-bottom:5px;font-weight:500;}',
+    '#sbnyc-panel .sb-msg[class*=" sk-"]::before,#sbnyc-panel .sb-msg[class*=" sk-"]::after{position:absolute;font-size:13px;line-height:1;pointer-events:none;opacity:.9;}',
+    '#sbnyc-panel .sb-msg.sk-gold.sk-gold{background:linear-gradient(160deg,#1c1a17,#2a2520 60%,#1c1a17);color:#f1e3bf;border:1px solid #b8975a;box-shadow:inset 0 0 0 2px #1c1a17,inset 0 0 0 3px rgba(212,184,138,.45);}',
+    '#sbnyc-panel .sb-msg.sk-gold.sk-gold .mt{color:rgba(212,184,138,.7);}',
+    '#sbnyc-panel .sb-msg.sk-gold.sk-gold::before{content:\'❦\';color:#d4b88a;top:-7px;left:9px;}',
+    '#sbnyc-panel .sb-msg.sk-gold.sk-gold::after{content:\'❦\';color:#d4b88a;bottom:-7px;right:9px;transform:rotate(180deg);}',
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace{background:linear-gradient(180deg,#fff3f6,#ffe4ec);color:#6b2a44;border:1px solid #f2b8cc;outline:1px dashed #f6cddb;outline-offset:-4px;}',
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace .mt{color:#c98aa3;}',
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace::before{content:\'୨୧\';color:#e68fb0;top:-8px;left:50%;transform:translateX(-50%);font-size:10px;background:#fff3f6;padding:0 3px;border-radius:6px;}',
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace::after{content:\'୨୧\';color:#e68fb0;bottom:-8px;left:50%;transform:translateX(-50%);font-size:10px;background:#ffe4ec;padding:0 3px;border-radius:6px;}',
+    '#sbnyc-panel.night .sb-msg.sk-lace.sk-lace{background:linear-gradient(180deg,#3a2430,#2c1a24);color:#f7d6e3;border-color:#8a4f68;outline-color:#6d3f54;}',
+    '#sbnyc-panel.night .sb-msg.sk-lace.sk-lace .mt{color:#b986a0;}',
+    '#sbnyc-panel.night .sb-msg.sk-lace.sk-lace::before{background:#3a2430;}#sbnyc-panel.night .sb-msg.sk-lace.sk-lace::after{background:#2c1a24;}',
+    '#sbnyc-panel .sb-msg.sk-iron.sk-iron{background:linear-gradient(180deg,#2b2d33,#17181c);color:#d9d6cf;border:1px solid #6a6d75;box-shadow:inset 0 0 0 1px #000,0 0 0 1px #3b3e45;border-radius:6px!important;}',
+    '#sbnyc-panel .sb-msg.sk-iron.sk-iron .mt{color:#8a8d95;}',
+    '#sbnyc-panel .sb-msg.sk-iron.sk-iron::before{content:\'♜\';color:#a3a7b0;top:-8px;left:7px;text-shadow:0 1px 0 #000;}',
+    '#sbnyc-panel .sb-msg.sk-iron.sk-iron::after{content:\'✠\';color:#7d8089;bottom:-7px;right:8px;font-size:11px;}',
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon{background:linear-gradient(135deg,#f0ecfa,#e2dcf4);color:#3d3356;border:1px solid #c9bfe6;box-shadow:0 0 0 1px rgba(255,255,255,.7) inset,0 0 10px rgba(180,165,230,.35);}',
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon .mt{color:#9a8fbf;}',
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon::before{content:\'☾\';color:#8f7fcf;top:-8px;left:8px;}',
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon::after{content:\'✧\';color:#a89bdd;bottom:-7px;right:7px;font-size:11px;}',
+    '#sbnyc-panel.night .sb-msg.sk-moon.sk-moon{background:linear-gradient(135deg,#2a2440,#1d1930);color:#e6dff7;border-color:#5a4f85;box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 0 10px rgba(150,130,220,.3);}',
+    '#sbnyc-panel.night .sb-msg.sk-moon.sk-moon .mt{color:#8f84b5;}',
+    '#sbnyc-panel .sb-msg.sk-jade.sk-jade{background:linear-gradient(150deg,#0f3b2e,#19594a 55%,#0f3b2e);color:#e9f5ec;border:1px solid #c9a961;box-shadow:inset 0 0 0 2px #0f3b2e,inset 0 0 0 3px rgba(201,169,97,.4);}',
+    '#sbnyc-panel .sb-msg.sk-jade.sk-jade .mt{color:rgba(201,169,97,.75);}',
+    '#sbnyc-panel .sb-msg.sk-jade.sk-jade::before{content:\'❖\';color:#dcc27a;top:-7px;left:9px;font-size:11px;}',
+    '#sbnyc-panel .sb-msg.sk-jade.sk-jade::after{content:\'❖\';color:#dcc27a;bottom:-7px;right:9px;font-size:11px;}',
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly{background:radial-gradient(circle at 18% 30%,rgba(255,255,255,.9) 1.2px,transparent 2px),radial-gradient(circle at 72% 65%,rgba(255,255,255,.9) 1.2px,transparent 2px),radial-gradient(circle at 40% 80%,rgba(255,255,255,.8) 1px,transparent 1.8px),radial-gradient(circle at 88% 22%,rgba(255,255,255,.8) 1px,transparent 1.8px),linear-gradient(160deg,#fbf0d2,#f1dca3);color:#5a4416;border:1px solid #e3c87f;}',
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly .mt{color:#b2944e;}',
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly::before{content:\'✦\';color:#d2ab4a;top:-7px;left:9px;font-size:10px;}',
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly::after{content:\'°○\';color:#d2ab4a;bottom:-8px;right:8px;font-size:10px;letter-spacing:1px;}',
+    '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet{background:linear-gradient(160deg,#5a0f1e,#7a1a2c 50%,#4a0b18);color:#ffe9ec;border:1px solid #d9a85c;box-shadow:inset 0 0 0 2px #5a0f1e,inset 0 0 0 3px rgba(217,168,92,.35);}',
+    '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet .mt{color:rgba(217,168,92,.8);}',
+    '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet::before{content:\'✺\';color:#e8bd6c;top:-8px;left:8px;}',
+    '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet::after{content:\'✺\';color:#e8bd6c;bottom:-8px;right:8px;}',
+    '#sbnyc-panel .sb-msg.sk-robin.sk-robin{background:linear-gradient(160deg,#9fe0da,#7fcfc8);color:#0e3b3a;border:1px solid #ffffff;box-shadow:0 0 0 1px #6fbfb8;}',
+    '#sbnyc-panel .sb-msg.sk-robin.sk-robin .mt{color:#2f7a76;}',
+    '#sbnyc-panel .sb-msg.sk-robin.sk-robin::before{content:\'❀\';color:#fff;top:-8px;left:9px;text-shadow:0 0 2px rgba(0,0,0,.15);}',
+    '#sbnyc-panel .sb-msg.sk-robin.sk-robin::after{content:\'❀\';color:#fff;bottom:-8px;right:9px;text-shadow:0 0 2px rgba(0,0,0,.15);}',
+    '#sbnyc-panel .sb-msg.sk-neon.sk-neon{background:#0d0b14;color:#f6f2ff;border:1px solid #ff4fd8;box-shadow:0 0 6px rgba(255,79,216,.55),inset 0 0 8px rgba(0,229,255,.25);text-shadow:0 0 4px rgba(255,79,216,.4);}',
+    '#sbnyc-panel .sb-msg.sk-neon.sk-neon .mt{color:#5fe8ff;}',
+    '#sbnyc-panel .sb-msg.sk-neon.sk-neon::before{content:\'▲\';color:#5fe8ff;top:-8px;left:9px;font-size:9px;text-shadow:0 0 5px #5fe8ff;}',
+    '#sbnyc-panel .sb-msg.sk-neon.sk-neon::after{content:\'●\';color:#ff4fd8;bottom:-7px;right:9px;font-size:8px;text-shadow:0 0 5px #ff4fd8;}',
+    '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard{background:radial-gradient(ellipse 5px 4px at 14% 28%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 4px 5px at 38% 70%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 5px 4px at 62% 25%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 4px 4px at 84% 62%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 4px 5px at 26% 88%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 5px 4px at 92% 18%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 8px 7px at 14% 28%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 7px 8px at 38% 70%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 8px 7px at 62% 25%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 7px 7px at 84% 62%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 7px 8px at 26% 88%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 8px 7px at 92% 18%,#b57a3a 60%,transparent 66%),linear-gradient(160deg,#e7c48e,#d4a76a);color:#2a1a0c;border:1px solid #8a5a2b;text-shadow:0 0 3px rgba(231,196,142,.9),0 0 6px rgba(231,196,142,.9);}',
+    '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard .mt{color:#6b4423;text-shadow:none;}',
+    '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard::before{content:\'♡\';color:#8a5a2b;top:-8px;left:9px;}',
+    '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard::after{content:\'♡\';color:#8a5a2b;bottom:-8px;right:9px;}',
+    '@keyframes sbnycHolo{0%{background-position:0% 50%;}100%{background-position:300% 50%;}}',
+    '@keyframes sbnycShine{0%{background-position:0% 0;}100%{background-position:250% 0;}}',
+    '@keyframes sbnycTwinkle{0%,100%{opacity:.25;transform:scale(.8);}50%{opacity:1;transform:scale(1.15);}}',
+    '@keyframes sbnycBob{0%,100%{transform:translateY(0);}50%{transform:translateY(-3px);}}',
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo{background:linear-gradient(120deg,#ffd1f3,#c2f0ff,#fff3b0,#d9c6ff,#c8ffe0,#ffd1f3);background-size:300% 300%;animation:sbnycHolo 7s linear infinite;color:#3a2b4a;border:1px solid rgba(255,255,255,.95);box-shadow:0 0 10px rgba(200,160,255,.45);}',
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo .mt{color:#7a6a92;}',
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo::before{content:\'◈\';color:#fff;top:-8px;left:9px;text-shadow:0 0 4px #c8a6ff;animation:sbnycTwinkle 2.2s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo::after{content:\'◈\';color:#fff;bottom:-8px;right:9px;text-shadow:0 0 4px #9fe6ff;animation:sbnycTwinkle 2.2s ease-in-out infinite 1.1s;}',
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling{background:linear-gradient(110deg,#d9a520 0%,#f8e27a 20%,#fff7c2 28%,#f0c84a 40%,#c48d08 60%,#f8e27a 80%,#d9a520 100%);background-size:250% 100%;animation:sbnycShine 2.6s linear infinite;color:#3a2600;border:1px solid #fff0a0;box-shadow:0 0 8px rgba(255,210,70,.6),inset 0 0 0 1px rgba(255,255,255,.5);text-shadow:0 1px 0 rgba(255,255,255,.5);}',
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling .mt{color:#7a5400;text-shadow:none;}',
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling::before{content:\'✦\';color:#fff;top:-9px;left:8px;font-size:15px;text-shadow:0 0 6px #ffe36b;animation:sbnycTwinkle 1.4s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling::after{content:\'✦\';color:#fff;bottom:-9px;right:8px;font-size:15px;text-shadow:0 0 6px #ffe36b;animation:sbnycTwinkle 1.4s ease-in-out infinite .7s;}',
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn{background:linear-gradient(135deg,#ffd6e8,#e3d1ff 50%,#c9f5ea);color:#5c3c6e;border:1px solid #fff;box-shadow:0 0 0 1px #f3c6e0,0 0 10px rgba(255,170,220,.4);}',
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn .mt{color:#9b7fb0;}',
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn::before{content:\'♥\';color:#ff7fb6;top:-9px;left:9px;animation:sbnycBob 1.6s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn::after{content:\'✧\';color:#8fd6ff;bottom:-8px;right:8px;animation:sbnycTwinkle 1.8s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy{background:radial-gradient(circle at 15% 25%,rgba(255,255,255,.95) 1px,transparent 1.6px),radial-gradient(circle at 70% 70%,rgba(255,255,255,.9) 1px,transparent 1.6px),radial-gradient(circle at 45% 55%,rgba(255,255,255,.7) .8px,transparent 1.3px),radial-gradient(circle at 88% 20%,rgba(255,255,255,.8) .8px,transparent 1.3px),radial-gradient(circle at 30% 85%,rgba(255,255,255,.8) .8px,transparent 1.3px),radial-gradient(ellipse at 60% 30%,rgba(120,80,200,.55),transparent 60%),linear-gradient(135deg,#0b1026,#231a4a 55%,#0b1026);color:#eef0ff;border:1px solid #6d5ab8;box-shadow:0 0 10px rgba(110,90,200,.45);}',
+    '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy .mt{color:#9d93d6;}',
+    '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy::before{content:\'✦\';color:#fff;top:-8px;left:9px;text-shadow:0 0 5px #b9a8ff;animation:sbnycTwinkle 2s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy::after{content:\'✧\';color:#cfe4ff;bottom:-8px;right:8px;text-shadow:0 0 5px #9fd0ff;animation:sbnycTwinkle 2s ease-in-out infinite 1s;}',
+    '@keyframes sbnycPop{from{opacity:0;transform:translateY(6px) scale(.97);}to{opacity:1;transform:none;}}',
+    '#sbnyc-panel .sb-msg.sb-new{animation:sbnycPop .38s cubic-bezier(.34,1.56,.64,1) both;}',
+    '#sbnyc-panel .sb-skgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:4px 14px 8px;}',
+    '#sbnyc-panel .sb-skcard{border:1px solid var(--line);border-radius:12px;padding:8px 8px 6px;background:var(--paper-2);display:flex;flex-direction:column;gap:6px;}',
+    '#sbnyc-panel .sb-skcard .sb-msg{max-width:100%;font-size:12px;padding:6px 10px;align-self:flex-start;margin:6px 0;}',
+    '#sbnyc-panel .sb-skcard .sk-n{font-size:12px;color:var(--ink);display:flex;justify-content:space-between;align-items:center;}',
+    '#sbnyc-panel .sb-skcard .sk-p{font-family:var(--font-en);font-size:11px;color:var(--ink-sub);}',
+    '#sbnyc-panel .sb-skbtn{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--gold);color:var(--gold);background:transparent;cursor:pointer;}',
+    '#sbnyc-panel .sb-skbtn.on{background:var(--gold);color:#fff;}',
+    '#sbnyc-panel .sb-skbtn.off{border-color:var(--ink-faint);color:var(--ink-sub);}',
   ].join('\n');
 
   // ── 挂载（先拆旧的，脚本重载/换聊天时不留双份） ──
@@ -1076,6 +1217,7 @@
       }
       if (state.game && !state.game.epoch) state.game.epoch = GAME_EPOCH_STR;
       if (state.wallet && !Array.isArray(state.wallet.allTransactions)) state.wallet.allTransactions = [];
+      if (!state.skins || typeof state.skins !== 'object') state.skins = { owned: [], active: '' };   // ✨ 气泡皮肤（老存档补档，镜像侧）
       // 👥 老存档补档（镜像侧）：私享版闺蜜群以前只是个名字特殊的联系人，现在统一当群看
       // （变量侧由 dm_generator 的 migrateGroups 落盘，这里只保证本次渲染不瞎）
       if (state.npcs) {
@@ -3003,6 +3145,7 @@
     var mag = magOf();
     var h = pageHeader('SugarElite™', 'member', true);
     h += '<div class="sb-msgs" style="display:block;">';
+    h += skinShopHtml();   // ✨ 气泡皮肤：不靠会刊，订阅了就有
     if (!mag) {
       h += '<div class="sb-empty">📡 本期会刊生成中…</div>';
     } else {
@@ -3060,7 +3203,8 @@
     }
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
-    bindPageChrome(closeChat, null, ['GUIDE', 'TEA', 'CAT', 'INVITE', 'INTEL']);   // Elite 的 🔄 只重烤会刊五版，不碰论坛
+    bindPageChrome(closeChat, null, ['GUIDE', 'TEA', 'CAT', 'INVITE', 'INTEL']);
+    bindSkinShop(chatEl);   // ✨ 皮肤按钮要在「会刊没生成就 return」之前绑   // Elite 的 🔄 只重烤会刊五版，不碰论坛
     if (!mag) { askMag(); return; }
     var scope = chatEl;
     var btns = scope.querySelectorAll('.sb-buy');
@@ -3784,17 +3928,21 @@
       for (var li = hist.length - 1; li >= 0; li--) { if (hist[li].sender === 'THEM' && !hist[li].pending) { lastThemIdx = li; break; } }
       var prevMsg = null;   // 时间分割线（UWU）：跨天插日期条，同天隔1小时+插时间条
       var prevWho = '';     // 👥 同一个人连发只在第一条标名字
+      var seenN = _seenThem[name], drawn = 0, newK = 0;   // ✨ 连发淡入：上次画到第几条
       for (var i = 0; i < hist.length; i++) {
         if (hist[i].pending) continue;   // ⏳ 还在路上的不画（剧情钟到点 revealDue 才送达）
         var dv = dividerBetween(prevMsg, hist[i]);
         if (dv) { h += dividerHtml(dv); prevWho = ''; }   // 隔了时间条就重新报一次名字
         var autoTr = !!(_pendingTrs[name + '|' + i] && hist[i].zh);
         if (autoTr) delete _pendingTrs[name + '|' + i];   // 刚才点了兜底翻译的那条：翻好自动展开（字典各销各的账）
-        h += renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx && !hasPendingNpc(npc), i === hist.length - 1, prevWho);   // 对方最后一条挂 reroll；自己的最后一条挂撤回
+        var oneH = renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx && !hasPendingNpc(npc), i === hist.length - 1, prevWho);
+        if (seenN != null && drawn >= seenN && hist[i].sender === 'THEM' && hist[i].type !== 'system') oneH = oneH.replace('class="sb-msg ', 'style="animation-delay:' + (newK++ * 0.35) + 's" class="sb-msg sb-new ');   // ✨ 连发：刚落地的依次淡入
+        h += oneH; drawn++;   // 对方最后一条挂 reroll；自己的最后一条挂撤回
         prevMsg = hist[i];
         prevWho = (isGrp && hist[i].sender === 'THEM' && hist[i].type !== 'system') ? (hist[i].who || '') : '';
       }
     }
+    _seenThem[name] = hist.length ? (typeof drawn === 'number' ? drawn : 0) : 0;   // ✨ 记下这次画了几条
     var rdM = readMark(npc);
     if (rdM) h += '<div class="sb-read' + (rdM.fresh ? ' fresh' : '') + '">已读' + (rdM.time ? ' ' + esc(rdM.time) : '') + '</div>';
     h += '</div>';
@@ -3919,6 +4067,7 @@
         var dvq = dividerBetween(prevQ, msgObj);   // 局部插入也补分割线（UWU）——不然重开聊天才出现；msgObj 已含 extra 字段
         if (dvq) box.insertAdjacentHTML('beforeend', dividerHtml(dvq));
         box.insertAdjacentHTML('beforeend', renderOneMsg(msgObj, name, npc.dm_history.length - 1, false, false, true));
+        if (_seenThem[name] != null) _seenThem[name]++;   // ✨ 连发淡入计数跟上
         box.scrollTop = box.scrollHeight;
       }
     }
@@ -4222,6 +4371,7 @@
       trH = '<span class="sb-tr-btn need" data-n="' + esc(trName) + '" data-i="' + trIdx + '">🌐 翻译</span>';
     }
     if (type === 'transfer') return '<div class="sb-msg transfer' + (isU ? ' me' : '') + '"' + dataA + ' data-tp="transfer"><div class="tl">' + (isU ? 'You sent' : 'Received') + '</div><div class="ta">' + fmtCNY(c) + '</div>' + (n ? '<div class="tl">' + esc(n) + '</div>' : '') + tH + '</div>';
+    if (type === 'skin') { var skd = SKIN_BY[c] || [c, c]; return '<div class="sb-msg transfer"' + dataA + ' data-tp="skin"><div class="tl">Gift · 气泡皮肤</div><div class="sb-msg me sk-' + esc(skd[0]) + '" style="max-width:100%;margin:6px 0 2px;font-size:12px;padding:5px 10px;">' + esc(skd[1]) + '</div><div class="tl">去 SugarElite™ 商城换上</div>' + tH + '</div>'; }
     if (type === 'gift') return '<div class="sb-msg transfer"' + dataA + ' data-tp="gift"><div class="tl">Gift · 已入衣橱</div><div class="ta" style="font-size:16px;">🎁 ' + esc(c) + '</div>' + tH + '</div>';
     if (type === 'image') {
       // 消息带 imgUrl（🎨 AI生图）→ 渲染真实 <img>；否则保持旧文字样式（UWU）
@@ -4291,11 +4441,11 @@
     // 引用回复：开头的 回"原句"： 拆成气泡内的引用小卡（长按菜单"引用回复"和NPC的引用格式都走这里）
     var qm = String(c).match(/^回\s*[""]([\s\S]{1,80}?)[""]\s*[:：]\s*([\s\S]+)$/);
     if (qm) {
-      return '<div class="sb-msg ' + cls + '"' + dataA + '>' + gsp +
+      return '<div class="sb-msg ' + cls + skinClass(isU, gWho || trName) + '"' + dataA + '>' + gsp +
         '<div class="sb-qt">' + esc(qm[1]) + '</div>' +
         esc(qm[2]).replace(/\n/g, '<br>') + tH + trH + '</div>';
     }
-    return '<div class="sb-msg ' + cls + '"' + dataA + '>' + gsp + esc(c).replace(/\n/g, '<br>') + tH + trH + '</div>';
+    return '<div class="sb-msg ' + cls + skinClass(isU, gWho || trName) + '"' + dataA + '>' + gsp + esc(c).replace(/\n/g, '<br>') + tH + trH + '</div>';
   }
 
   // ── 拖动支持（FAB 和手机面板都能拖；位置存 localStorage 记住） ──

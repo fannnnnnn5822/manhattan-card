@@ -569,6 +569,18 @@ function pushThem(sb, name, type, content, zh, delay, who) {
   var npc = ensureNpc(sb, name);
   var t = nowTime();
   // 🎁 gift：TA真买下了她转发的商品（内容=商品名——价格）→ 直接入衣橱，钱包不动（他付的）
+  // ✨ skin：S. 送 User 一套气泡皮肤（内容=代号）。闸：只认 SugarElite™、只认 SKIN_KEYS、已有的不重复；不合规整行丢
+  if (type === 'skin') {
+    var skKey = String(content || '').trim().toLowerCase();
+    if (name !== 'SugarElite™' || SKIN_KEYS.indexOf(skKey) === -1) return;
+    if (!sb.skins || typeof sb.skins !== 'object') sb.skins = { owned: [], active: '' };
+    if (!Array.isArray(sb.skins.owned)) sb.skins.owned = [];
+    if (sb.skins.owned.indexOf(skKey) !== -1) return;
+    sb.skins.owned.push(skKey);
+    if (!sb.skins.active) sb.skins.active = skKey;   // 第一套自动换上，之后换不换 User 自己在商城挑
+    try { if (typeof toastr !== 'undefined') toastr.success('✨ S. 送了你一套气泡皮肤「' + SKIN_CN[skKey] + '」', 'SugarOS'); } catch (e) {}
+    content = skKey;
+  }
   if (type === 'gift') {
     var gm = String(content).match(/^(.*?)(?:—+|--)\s*\$?([\d,.]+)\s*$/);
     var gName = (gm ? gm[1] : String(content)).trim().slice(0, 40);
@@ -899,7 +911,11 @@ function inSceneNames(plot, sb) {
 
 // ── 解析 generateRaw 输出：每行 名字|类型|内容 ──
 // 严格模式：只认 名字|合法类型|内容。挡掉预设(如Mortal)注入的 <horae> 标签 + npc:/time: 等字段行。
-var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker', 'block', 'unblock'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单/sticker=表情包/block·unblock=TA拉黑·解除拉黑 User
+var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker', 'block', 'unblock', 'skin'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单/sticker=表情包/block·unblock=TA拉黑·解除拉黑 User
+// ✨ 气泡皮肤（2026-10-09）：skin 行只认 S.（SugarElite™）发、只认这张表里的代号——提示词管不住的这里管
+var SKIN_KEYS = ['gold', 'moon', 'jade', 'bubbly', 'velvet', 'robin', 'lace', 'iron', 'neon', 'leopard', 'galaxy', 'holo', 'bling', 'unicorn'];
+var SKIN_CN = { gold: '古典金', moon: '月光银', jade: '翡翠', bubbly: '香槟', velvet: '红丝绒', robin: '知更鸟蓝', lace: '粉色蕾丝', iron: '哥特铁艺', neon: '霓虹', leopard: '豹纹', galaxy: '星河', holo: '全息', bling: '金光闪闪', unicorn: '独角兽' };
+
 // 👥 群行允许的类型：聊天类 + 群专属（leave=退群 / who=交代代号背后是谁 / dm=群里有人私下加你）。
 // 钱类（transfer/gift/paybill）和 tag/sched/song/block/unblock 在群行里一律丢弃——钱只走私信一个口子。
 var GROUP_TYPES = ['text', 'voice', 'image', 'sticker', 'recall', 'leave', 'who', 'dm'];
@@ -1378,6 +1394,7 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
     '- 拉黑（极稀有，比撤回还稀有）：TA 被冒犯到底、受够了、或高危人设觉得暴露风险时，可以发 名字|block|一句话理由 —— 之后 User 的消息发不出去（拒收），TA 也不再回复，直到剧情里两人真的和好，TA 先发 名字|unblock| 再说话。冷淡不是拉黑，拉黑是关门\n' +
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
     '- 真买下她转发的商品（**真买才写，口头答应不算**）：名字|gift|商品名——价格数字（照她链接里的原样），系统会把东西直接放进她衣橱。通常配一条 text 说句话\n' +
+    (sb.sugarelite && sb.sugarelite.subscribed ? '- S. 专属（只有 SugarElite™ 能发，别人写了无效）：送 User 一套气泡皮肤 SugarElite™|skin|代号 —— 代号只能是 ' + SKIN_KEYS.map(function (k) { return k + '=' + SKIN_CN[k]; }).join('／') + '。只在有由头时送（会员礼遇、庆祝、赔罪、User 刚念叨过想换个样子），一次一套，配一条 text 说一句；User 已有：' + ((sb.skins && Array.isArray(sb.skins.owned) && sb.skins.owned.length) ? sb.skins.owned.map(function (k) { return SKIN_CN[k] || k; }).join('、') : '还没有') + '，已有的不再送\n' : '') +
     '- 真替她交账单（只在她转发过账单、且这个人真愿意时）：名字|paybill|账单名（照她转发的名字写），系统会把这张账单标成已付进入下期；只想给钱让她自己交的就发 transfer\n' +
     '- 严禁输出任何叙事、旁白、环境描写、心理描写、解释、标题、空行以外的东西\n' +
     '- 严禁代替 User 说话或回复\n' +
