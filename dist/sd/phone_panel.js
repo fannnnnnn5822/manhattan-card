@@ -39,13 +39,6 @@
   // 群气泡上方那行小名字的颜色：按名字哈希从八色盘取，同一个人在整局里永远同一个颜色（S./Akuma 保留金和粉）
   // 低饱和中间调，浅纸底和夜间深底上都读得出、彼此分得开；前两个是保留位（S. 金＝面板的 --gold，Akuma 粉）
   var GSP_COLORS = ['#c9a566', '#d98fae', '#7396c9', '#6aa885', '#c08472', '#9a86cc', '#c0a35f', '#6fa5a5'];
-  // 对方消息旁的小头像：私聊=通讯录同款（首字母金圈，S. 黑底金星）；群里按说话人着色（和名字标签同色）
-  function msgAvatar(nm, inGroup) {
-    var isSE = nm === 'SugarElite™' || nm === 'S.';
-    var ch = isSE ? '✦' : esc((String(nm || '').replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase());
-    var st = (inGroup && !isSE) ? ' style="color:' + speakerColor(nm) + ';border-color:' + speakerColor(nm) + ';"' : '';
-    return '<span class="sb-mava' + (isSE ? ' se' : '') + '"' + st + '>' + ch + '</span>';
-  }
   function speakerColor(who) {
     if (who === 'SugarElite™' || who === 'S.') return GSP_COLORS[0];
     if (who === 'Akuma') return GSP_COLORS[1];
@@ -612,10 +605,10 @@
     var h = '<div class="sb-sec">Signature Bubbles · 气泡皮肤</div>';
     h += '<div class="sb-empty" style="padding:2px 16px 6px;">换你自己气泡的样子。有了第一套之后，几位有自己风格的人也会露出他们的款。</div>';
     h += '<div class="sb-skgrid">';
-    h += '<div class="sb-skcard"><div class="sb-msg me">原版</div><div class="sk-n"><span>原版</span><button class="sb-skbtn' + (s.active ? '' : ' on') + '" data-sk="">' + (s.active ? '换上' : '使用中') + '</button></div></div>';
+    h += '<div class="sb-skcard"><div class="sb-skprev"><div class="sb-msg them">原版</div><div class="sb-msg me">原版</div></div><div class="sk-n"><span>原版</span><button class="sb-skbtn' + (s.active ? '' : ' on') + '" data-sk="">' + (s.active ? '换上' : '使用中') + '</button></div></div>';
     for (var i = 0; i < SKINS.length; i++) {
       var k = SKINS[i][0], cn = SKINS[i][1], p = SKINS[i][2], own = s.owned.indexOf(k) !== -1;
-      h += '<div class="sb-skcard"><div class="sb-msg me sk-' + k + '">' + cn + '</div><div class="sk-n"><span>' + cn + (own ? '' : ' <span class="sk-p">' + fmtCNY(p) + '</span>') + '</span>' +
+      h += '<div class="sb-skcard"><div class="sb-skprev"><div class="sb-msg them sk-' + k + '">' + cn + '</div><div class="sb-msg me sk-' + k + '">' + cn + '</div></div><div class="sk-n"><span>' + cn + (own ? '' : ' <span class="sk-p">' + fmtCNY(p) + '</span>') + '</span>' +
         '<button class="sb-skbtn' + (own ? (s.active === k ? ' on' : '') : ' off') + '" data-sk="' + k + '">' + (own ? (s.active === k ? '使用中' : '换上') : '买') + '</button></div></div>';
     }
     return h + '</div>';
@@ -1060,97 +1053,142 @@
     '#sbnyc-panel .sb-wp-upload input{display:none;}',
     '#sbnyc-panel .sb-wp-clear{cursor:pointer;color:var(--red);border:.5px solid var(--red);border-radius:999px;padding:3px 10px;font-size:11px;margin-left:4px;opacity:.7;}',
     '#sbnyc-panel .sb-wp-clear:hover{opacity:1;}',
-    /* ✨ 气泡皮肤（2026-10-09）：选择器写双份 .sk-x.sk-x 是为了压过宿主 .night .sb-msg.them 那条同权重规则 */
-    '#sbnyc-panel .sb-msg[class*=" sk-"]{position:relative;margin-top:5px;margin-bottom:5px;font-weight:500;}',
+    /* ✨ 气泡皮肤 v2（2026-10-09 Fan 定：每款成套两件——TA 那件浅、你那件深，同一调色盘；不靠头像）。选择器写双份 .sk-x.sk-x 压过宿主 .night .sb-msg.them 同权重规则；TA 的 them.sk-x.sk-x 再高一级 */
+    '#sbnyc-panel .sb-msg[class*=" sk-"]{position:relative;margin-top:5px;margin-bottom:5px;}',
     '#sbnyc-panel .sb-msg[class*=" sk-"]::before,#sbnyc-panel .sb-msg[class*=" sk-"]::after{position:absolute;font-size:13px;line-height:1;pointer-events:none;opacity:.9;}',
+    '#sbnyc-panel .sb-msg.me .mt .sent{font-size:9px;margin-left:3px;opacity:.85;}',
+    /* 古典金：你=黑丝绒金线；TA=象牙羊皮纸金线 */
     '#sbnyc-panel .sb-msg.sk-gold.sk-gold{background:linear-gradient(160deg,#1c1a17,#2a2520 60%,#1c1a17);color:#f1e3bf;border:1px solid #b8975a;box-shadow:inset 0 0 0 2px #1c1a17,inset 0 0 0 3px rgba(212,184,138,.45);}',
     '#sbnyc-panel .sb-msg.sk-gold.sk-gold .mt{color:rgba(212,184,138,.7);}',
     '#sbnyc-panel .sb-msg.sk-gold.sk-gold::before{content:\'❦\';color:#d4b88a;top:-7px;left:9px;}',
     '#sbnyc-panel .sb-msg.sk-gold.sk-gold::after{content:\'❦\';color:#d4b88a;bottom:-7px;right:9px;transform:rotate(180deg);}',
-    '#sbnyc-panel .sb-msg.sk-lace.sk-lace{background:linear-gradient(180deg,#fff3f6,#ffe4ec);color:#6b2a44;border:1px solid #f2b8cc;outline:1px dashed #f6cddb;outline-offset:-4px;}',
-    '#sbnyc-panel .sb-msg.sk-lace.sk-lace .mt{color:#c98aa3;}',
-    '#sbnyc-panel .sb-msg.sk-lace.sk-lace::before{content:\'୨୧\';color:#e68fb0;top:-8px;left:50%;transform:translateX(-50%);font-size:10px;background:#fff3f6;padding:0 3px;border-radius:6px;}',
-    '#sbnyc-panel .sb-msg.sk-lace.sk-lace::after{content:\'୨୧\';color:#e68fb0;bottom:-8px;left:50%;transform:translateX(-50%);font-size:10px;background:#ffe4ec;padding:0 3px;border-radius:6px;}',
-    '#sbnyc-panel.night .sb-msg.sk-lace.sk-lace{background:linear-gradient(180deg,#3a2430,#2c1a24);color:#f7d6e3;border-color:#8a4f68;outline-color:#6d3f54;}',
-    '#sbnyc-panel.night .sb-msg.sk-lace.sk-lace .mt{color:#b986a0;}',
-    '#sbnyc-panel.night .sb-msg.sk-lace.sk-lace::before{background:#3a2430;}#sbnyc-panel.night .sb-msg.sk-lace.sk-lace::after{background:#2c1a24;}',
-    '#sbnyc-panel .sb-msg.sk-iron.sk-iron{background:linear-gradient(180deg,#2b2d33,#17181c);color:#d9d6cf;border:1px solid #6a6d75;box-shadow:inset 0 0 0 1px #000,0 0 0 1px #3b3e45;border-radius:6px!important;}',
+    '#sbnyc-panel .sb-msg.them.sk-gold.sk-gold{background:linear-gradient(160deg,#fbf5e6,#f1e6cc);color:#3a2e14;border-color:#c9a861;box-shadow:inset 0 0 0 2px #fbf5e6,inset 0 0 0 3px rgba(184,151,90,.4);}',
+    '#sbnyc-panel .sb-msg.them.sk-gold.sk-gold .mt{color:#a8894f;}',
+    '#sbnyc-panel .sb-msg.them.sk-gold.sk-gold::before,#sbnyc-panel .sb-msg.them.sk-gold.sk-gold::after{color:#b8975a;}',
+    /* 粉色蕾丝：你=玫瑰粉；TA=奶白镶粉边 */
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace{background:linear-gradient(180deg,#ffd9e6,#ffc3d7);color:#6b2a44;border:1px solid #e99ab8;outline:1px dashed #f6cddb;outline-offset:-4px;}',
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace .mt{color:#b86d8d;}',
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace::before{content:\'୨୧\';color:#e06a9a;top:-8px;left:50%;transform:translateX(-50%);font-size:10px;background:#ffd9e6;padding:0 3px;border-radius:6px;}',
+    '#sbnyc-panel .sb-msg.sk-lace.sk-lace::after{content:\'୨୧\';color:#e06a9a;bottom:-8px;left:50%;transform:translateX(-50%);font-size:10px;background:#ffc3d7;padding:0 3px;border-radius:6px;}',
+    '#sbnyc-panel .sb-msg.them.sk-lace.sk-lace{background:linear-gradient(180deg,#fffafc,#fff0f5);color:#6b2a44;border-color:#f2b8cc;outline-color:#f9dde7;}',
+    '#sbnyc-panel .sb-msg.them.sk-lace.sk-lace .mt{color:#c98aa3;}',
+    '#sbnyc-panel .sb-msg.them.sk-lace.sk-lace::before{background:#fffafc;color:#e68fb0;}#sbnyc-panel .sb-msg.them.sk-lace.sk-lace::after{background:#fff0f5;color:#e68fb0;}',
+    /* 哥特铁艺：你=黑铁；TA=锻银 */
+    '#sbnyc-panel .sb-msg.sk-iron.sk-iron{background:linear-gradient(180deg,#2b2d33,#17181c);color:#d9d6cf;border:1px solid #6a6d75;box-shadow:inset 0 0 0 1px #000,0 0 0 1px #3b3e45;border-radius:6px 6px 2px 6px!important;}',
     '#sbnyc-panel .sb-msg.sk-iron.sk-iron .mt{color:#8a8d95;}',
     '#sbnyc-panel .sb-msg.sk-iron.sk-iron::before{content:\'♜\';color:#a3a7b0;top:-8px;left:7px;text-shadow:0 1px 0 #000;}',
     '#sbnyc-panel .sb-msg.sk-iron.sk-iron::after{content:\'✠\';color:#7d8089;bottom:-7px;right:8px;font-size:11px;}',
-    '#sbnyc-panel .sb-msg.sk-moon.sk-moon{background:linear-gradient(135deg,#f0ecfa,#e2dcf4);color:#3d3356;border:1px solid #c9bfe6;box-shadow:0 0 0 1px rgba(255,255,255,.7) inset,0 0 10px rgba(180,165,230,.35);}',
-    '#sbnyc-panel .sb-msg.sk-moon.sk-moon .mt{color:#9a8fbf;}',
-    '#sbnyc-panel .sb-msg.sk-moon.sk-moon::before{content:\'☾\';color:#8f7fcf;top:-8px;left:8px;}',
-    '#sbnyc-panel .sb-msg.sk-moon.sk-moon::after{content:\'✧\';color:#a89bdd;bottom:-7px;right:7px;font-size:11px;}',
-    '#sbnyc-panel.night .sb-msg.sk-moon.sk-moon{background:linear-gradient(135deg,#2a2440,#1d1930);color:#e6dff7;border-color:#5a4f85;box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 0 10px rgba(150,130,220,.3);}',
-    '#sbnyc-panel.night .sb-msg.sk-moon.sk-moon .mt{color:#8f84b5;}',
+    '#sbnyc-panel .sb-msg.them.sk-iron.sk-iron{background:linear-gradient(180deg,#e4e6ea,#c9ccd3);color:#1d1f24;border-color:#7a7e88;box-shadow:inset 0 0 0 1px #fff,0 0 0 1px #9a9ea8;border-radius:6px 6px 6px 2px!important;}',
+    '#sbnyc-panel .sb-msg.them.sk-iron.sk-iron .mt{color:#5c6069;}',
+    '#sbnyc-panel .sb-msg.them.sk-iron.sk-iron::before{color:#3b3e45;text-shadow:0 1px 0 #fff;}#sbnyc-panel .sb-msg.them.sk-iron.sk-iron::after{color:#5c6069;}',
+    /* 月光银：你=夜紫；TA=月光淡紫 */
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon{background:linear-gradient(135deg,#2a2440,#1d1930);color:#e6dff7;border:1px solid #5a4f85;box-shadow:0 0 0 1px rgba(255,255,255,.08) inset,0 0 10px rgba(150,130,220,.3);}',
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon .mt{color:#8f84b5;}',
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon::before{content:\'☾\';color:#b9a8ff;top:-8px;left:8px;}',
+    '#sbnyc-panel .sb-msg.sk-moon.sk-moon::after{content:\'✧\';color:#cfc2ff;bottom:-7px;right:7px;font-size:11px;}',
+    '#sbnyc-panel .sb-msg.them.sk-moon.sk-moon{background:linear-gradient(135deg,#f0ecfa,#e2dcf4);color:#3d3356;border-color:#c9bfe6;box-shadow:0 0 0 1px rgba(255,255,255,.7) inset,0 0 10px rgba(180,165,230,.35);}',
+    '#sbnyc-panel .sb-msg.them.sk-moon.sk-moon .mt{color:#9a8fbf;}',
+    '#sbnyc-panel .sb-msg.them.sk-moon.sk-moon::before{color:#8f7fcf;}#sbnyc-panel .sb-msg.them.sk-moon.sk-moon::after{color:#a89bdd;}',
+    /* 翡翠：你=祖母绿金边；TA=青瓷金边 */
     '#sbnyc-panel .sb-msg.sk-jade.sk-jade{background:linear-gradient(150deg,#0f3b2e,#19594a 55%,#0f3b2e);color:#e9f5ec;border:1px solid #c9a961;box-shadow:inset 0 0 0 2px #0f3b2e,inset 0 0 0 3px rgba(201,169,97,.4);}',
     '#sbnyc-panel .sb-msg.sk-jade.sk-jade .mt{color:rgba(201,169,97,.75);}',
     '#sbnyc-panel .sb-msg.sk-jade.sk-jade::before{content:\'❖\';color:#dcc27a;top:-7px;left:9px;font-size:11px;}',
     '#sbnyc-panel .sb-msg.sk-jade.sk-jade::after{content:\'❖\';color:#dcc27a;bottom:-7px;right:9px;font-size:11px;}',
-    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly{background:radial-gradient(circle at 18% 30%,rgba(255,255,255,.9) 1.2px,transparent 2px),radial-gradient(circle at 72% 65%,rgba(255,255,255,.9) 1.2px,transparent 2px),radial-gradient(circle at 40% 80%,rgba(255,255,255,.8) 1px,transparent 1.8px),radial-gradient(circle at 88% 22%,rgba(255,255,255,.8) 1px,transparent 1.8px),linear-gradient(160deg,#fbf0d2,#f1dca3);color:#5a4416;border:1px solid #e3c87f;}',
-    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly .mt{color:#b2944e;}',
-    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly::before{content:\'✦\';color:#d2ab4a;top:-7px;left:9px;font-size:10px;}',
-    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly::after{content:\'°○\';color:#d2ab4a;bottom:-8px;right:8px;font-size:10px;letter-spacing:1px;}',
+    '#sbnyc-panel .sb-msg.them.sk-jade.sk-jade{background:linear-gradient(150deg,#eaf5ee,#d5e9dd);color:#143c2f;border-color:#c9a961;box-shadow:inset 0 0 0 2px #eaf5ee,inset 0 0 0 3px rgba(201,169,97,.35);}',
+    '#sbnyc-panel .sb-msg.them.sk-jade.sk-jade .mt{color:#5f8a74;}',
+    '#sbnyc-panel .sb-msg.them.sk-jade.sk-jade::before,#sbnyc-panel .sb-msg.them.sk-jade.sk-jade::after{color:#b8975a;}',
+    /* 香槟：你=金香槟；TA=奶油香槟，都带细泡 */
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly{background:radial-gradient(circle at 18% 30%,rgba(255,255,255,.9) 1.2px,transparent 2px),radial-gradient(circle at 72% 65%,rgba(255,255,255,.9) 1.2px,transparent 2px),radial-gradient(circle at 40% 80%,rgba(255,255,255,.8) 1px,transparent 1.8px),radial-gradient(circle at 88% 22%,rgba(255,255,255,.8) 1px,transparent 1.8px),linear-gradient(160deg,#e9c86f,#d2a63d);color:#3f2d08;border:1px solid #c9a23a;}',
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly .mt{color:#7a5a16;}',
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly::before{content:\'✦\';color:#fff3c4;top:-7px;left:9px;font-size:10px;}',
+    '#sbnyc-panel .sb-msg.sk-bubbly.sk-bubbly::after{content:\'°○\';color:#fff3c4;bottom:-8px;right:8px;font-size:10px;letter-spacing:1px;}',
+    '#sbnyc-panel .sb-msg.them.sk-bubbly.sk-bubbly{background:radial-gradient(circle at 18% 30%,rgba(255,255,255,.95) 1.2px,transparent 2px),radial-gradient(circle at 72% 65%,rgba(255,255,255,.95) 1.2px,transparent 2px),radial-gradient(circle at 40% 80%,rgba(255,255,255,.85) 1px,transparent 1.8px),radial-gradient(circle at 88% 22%,rgba(255,255,255,.85) 1px,transparent 1.8px),linear-gradient(160deg,#fbf0d2,#f1dca3);color:#5a4416;border-color:#e3c87f;}',
+    '#sbnyc-panel .sb-msg.them.sk-bubbly.sk-bubbly .mt{color:#b2944e;}',
+    '#sbnyc-panel .sb-msg.them.sk-bubbly.sk-bubbly::before,#sbnyc-panel .sb-msg.them.sk-bubbly.sk-bubbly::after{color:#d2ab4a;}',
+    /* 红丝绒：你=勃艮第金穗；TA=玫瑰雾金穗 */
     '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet{background:linear-gradient(160deg,#5a0f1e,#7a1a2c 50%,#4a0b18);color:#ffe9ec;border:1px solid #d9a85c;box-shadow:inset 0 0 0 2px #5a0f1e,inset 0 0 0 3px rgba(217,168,92,.35);}',
     '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet .mt{color:rgba(217,168,92,.8);}',
     '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet::before{content:\'✺\';color:#e8bd6c;top:-8px;left:8px;}',
     '#sbnyc-panel .sb-msg.sk-velvet.sk-velvet::after{content:\'✺\';color:#e8bd6c;bottom:-8px;right:8px;}',
-    '#sbnyc-panel .sb-msg.sk-robin.sk-robin{background:linear-gradient(160deg,#9fe0da,#7fcfc8);color:#0e3b3a;border:1px solid #ffffff;box-shadow:0 0 0 1px #6fbfb8;}',
-    '#sbnyc-panel .sb-msg.sk-robin.sk-robin .mt{color:#2f7a76;}',
+    '#sbnyc-panel .sb-msg.them.sk-velvet.sk-velvet{background:linear-gradient(160deg,#fbe9ec,#f3d3d9);color:#4a0b18;border-color:#d9a85c;box-shadow:inset 0 0 0 2px #fbe9ec,inset 0 0 0 3px rgba(217,168,92,.3);}',
+    '#sbnyc-panel .sb-msg.them.sk-velvet.sk-velvet .mt{color:#9a4a5c;}',
+    '#sbnyc-panel .sb-msg.them.sk-velvet.sk-velvet::before,#sbnyc-panel .sb-msg.them.sk-velvet.sk-velvet::after{color:#c9954a;}',
+    /* 知更鸟蓝：你=小蓝盒；TA=蛋壳薄荷 */
+    '#sbnyc-panel .sb-msg.sk-robin.sk-robin{background:linear-gradient(160deg,#8ad8d1,#5fbfb7);color:#0b3331;border:1px solid #fff;box-shadow:0 0 0 1px #5fb3ac;}',
+    '#sbnyc-panel .sb-msg.sk-robin.sk-robin .mt{color:#1f5f5b;}',
     '#sbnyc-panel .sb-msg.sk-robin.sk-robin::before{content:\'❀\';color:#fff;top:-8px;left:9px;text-shadow:0 0 2px rgba(0,0,0,.15);}',
     '#sbnyc-panel .sb-msg.sk-robin.sk-robin::after{content:\'❀\';color:#fff;bottom:-8px;right:9px;text-shadow:0 0 2px rgba(0,0,0,.15);}',
-    '#sbnyc-panel .sb-msg.sk-neon.sk-neon{background:#0d0b14;color:#f6f2ff;border:1px solid #ff4fd8;box-shadow:0 0 6px rgba(255,79,216,.55),inset 0 0 8px rgba(0,229,255,.25);text-shadow:0 0 4px rgba(255,79,216,.4);}',
-    '#sbnyc-panel .sb-msg.sk-neon.sk-neon .mt{color:#5fe8ff;}',
-    '#sbnyc-panel .sb-msg.sk-neon.sk-neon::before{content:\'▲\';color:#5fe8ff;top:-8px;left:9px;font-size:9px;text-shadow:0 0 5px #5fe8ff;}',
+    '#sbnyc-panel .sb-msg.them.sk-robin.sk-robin{background:linear-gradient(160deg,#eefaf8,#d6f1ee);color:#0e3b3a;border-color:#fff;box-shadow:0 0 0 1px #9fd8d2;}',
+    '#sbnyc-panel .sb-msg.them.sk-robin.sk-robin .mt{color:#4f8f8a;}',
+    '#sbnyc-panel .sb-msg.them.sk-robin.sk-robin::before,#sbnyc-panel .sb-msg.them.sk-robin.sk-robin::after{color:#7fcfc8;text-shadow:none;}',
+    /* 霓虹：你=粉霓虹；TA=青霓虹，同一间夜店 */
+    '#sbnyc-panel .sb-msg.sk-neon.sk-neon{background:#0d0b14;color:#f6f2ff;border:1px solid #ff4fd8;box-shadow:0 0 6px rgba(255,79,216,.55),inset 0 0 8px rgba(255,79,216,.2);text-shadow:0 0 4px rgba(255,79,216,.4);}',
+    '#sbnyc-panel .sb-msg.sk-neon.sk-neon .mt{color:#ff9ae8;}',
+    '#sbnyc-panel .sb-msg.sk-neon.sk-neon::before{content:\'▲\';color:#ff4fd8;top:-8px;left:9px;font-size:9px;text-shadow:0 0 5px #ff4fd8;}',
     '#sbnyc-panel .sb-msg.sk-neon.sk-neon::after{content:\'●\';color:#ff4fd8;bottom:-7px;right:9px;font-size:8px;text-shadow:0 0 5px #ff4fd8;}',
+    '#sbnyc-panel .sb-msg.them.sk-neon.sk-neon{background:#0b1016;color:#eefcff;border-color:#2fe3ff;box-shadow:0 0 6px rgba(47,227,255,.5),inset 0 0 8px rgba(47,227,255,.18);text-shadow:0 0 4px rgba(47,227,255,.35);}',
+    '#sbnyc-panel .sb-msg.them.sk-neon.sk-neon .mt{color:#7fe9ff;}',
+    '#sbnyc-panel .sb-msg.them.sk-neon.sk-neon::before,#sbnyc-panel .sb-msg.them.sk-neon.sk-neon::after{color:#2fe3ff;text-shadow:0 0 5px #2fe3ff;}',
+    /* 豹纹：你=驼色豹纹；TA=雪豹（奶白底灰斑） */
     '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard{background:radial-gradient(ellipse 5px 4px at 14% 28%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 4px 5px at 38% 70%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 5px 4px at 62% 25%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 4px 4px at 84% 62%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 4px 5px at 26% 88%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 5px 4px at 92% 18%,#3a2412 55%,transparent 60%),radial-gradient(ellipse 8px 7px at 14% 28%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 7px 8px at 38% 70%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 8px 7px at 62% 25%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 7px 7px at 84% 62%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 7px 8px at 26% 88%,#b57a3a 60%,transparent 66%),radial-gradient(ellipse 8px 7px at 92% 18%,#b57a3a 60%,transparent 66%),linear-gradient(160deg,#e7c48e,#d4a76a);color:#2a1a0c;border:1px solid #8a5a2b;text-shadow:0 0 3px rgba(231,196,142,.9),0 0 6px rgba(231,196,142,.9);}',
     '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard .mt{color:#6b4423;text-shadow:none;}',
     '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard::before{content:\'♡\';color:#8a5a2b;top:-8px;left:9px;}',
     '#sbnyc-panel .sb-msg.sk-leopard.sk-leopard::after{content:\'♡\';color:#8a5a2b;bottom:-8px;right:9px;}',
+    '#sbnyc-panel .sb-msg.them.sk-leopard.sk-leopard{background:radial-gradient(ellipse 5px 4px at 14% 28%,#4a4a4a 55%,transparent 60%),radial-gradient(ellipse 4px 5px at 38% 70%,#4a4a4a 55%,transparent 60%),radial-gradient(ellipse 5px 4px at 62% 25%,#4a4a4a 55%,transparent 60%),radial-gradient(ellipse 4px 4px at 84% 62%,#4a4a4a 55%,transparent 60%),radial-gradient(ellipse 4px 5px at 26% 88%,#4a4a4a 55%,transparent 60%),radial-gradient(ellipse 5px 4px at 92% 18%,#4a4a4a 55%,transparent 60%),radial-gradient(ellipse 8px 7px at 14% 28%,#bdb6ad 60%,transparent 66%),radial-gradient(ellipse 7px 8px at 38% 70%,#bdb6ad 60%,transparent 66%),radial-gradient(ellipse 8px 7px at 62% 25%,#bdb6ad 60%,transparent 66%),radial-gradient(ellipse 7px 7px at 84% 62%,#bdb6ad 60%,transparent 66%),radial-gradient(ellipse 7px 8px at 26% 88%,#bdb6ad 60%,transparent 66%),radial-gradient(ellipse 8px 7px at 92% 18%,#bdb6ad 60%,transparent 66%),linear-gradient(160deg,#f6f1e8,#e9e2d6);color:#2a2420;border-color:#9a8f82;text-shadow:0 0 3px rgba(246,241,232,.95),0 0 6px rgba(246,241,232,.95);}',
+    '#sbnyc-panel .sb-msg.them.sk-leopard.sk-leopard .mt{color:#6f665c;text-shadow:none;}',
+    '#sbnyc-panel .sb-msg.them.sk-leopard.sk-leopard::before,#sbnyc-panel .sb-msg.them.sk-leopard.sk-leopard::after{color:#8a7f72;}',
+    /* —— 花里胡哨四款（带动画）—— */
     '@keyframes sbnycHolo{0%{background-position:0% 50%;}100%{background-position:300% 50%;}}',
     '@keyframes sbnycShine{0%{background-position:0% 0;}100%{background-position:250% 0;}}',
     '@keyframes sbnycTwinkle{0%,100%{opacity:.25;transform:scale(.8);}50%{opacity:1;transform:scale(1.15);}}',
     '@keyframes sbnycBob{0%,100%{transform:translateY(0);}50%{transform:translateY(-3px);}}',
-    '#sbnyc-panel .sb-msg.sk-holo.sk-holo{background:linear-gradient(120deg,#ffd1f3,#c2f0ff,#fff3b0,#d9c6ff,#c8ffe0,#ffd1f3);background-size:300% 300%;animation:sbnycHolo 7s linear infinite;color:#3a2b4a;border:1px solid rgba(255,255,255,.95);box-shadow:0 0 10px rgba(200,160,255,.45);}',
-    '#sbnyc-panel .sb-msg.sk-holo.sk-holo .mt{color:#7a6a92;}',
-    '#sbnyc-panel .sb-msg.sk-holo.sk-holo::before{content:\'◈\';color:#fff;top:-8px;left:9px;text-shadow:0 0 4px #c8a6ff;animation:sbnycTwinkle 2.2s ease-in-out infinite;}',
-    '#sbnyc-panel .sb-msg.sk-holo.sk-holo::after{content:\'◈\';color:#fff;bottom:-8px;right:9px;text-shadow:0 0 4px #9fe6ff;animation:sbnycTwinkle 2.2s ease-in-out infinite 1.1s;}',
-    '#sbnyc-panel .sb-msg.sk-bling.sk-bling{background:linear-gradient(110deg,#d9a520 0%,#f8e27a 20%,#fff7c2 28%,#f0c84a 40%,#c48d08 60%,#f8e27a 80%,#d9a520 100%);background-size:250% 100%;animation:sbnycShine 2.6s linear infinite;color:#3a2600;border:1px solid #fff0a0;box-shadow:0 0 8px rgba(255,210,70,.6),inset 0 0 0 1px rgba(255,255,255,.5);text-shadow:0 1px 0 rgba(255,255,255,.5);}',
-    '#sbnyc-panel .sb-msg.sk-bling.sk-bling .mt{color:#7a5400;text-shadow:none;}',
-    '#sbnyc-panel .sb-msg.sk-bling.sk-bling::before{content:\'✦\';color:#fff;top:-9px;left:8px;font-size:15px;text-shadow:0 0 6px #ffe36b;animation:sbnycTwinkle 1.4s ease-in-out infinite;}',
-    '#sbnyc-panel .sb-msg.sk-bling.sk-bling::after{content:\'✦\';color:#fff;bottom:-9px;right:8px;font-size:15px;text-shadow:0 0 6px #ffe36b;animation:sbnycTwinkle 1.4s ease-in-out infinite .7s;}',
-    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn{background:linear-gradient(135deg,#ffd6e8,#e3d1ff 50%,#c9f5ea);color:#5c3c6e;border:1px solid #fff;box-shadow:0 0 0 1px #f3c6e0,0 0 10px rgba(255,170,220,.4);}',
-    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn .mt{color:#9b7fb0;}',
-    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn::before{content:\'♥\';color:#ff7fb6;top:-9px;left:9px;animation:sbnycBob 1.6s ease-in-out infinite;}',
-    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn::after{content:\'✧\';color:#8fd6ff;bottom:-8px;right:8px;animation:sbnycTwinkle 1.8s ease-in-out infinite;}',
+    /* 星河：你=深空；TA=暮色（同一片天，浅一层） */
     '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy{background:radial-gradient(circle at 15% 25%,rgba(255,255,255,.95) 1px,transparent 1.6px),radial-gradient(circle at 70% 70%,rgba(255,255,255,.9) 1px,transparent 1.6px),radial-gradient(circle at 45% 55%,rgba(255,255,255,.7) .8px,transparent 1.3px),radial-gradient(circle at 88% 20%,rgba(255,255,255,.8) .8px,transparent 1.3px),radial-gradient(circle at 30% 85%,rgba(255,255,255,.8) .8px,transparent 1.3px),radial-gradient(ellipse at 60% 30%,rgba(120,80,200,.55),transparent 60%),linear-gradient(135deg,#0b1026,#231a4a 55%,#0b1026);color:#eef0ff;border:1px solid #6d5ab8;box-shadow:0 0 10px rgba(110,90,200,.45);}',
     '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy .mt{color:#9d93d6;}',
     '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy::before{content:\'✦\';color:#fff;top:-8px;left:9px;text-shadow:0 0 5px #b9a8ff;animation:sbnycTwinkle 2s ease-in-out infinite;}',
     '#sbnyc-panel .sb-msg.sk-galaxy.sk-galaxy::after{content:\'✧\';color:#cfe4ff;bottom:-8px;right:8px;text-shadow:0 0 5px #9fd0ff;animation:sbnycTwinkle 2s ease-in-out infinite 1s;}',
+    '#sbnyc-panel .sb-msg.them.sk-galaxy.sk-galaxy{background:radial-gradient(circle at 15% 25%,rgba(80,60,160,.9) 1px,transparent 1.6px),radial-gradient(circle at 70% 70%,rgba(80,60,160,.85) 1px,transparent 1.6px),radial-gradient(circle at 88% 20%,rgba(80,60,160,.7) .8px,transparent 1.3px),radial-gradient(circle at 40% 85%,rgba(80,60,160,.7) .8px,transparent 1.3px),radial-gradient(ellipse at 60% 30%,rgba(255,190,230,.45),transparent 60%),linear-gradient(135deg,#e6e1fb,#cfc6f3 55%,#e6e1fb);color:#2a2250;border-color:#a99bdd;box-shadow:0 0 8px rgba(150,130,220,.3);}',
+    '#sbnyc-panel .sb-msg.them.sk-galaxy.sk-galaxy .mt{color:#7a6fae;}',
+    '#sbnyc-panel .sb-msg.them.sk-galaxy.sk-galaxy::before,#sbnyc-panel .sb-msg.them.sk-galaxy.sk-galaxy::after{color:#6d5ab8;text-shadow:0 0 4px #cfc2ff;}',
+    /* 全息：你=满饱和流动彩虹；TA=雾面全息 */
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo{background:linear-gradient(120deg,#ffb8ec,#9fe6ff,#fff0a0,#c9b0ff,#b0ffd6,#ffb8ec);background-size:300% 300%;animation:sbnycHolo 7s linear infinite;color:#3a2b4a;border:1px solid rgba(255,255,255,.95);box-shadow:0 0 10px rgba(200,160,255,.5);}',
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo .mt{color:#6a5a82;}',
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo::before{content:\'◈\';color:#fff;top:-8px;left:9px;text-shadow:0 0 4px #c8a6ff;animation:sbnycTwinkle 2.2s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-holo.sk-holo::after{content:\'◈\';color:#fff;bottom:-8px;right:9px;text-shadow:0 0 4px #9fe6ff;animation:sbnycTwinkle 2.2s ease-in-out infinite 1.1s;}',
+    '#sbnyc-panel .sb-msg.them.sk-holo.sk-holo{background:linear-gradient(120deg,#ffe4f7,#e3f7ff,#fffae0,#efe6ff,#e4fff1,#ffe4f7);background-size:300% 300%;animation:sbnycHolo 9s linear infinite;color:#4a3b5a;box-shadow:0 0 8px rgba(200,160,255,.3);}',
+    '#sbnyc-panel .sb-msg.them.sk-holo.sk-holo .mt{color:#8a7a9e;}',
+    '#sbnyc-panel .sb-msg.them.sk-holo.sk-holo::before,#sbnyc-panel .sb-msg.them.sk-holo.sk-holo::after{color:#d9c6ff;}',
+    /* 金光闪闪：你=扫光亮金；TA=哑光拉丝金（不扫光） */
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling{background:linear-gradient(110deg,#d9a520 0%,#f8e27a 20%,#fff7c2 28%,#f0c84a 40%,#c48d08 60%,#f8e27a 80%,#d9a520 100%);background-size:250% 100%;animation:sbnycShine 2.6s linear infinite;color:#3a2600;border:1px solid #fff0a0;box-shadow:0 0 8px rgba(255,210,70,.6),inset 0 0 0 1px rgba(255,255,255,.5);text-shadow:0 1px 0 rgba(255,255,255,.5);}',
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling .mt{color:#7a5400;text-shadow:none;}',
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling::before{content:\'✦\';color:#fff;top:-9px;left:8px;font-size:15px;text-shadow:0 0 6px #ffe36b;animation:sbnycTwinkle 1.4s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-bling.sk-bling::after{content:\'✦\';color:#fff;bottom:-9px;right:8px;font-size:15px;text-shadow:0 0 6px #ffe36b;animation:sbnycTwinkle 1.4s ease-in-out infinite .7s;}',
+    '#sbnyc-panel .sb-msg.them.sk-bling.sk-bling{background:repeating-linear-gradient(100deg,rgba(255,255,255,.55) 0 2px,rgba(255,255,255,0) 2px 4px),linear-gradient(110deg,#fffbe9,#f7ecc4);color:#5a4200;border-color:#e9cf7a;box-shadow:0 0 4px rgba(255,210,70,.3),inset 0 0 0 1px rgba(255,255,255,.6);animation:none;text-shadow:none;}',
+    '#sbnyc-panel .sb-msg.them.sk-bling.sk-bling .mt{color:#a8862a;}',
+    '#sbnyc-panel .sb-msg.them.sk-bling.sk-bling::before,#sbnyc-panel .sb-msg.them.sk-bling.sk-bling::after{color:#e9c75a;text-shadow:0 0 4px #fff0a0;animation:none;opacity:.9;}',
+    /* 独角兽：你=满马卡龙渐变+心跳；TA=奶油独角兽 */
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn{background:linear-gradient(135deg,#ffc2dd,#d9c2ff 50%,#b8f0e2);color:#4a2d5e;border:1px solid #fff;box-shadow:0 0 0 1px #f3c6e0,0 0 10px rgba(255,170,220,.45);}',
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn .mt{color:#8a6aa0;}',
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn::before{content:\'♥\';color:#ff6fae;top:-9px;left:9px;animation:sbnycBob 1.6s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.sk-unicorn.sk-unicorn::after{content:\'✧\';color:#7fcfff;bottom:-8px;right:8px;animation:sbnycTwinkle 1.8s ease-in-out infinite;}',
+    '#sbnyc-panel .sb-msg.them.sk-unicorn.sk-unicorn{background:linear-gradient(135deg,#fff0f6,#f3ecff 50%,#eafaf6);color:#5c3c6e;box-shadow:0 0 0 1px #f6dcea,0 0 8px rgba(255,170,220,.25);}',
+    '#sbnyc-panel .sb-msg.them.sk-unicorn.sk-unicorn .mt{color:#a08ab8;}',
+    '#sbnyc-panel .sb-msg.them.sk-unicorn.sk-unicorn::before{color:#ffa3c9;}#sbnyc-panel .sb-msg.them.sk-unicorn.sk-unicorn::after{color:#a9ddff;}',
+    /* 连发：新落地的 TA 的气泡依次淡入 */
     '@keyframes sbnycPop{from{opacity:0;transform:translateY(6px) scale(.97);}to{opacity:1;transform:none;}}',
     '#sbnyc-panel .sb-msg.sb-new{animation:sbnycPop .38s cubic-bezier(.34,1.56,.64,1) both;}',
+    /* 商城皮肤区：每张卡预览一套两件 */
     '#sbnyc-panel .sb-skgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:4px 14px 8px;}',
     '#sbnyc-panel .sb-skcard{border:1px solid var(--line);border-radius:12px;padding:8px 8px 6px;background:var(--paper-2);display:flex;flex-direction:column;gap:6px;}',
-    '#sbnyc-panel .sb-skcard .sb-msg{max-width:100%;font-size:12px;padding:6px 10px;align-self:flex-start;margin:6px 0;}',
+    '#sbnyc-panel .sb-skprev{display:flex;flex-direction:column;gap:2px;}',
+    '#sbnyc-panel .sb-skcard .sb-msg{max-width:80%;font-size:11.5px;padding:5px 9px;margin:5px 0;}',
+    '#sbnyc-panel .sb-skcard .sb-msg.them{align-self:flex-start;}',
+    '#sbnyc-panel .sb-skcard .sb-msg.me{align-self:flex-end;}',
     '#sbnyc-panel .sb-skcard .sk-n{font-size:12px;color:var(--ink);display:flex;justify-content:space-between;align-items:center;}',
     '#sbnyc-panel .sb-skcard .sk-p{font-family:var(--font-en);font-size:11px;color:var(--ink-sub);}',
     '#sbnyc-panel .sb-skbtn{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--gold);color:var(--gold);background:transparent;cursor:pointer;}',
     '#sbnyc-panel .sb-skbtn.on{background:var(--gold);color:#fff;}',
     '#sbnyc-panel .sb-skbtn.off{border-color:var(--ink-faint);color:var(--ink-sub);}',
-    /* 同款皮肤时对方／自己的微妙区别（Fan 10-09 报）：对方常规字重；自己半粗+亮一档；尾巴角各在自己那侧（铁艺抹平了圆角也补回） */
-    '#sbnyc-panel .sb-msg.them[class*=" sk-"]{font-weight:400;}',
-    '#sbnyc-panel .sb-msg.me[class*=" sk-"]{font-weight:600;filter:brightness(1.12) saturate(1.08);}',
-    '#sbnyc-panel .sb-msg.them[class*=" sk-"]::before{opacity:.55;}',
-    '#sbnyc-panel .sb-msg.sk-iron.sk-iron.them{border-radius:6px 6px 6px 2px!important;}',
-    '#sbnyc-panel .sb-msg.sk-iron.sk-iron.me{border-radius:6px 6px 2px 6px!important;}',
-    /* 谁在说话（10-09 按微信/QQ/LINE/Kakao 做法）：对方每条消息旁有小头像，自己这侧没有；自己的时间后带发送勾（WhatsApp/Telegram）。皮肤只换衣服，这两条线索不受皮肤影响 */
-    '#sbnyc-panel .sb-mrow{display:flex;align-items:flex-start;gap:7px;align-self:stretch;max-width:100%;}',
-    '#sbnyc-panel .sb-mrow .sb-msg{align-self:flex-start;}',
-    '#sbnyc-panel .sb-mava{width:26px;height:26px;border-radius:50%;flex-shrink:0;margin-top:2px;background:linear-gradient(135deg,var(--paper-3),var(--paper-2));border:.5px solid var(--gold);color:var(--gold);display:flex;align-items:center;justify-content:center;font-family:var(--font-en);font-size:12px;font-weight:600;line-height:1;}',
-    '#sbnyc-panel .sb-mava.se{background:var(--ink);color:var(--gold);}',
-    '#sbnyc-panel.night .sb-mava{background:#2a2e38;}',
-    '#sbnyc-panel .sb-msg.me .mt .sent{font-size:9px;margin-left:3px;opacity:.85;}',
   ].join('\n');
 
   // ── 挂载（先拆旧的，脚本重载/换聊天时不留双份） ──
@@ -4026,7 +4064,6 @@
         if (autoTr) delete _pendingTrs[name + '|' + i];   // 刚才点了兜底翻译的那条：翻好自动展开（字典各销各的账）
         var oneH = renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx && !hasPendingNpc(npc), i === hist.length - 1, prevWho);
         if (seenN != null && drawn >= seenN && hist[i].sender === 'THEM' && hist[i].type !== 'system') oneH = oneH.replace('class="sb-msg ', 'style="animation-delay:' + (newK++ * 0.35) + 's" class="sb-msg sb-new ');   // ✨ 连发：刚落地的依次淡入
-        if (hist[i].sender === 'THEM' && hist[i].type !== 'system' && hist[i].type !== 'recall') oneH = '<div class="sb-mrow">' + msgAvatar(isGrp ? (hist[i].who || name) : name, isGrp) + oneH + '</div>';   // 谁在说话：头像只在对方那侧
         h += oneH; drawn++;   // 对方最后一条挂 reroll；自己的最后一条挂撤回
         prevMsg = hist[i];
         prevWho = (isGrp && hist[i].sender === 'THEM' && hist[i].type !== 'system') ? (hist[i].who || '') : '';
