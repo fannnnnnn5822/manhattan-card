@@ -1146,6 +1146,12 @@
     '#sbnyc-panel .sb-skbtn{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--gold);color:var(--gold);background:transparent;cursor:pointer;}',
     '#sbnyc-panel .sb-skbtn.on{background:var(--gold);color:#fff;}',
     '#sbnyc-panel .sb-skbtn.off{border-color:var(--ink-faint);color:var(--ink-sub);}',
+    /* 同款皮肤时对方／自己的微妙区别（Fan 10-09 报）：对方常规字重；自己半粗+亮一档；尾巴角各在自己那侧（铁艺抹平了圆角也补回） */
+    '#sbnyc-panel .sb-msg.them[class*=" sk-"]{font-weight:400;}',
+    '#sbnyc-panel .sb-msg.me[class*=" sk-"]{font-weight:600;filter:brightness(1.12) saturate(1.08);}',
+    '#sbnyc-panel .sb-msg.them[class*=" sk-"]::before{opacity:.55;}',
+    '#sbnyc-panel .sb-msg.sk-iron.sk-iron.them{border-radius:6px 6px 6px 2px!important;}',
+    '#sbnyc-panel .sb-msg.sk-iron.sk-iron.me{border-radius:6px 6px 2px 6px!important;}',
   ].join('\n');
 
   // ── 挂载（先拆旧的，脚本重载/换聊天时不留双份） ──
