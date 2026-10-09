@@ -39,6 +39,13 @@
   // 群气泡上方那行小名字的颜色：按名字哈希从八色盘取，同一个人在整局里永远同一个颜色（S./Akuma 保留金和粉）
   // 低饱和中间调，浅纸底和夜间深底上都读得出、彼此分得开；前两个是保留位（S. 金＝面板的 --gold，Akuma 粉）
   var GSP_COLORS = ['#c9a566', '#d98fae', '#7396c9', '#6aa885', '#c08472', '#9a86cc', '#c0a35f', '#6fa5a5'];
+  // 对方消息旁的小头像：私聊=通讯录同款（首字母金圈，S. 黑底金星）；群里按说话人着色（和名字标签同色）
+  function msgAvatar(nm, inGroup) {
+    var isSE = nm === 'SugarElite™' || nm === 'S.';
+    var ch = isSE ? '✦' : esc((String(nm || '').replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase());
+    var st = (inGroup && !isSE) ? ' style="color:' + speakerColor(nm) + ';border-color:' + speakerColor(nm) + ';"' : '';
+    return '<span class="sb-mava' + (isSE ? ' se' : '') + '"' + st + '>' + ch + '</span>';
+  }
   function speakerColor(who) {
     if (who === 'SugarElite™' || who === 'S.') return GSP_COLORS[0];
     if (who === 'Akuma') return GSP_COLORS[1];
@@ -1136,6 +1143,13 @@
     '#sbnyc-panel .sb-msg.them[class*=" sk-"]::before{opacity:.55;}',
     '#sbnyc-panel .sb-msg.sk-iron.sk-iron.them{border-radius:6px 6px 6px 2px!important;}',
     '#sbnyc-panel .sb-msg.sk-iron.sk-iron.me{border-radius:6px 6px 2px 6px!important;}',
+    /* 谁在说话（10-09 按微信/QQ/LINE/Kakao 做法）：对方每条消息旁有小头像，自己这侧没有；自己的时间后带发送勾（WhatsApp/Telegram）。皮肤只换衣服，这两条线索不受皮肤影响 */
+    '#sbnyc-panel .sb-mrow{display:flex;align-items:flex-start;gap:7px;align-self:stretch;max-width:100%;}',
+    '#sbnyc-panel .sb-mrow .sb-msg{align-self:flex-start;}',
+    '#sbnyc-panel .sb-mava{width:26px;height:26px;border-radius:50%;flex-shrink:0;margin-top:2px;background:linear-gradient(135deg,var(--paper-3),var(--paper-2));border:.5px solid var(--gold);color:var(--gold);display:flex;align-items:center;justify-content:center;font-family:var(--font-en);font-size:12px;font-weight:600;line-height:1;}',
+    '#sbnyc-panel .sb-mava.se{background:var(--ink);color:var(--gold);}',
+    '#sbnyc-panel.night .sb-mava{background:#2a2e38;}',
+    '#sbnyc-panel .sb-msg.me .mt .sent{font-size:9px;margin-left:3px;opacity:.85;}',
   ].join('\n');
 
   // ── 挂载（先拆旧的，脚本重载/换聊天时不留双份） ──
@@ -3943,6 +3957,7 @@
         if (autoTr) delete _pendingTrs[name + '|' + i];   // 刚才点了兜底翻译的那条：翻好自动展开（字典各销各的账）
         var oneH = renderOneMsg(hist[i], name, i, autoTr, i === lastThemIdx && !hasPendingNpc(npc), i === hist.length - 1, prevWho);
         if (seenN != null && drawn >= seenN && hist[i].sender === 'THEM' && hist[i].type !== 'system') oneH = oneH.replace('class="sb-msg ', 'style="animation-delay:' + (newK++ * 0.35) + 's" class="sb-msg sb-new ');   // ✨ 连发：刚落地的依次淡入
+        if (hist[i].sender === 'THEM' && hist[i].type !== 'system' && hist[i].type !== 'recall') oneH = '<div class="sb-mrow">' + msgAvatar(isGrp ? (hist[i].who || name) : name, isGrp) + oneH + '</div>';   // 谁在说话：头像只在对方那侧
         h += oneH; drawn++;   // 对方最后一条挂 reroll；自己的最后一条挂撤回
         prevMsg = hist[i];
         prevWho = (isGrp && hist[i].sender === 'THEM' && hist[i].type !== 'system') ? (hist[i].who || '') : '';
@@ -4337,7 +4352,7 @@
     var isU = m.sender === 'USER'; var cls = isU ? 'me' : 'them'; var type = (m.type || 'text').toLowerCase();
     var c = m.content || ''; var t = formatMsgTime(m); var n = m.note || '';   // 时间戳带日期（UWU）："4/16 09:20"，AI 和玩家都不再犯日期糊涂
     if (m.edited) t = (t ? t + ' · ' : '') + '已编辑';
-    var tH = t ? '<span class="mt">' + esc(t) + '</span>' : '';
+    var tH = t ? '<span class="mt">' + esc(t) + (isU ? '<span class="sent">✓</span>' : '') + '</span>' : '';   // 自己的带发送勾（WhatsApp/Telegram 式）
     // 👥 群气泡：上方一行小字标谁在说。说话人存在条目的 who 上；
     //    老数据（私享版闺蜜群）说话人还写在内容开头，兜底拆一次，别让历史记录变成没头没脑的一串话
     var gsp = '', gWho = '';
