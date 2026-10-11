@@ -660,6 +660,10 @@ function pushThem(sb, name, type, content, zh, delay, who) {
     var amt = parseFloat(String(content).replace(/[^0-9.]/g, '')) || 0;
     if (amt > 0) creditWallet(sb, '+', amt, name, 'DM');
   }
+  // 🎛 他嘴上说寄了/让助理送/签收了，她又刚提过玩具 → 东西真的到（模型爱把送礼演成现实里的物流，代码替他落账）
+  if ((type || 'text') === 'text' && !who && TOY_GIVERS[name] && toyCanOffer(sb, name) && toyAsked(sb, name) && TOY_SENT_RE.test(String(content)) && !TOY_NOT_RE.test(String(content))) {
+    pushThem(sb, name, 'toy', /金/.test(String(content)) ? '送金' : '送', '', 0);
+  }
 }
 
 // 联系人上限：超了自动删，固定NPC也不豁免——User不回话照样被挤出去（人设在世界书里，
@@ -1006,6 +1010,25 @@ function toyCanOffer(sb, name) {
   var fromUser = 0; for (var i = 0; i < h.length; i++) if (h[i].sender === 'USER') fromUser++;
   return h.length >= 8 && fromUser >= 3;                                                         // 还不熟的不送
 }
+// 她最近有没有提遥控玩具（她最后 6 条里）
+var TOY_ASK_RE = /遥控|玩具|礼物|送我|送给我|没收到|收到了吗|寄了吗/;
+function toyAsked(sb, name) {
+  var h = ((sb.npcs || {})[name] || {}).dm_history || [];
+  for (var i = h.length - 1, k = 0; i >= 0 && k < 6; i--, k++) if (h[i].sender === 'USER' && TOY_ASK_RE.test(String(h[i].content || ''))) return true;
+  return false;
+}
+// 兜底①：她提了玩具 → 这一轮的任务里直接点名（这个位置比上下文里的规则分量重得多）
+function toyAskHint(sb) {
+  var out = '';
+  for (var n in TOY_GIVERS) {
+    if (!(sb.npcs || {})[n] || !toyCanOffer(sb, n) || !toyAsked(sb, n)) continue;
+    out += '\n【本轮·遥控玩具】她刚在跟 ' + n + ' 提遥控玩具的事。' + n + ' 要是答应给（按他的性格），就在这一轮照格式写：先一条 text，再单独一行 ' + n + '|toy|送（送金的写 ' + n + '|toy|送金）——东西当场到她手上，不写地址、快递、助理、签收、物流。不给就只写 text。';
+  }
+  return out;
+}
+// 兜底②：他嘴上说送了（寄 / 快递 / 助理 / 放门口 / 签收 / 加急……），而她刚提过玩具 → 当真送到
+var TOY_SENT_RE = /寄|快递|签收|物流|助理|放在你|放你|门口|加急|送到|送过去|给你送|让人送|派人/;
+var TOY_NOT_RE = /(不|没|别|不会|不能|不想)(要|会|能|打算)?(送|寄|给)/;
 function toyHolder(sb) { var b = toyBook(sb); return (b.wear.who && b.wear.told && b.gifts[b.wear.who] && b.gifts[b.wear.who].status === 'owned') ? b.wear.who : ''; }
 function toyWb(k, giver) {
   var t = String(TOY_WB[k] || '');
@@ -1714,7 +1737,7 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
       ? '只生成 1 个全新陌生金主的开场：先输出他的 名字|tag|标签 行，紧接着 1-2 行他主动发来的私信（换着花样来别撞原型，他还不认识 User、只是被她某个侧面吸引搭讪）。绝不让任何已有联系人出现、绝不续接任何已有对话、绝不替 User 说话。每条一行 名字|类型|内容，不要写别的。'
       : '最好有1条来自全新的陌生金主（换着花样来，别撞原型），给 User 新的人可挑；其余可以是已认识且不在等待名单里的人。每条一行 名字|类型|内容，不要写别的。';
   var instr = '现在生成 ' + (n || '2-4') + ' 条新私信' +
-    (reason ? '（情境：' + reason + '）' : '') + '。' + stageHint + waitHint + mutedHint + blockedHint + seHint + refreshHint + tail;
+    (reason ? '（情境：' + reason + '）' : '') + '。' + stageHint + waitHint + mutedHint + blockedHint + seHint + refreshHint + toyAskHint(sb) + tail;
   if (strict) instr = '【再次强调：只能输出 名字|类型|内容 的行，每条一行，不许有任何其他文字】\n' + instr;
 
   var raw = null;
