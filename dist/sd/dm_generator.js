@@ -40,8 +40,8 @@ var RANDOM_NPC_GUIDE =
   '· **反扁平铁律**：性格必须抽两个混（单一性格=人机）；给每个人一个让人心软的细节和一个让人警惕的细节——两者可以是同一件事的两面\n' +
 '· **称呼铁律·各叫各的**：每个女孩怎么称呼 User，由**她自己的人设**决定，绝不全场统一成同一个词。清纯型可能叫「叔叔」，职业型直呼名字或「先生」，撒娇型「哥哥~」，拜金直球型连称呼都懒得给直接说事，杀猪盘会挑最能拉近距离的叫法而且换着叫。同一个人前后一致（这是她的声音指纹之一），不同的人之间必须听得出差别。\n' +
   '· **逆向 sugar（约5%低频，别每轮都来）**：偶尔来一个**钱从她那边出**的女金主——离异富太（只要人陪，随叫随到）／女老板（把他当项目，一切都有报价单）／年下富家女（觉得养个叔叔很好玩，当众转账看他脸红）／同行女金主（她也在养男孩，笑你被宰顺手转你一笔）。转账写 [WALLET:+金额]。⚠️ 爽点是**他头一次坐到桌子的另一边**——被安排、被点评、被人用他自己那套话术对待，不是他捡了便宜。别写成爽文，他可以享受也可以不适应。\n' +
-  '· **名字铁律·中文优先**：这是中国 S 市，不是纽约。昵称/ID/代号**一律以中文为主**——英文最多占十分之一，且只能是中国人真会用的那种混搭（QueenA / Vivi / 冰_ / L小姐），**绝不出现 Marco/David/Hudson/Ethan 这类纯外国人名**。金主的代号同理（陈总/方总/老周/眼镜哥/开保时捷那个），别给中国人起英文本名。\n' +
-  '· ID风格：清纯型(念念_不忘/小鹿_大三/栀子花开/第一次好紧张🥺/学费还差两万) / 职业型(冰_/QueenA/别浪费我时间/看心情接单) / ' +
+  '· **名字铁律·中文优先**：这是中国 S 市，不是纽约。昵称/ID/代号**一律以中文为主**——英文最多占十分之一，且只能是中国人真会用的那种混搭（QueenA / Vivi / 七_ / L小姐），**绝不出现 Marco/David/Hudson/Ethan 这类纯外国人名**。金主的代号同理（陈总/方总/老周/眼镜哥/开保时捷那个），别给中国人起英文本名。\n' +
+  '· ID风格：清纯型(糖糖_不熬夜/小鹿_大三/栀子花开/第一次好紧张🥺/学费还差两万) / 职业型(七_/QueenA/别浪费我时间/看心情接单) / ' +
   '撒娇型(你的小猫咪🥺/想被哥哥宠/甜甜圈_只吃贵的/哥哥带我去吃好吃的嘛💕) / 直球型(别跟我谈感情/ATM请对号入座/先转再说)\n' +
   '· 原型：清纯新人(真假参半) / 职业顶级(服务好底线高贵得理直气壮) / 撒娇大师(emoji三倍密度) / 拜金直球(反而最诚实) / ' +
   '骗子杀猪盘(困难永远刚好在你能承受的范围内) / 富婆千金不缺钱型(做SB不为钱为自由，出手比金主还阔) / ' +
@@ -68,8 +68,8 @@ var RANDOM_NPC_GUIDE =
 
 var NAME_MAP = {
   '念念': '苏念', '念念_不忘': '苏念',
-  '冰月': '沈冰月',
-  '思瑶': '纪思瑶', '瑶瑶': '纪思瑶',
+  '冰月': '沈冰月', '冰_': '沈冰月',            // 冰_＝她在 SugarSecret 上的 ID（世界书 12），漏登记那阵子长出过一个「第二个沈冰月」
+  '思瑶': '纪思瑶', '瑶瑶': '纪思瑶', '小瑶_第一次': '纪思瑶',
   '知秋': '叶知秋', '叶老师': '叶知秋',
   '老林': '林也', '林总': '林也',
   '方总': '方屿',
@@ -349,17 +349,24 @@ function splitGroupSpeaker(content, names) {
 
 // 启动时清一次重复联系人（历史bug：SugarElite™ 曾以不同写法建成两个人；昵称大小写不一致同理）
 function mergeDupeNpcs() {
-  var merged = [];
+  var merged = [], rosterFix = 0;
   var p = updateVariablesWith(function (v) {
     var npcs = v.sb && v.sb.npcs;
     if (!npcs) return v;
     for (var k in npcs) {
       if (!npcs.hasOwnProperty(k)) continue;
-      if (npcs[k] && npcs[k].isGroup) continue;             // 👥 群名是玩家起的，不归一、不合并
+      if (npcs[k] && npcs[k].isGroup) {                     // 👥 群名是玩家起的，不归一、不合并；花名册里的真名要归一
+        var ros = npcs[k].roster || {};
+        for (var hk in ros) { if (ros.hasOwnProperty(hk) && ros[hk] && ros[hk].real) { var rc = normalizeName(ros[hk].real); if (rc !== ros[hk].real) { ros[hk].real = rc; rosterFix++; } } }
+        continue;
+      }
       var canon = normalizeName(k);
       if (canon === k) continue;
       var b = npcs[k];
-      if (!npcs[canon]) { npcs[canon] = b; b.name = canon; }
+      if (!npcs[canon]) {
+        npcs[canon] = b; b.name = canon;
+        if (isPersistent(canon)) { b.persistent = true; b.archetype = ARCHETYPE_CN[canon] || b.archetype; delete b.bio; }   // 别名落到固定 NPC：TA 用自己的声音卡，别带着匿名群的身份
+      }
       else {
         var a = npcs[canon];
         // 拼接顺序按两边的活跃时间定：last_ts 小的（先聊完的）整块在前——消息本身没有真时间戳，这是最不乱序的拼法
@@ -378,6 +385,7 @@ function mergeDupeNpcs() {
     return v;
   }, { type: 'chat' });
   Promise.resolve(p).then(function () {
+    if (rosterFix && !merged.length) { try { eventEmit('sb_updated'); } catch (e) {} }
     if (merged.length) {
       console.log('[SD-S v4] merged dupe contacts: ' + merged.join(', '));
       try { if (typeof toastr !== 'undefined') toastr.info('🧹 合并了重复联系人：' + merged.join('，'), 'SugarOS'); } catch (e) {}
@@ -1577,7 +1585,7 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
     '- 严禁复读：历史记录里这个人自己说过的话、发过的邀约、用过的梗，绝不换个说法再发一遍；没有新话可说的人这一轮就沉默\n' +
     '- 可选：最后可以多加一行 ♪|song|艺人 — 歌名，作为贴合此刻剧情情绪的 User"正在播放"（真实或虚构都行，气质参考 Lana Del Rey/Frank Ocean 那种忧郁奢华；不想加就不加）\n' +
     '示例：\n' + (RANDOM_ONLY
-      ? '冰_|tag|职业·明码标价\n冰_|text|条件都写在profile里，看得起再约时间。我不闲聊。§\n小鹿_大三|tag|清纯·真假难辨\n小鹿_大三|text|你好…请问验资是什么意思呀，我是新来的§\n♪|song|Lana Del Rey — Young and Beautiful'
+      ? '七_|tag|职业·明码标价\n七_|text|条件都写在profile里，看得起再约时间。我不闲聊。§\n小鹿_大三|tag|清纯·真假难辨\n小鹿_大三|text|你好…请问验资是什么意思呀，我是新来的§\n♪|song|Lana Del Rey — Young and Beautiful'
       : '苏念|text|老师今天讲的东西我一点没听进去。在想周五§\n小鹿_大三|tag|学生·怯生生\n小鹿_大三|text|你好…是看了我的帖子吗§\n沈冰月|text|周五可以。地方我来定，你只要到。§\n♪|song|陈奕迅 — 富士山下');
   var sys2 = describeState(sb);
   var ordered = [{ role: 'system', content: sys1 }, { role: 'system', content: sys2 }];
@@ -1800,10 +1808,11 @@ function openAnonDm(sb, gKey, handle, firstLine, zh) {
   var g = sb.npcs && sb.npcs[gKey];
   var r = g && g.roster && g.roster[handle];
   if (!r || !r.real) { console.warn('[SD-S v4] 这个代号还没露过底，dm 行丢弃：' + handle); return ''; }
-  var real = String(r.real).replace(/[|§\r\n]/g, '').trim().slice(0, 24);
+  var real = normalizeName(String(r.real).replace(/[|§\r\n]/g, '').trim().slice(0, 24));
   if (!real) return '';
+  r.real = real;
   var npc = ensureNpc(sb, real);
-  if (!npc.bio) npc.bio = anonDmBio(g, handle, r);
+  if (!npc.persistent && !npc.bio) npc.bio = anonDmBio(g, handle, r);
   if (!npc.archetype) npc.archetype = '匿名群·私下加的';
   if (!npc._fromAnon) {   // 线程首条灰行：玩家隔几天回来也看得出这人是从哪冒出来的
     npc._fromAnon = gKey;
@@ -1857,7 +1866,7 @@ function landGroupRows(sb, gKey, rows) {
       if (ex && ex.real) continue;                     // 定过一次就不再改（不然同一个代号下一轮换了个人）
       var bits = String(r.content || '').split(/[；;]/);
       g.roster[who] = {
-        real: String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24),
+        real: normalizeName(String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24)),
         secret: bits.slice(1).join('；').trim(),
         joined: (ex && ex.joined) || Date.now(), last: Date.now(), revealed: false,
       };
