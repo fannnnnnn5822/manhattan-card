@@ -593,7 +593,7 @@
   //    几位有自己风格的人（NPC_SKIN）才换上签名款，其余人和所有陌生人永远原版。存 sb.skins={owned:[],active:''}
   var SKINS = [['gold', '古典金', 18800], ['moon', '月光银', 11800], ['jade', '翡翠', 13800], ['bubbly', '香槟', 7800], ['velvet', '红丝绒', 15800], ['robin', '知更鸟蓝', 16800], ['lace', '粉色蕾丝', 9800], ['iron', '哥特铁艺', 12800], ['neon', '霓虹', 6800], ['leopard', '豹纹', 5200], ['galaxy', '星河', 19800], ['holo', '全息', 23800], ['bling', '金光闪闪', 39800], ['unicorn', '独角兽', 128000]];
   var SKIN_BY = {}; for (var _si = 0; _si < SKINS.length; _si++) SKIN_BY[SKINS[_si][0]] = SKINS[_si];
-  var NPC_SKIN = { 'SugarElite™': 'gold', '纪思瑶': 'lace', '沈冰月': 'moon' };
+  var NPC_SKIN = { 'SugarElite™': 'gold', '纪思瑶': 'lace', '沈冰月': 'moon', 'Akuma': 'unicorn' };   // Akuma＝镇店独角兽（Fan 10-11：「Akuma老师当然用最贵最fancy的」）
   var NPC_SKIN_ALIAS = { 'S.': 'SugarElite™', 'SugarElite': 'SugarElite™' };
   var _seenThem = {};   // 连发淡入：每个会话上次画了几条（非 pending），超出的就是刚落地的
   function skinsOf() { var s = (state && state.skins) || {}; return { owned: Array.isArray(s.owned) ? s.owned : [], active: (s.active && SKIN_BY[s.active]) ? s.active : '' }; }
