@@ -3788,14 +3788,14 @@
       if (!v.sb.npcs) v.sb.npcs = {};
       if (!v.sb.npcs['SugarElite™']) v.sb.npcs['SugarElite™'] = { name: 'SugarElite™', archetype: '管家', persistent: true, engaged: true, total_transfers: 0, relationship: 0, unlocked: true, last_contact: nowT(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [] };
       var n = v.sb.npcs['SugarElite™'];
-      n.dm_history.push({ sender: 'THEM', time: nowT(), ts: Date.now(), type: 'text', content: 'Welcome to SugarElite. — S.', note: '', zh: '欢迎加入 SugarElite。— S.', gameDay: (v.sb.game && v.sb.game.day) || 1 });
-      n.unread = (n.unread || 0) + 1; n.last_message = 'Welcome to SugarElite…'; n.last_contact = nowT(); n.last_ts = Date.now();
+      n.dm_history.push({ sender: 'THEM', time: nowT(), ts: Date.now(), type: 'text', content: '欢迎加入 SugarElite。— S.', note: '', zh: '', gameDay: (v.sb.game && v.sb.game.day) || 1 });
+      n.unread = (n.unread || 0) + 1; n.last_message = '欢迎加入 SugarElite。— S.'; n.last_contact = nowT(); n.last_ts = Date.now();
       return v;
     });
     if (state) {
       state.sugarelite = { subscribed: true };
       if (!state.npcs) state.npcs = {};
-      if (!state.npcs['SugarElite™']) state.npcs['SugarElite™'] = { name: 'SugarElite™', archetype: '管家', persistent: true, engaged: true, unlocked: true, last_contact: nowT(), unread: 1, last_message: 'Welcome to SugarElite…', dm_history: [] };
+      if (!state.npcs['SugarElite™']) state.npcs['SugarElite™'] = { name: 'SugarElite™', archetype: '管家', persistent: true, engaged: true, unlocked: true, last_contact: nowT(), unread: 1, last_message: '欢迎加入 SugarElite。— S.', dm_history: [] };
     }
     toast('success', '✦ SugarElite™ 已开通');
     SBemit('sb_updated');
