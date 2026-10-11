@@ -650,7 +650,7 @@
   // 物理（九种模式的包络、累积、阶段、顶点）照 TOY·LINK 搬。跑起来的那份活状态在 TK.live（内存，每 100ms 走一步），
   // 每 5 秒和每个事件把快照落进 sb.toys.run，生成器（私信）和正文注入读的都是快照。
   // 手机不替玩家发正文：「切到她那边」只往正文输入框填一句，玩家自己点发送（和体验下单同一条明路）。
-  var TOYLINK_URL = 'https://github.com/fJForever/toy-link';   // 作者的工具区帖子发出来后换成帖子地址
+  var TOYLINK_URL = 'https://discord.com/channels/1134557553011998840/1558769823352102943';   // fJForever 在工具区的 TOY·LINK 帖子
   var TOY_SHOP = [['std', 'TOY·LINK 遥控套装', 2880, '梅紫硅胶、香槟金环。遥控器装进你的手机。'],
     ['gold', 'TOY·LINK · 24K 金定制', 688000, '金环换成 24K 金、刻上她的名字，出厂按她喜欢的节奏调好。']];
   var TOY_TIER_NAME = { std: 'TOY·LINK 遥控套装', gold: 'TOY·LINK 24K 金定制款' };
@@ -881,7 +881,7 @@
       var it = TOY_SHOP[j];
       h += '<div class="sb-tk-shop"><div><b>' + esc(it[1]) + '</b><small>' + esc(it[3]) + '</small></div><button class="sb-tk-buy" data-tk="buy" data-v="' + it[0] + '">' + fmtCNY(it[2]) + '</button></div>';
     }
-    h += '<div class="sb-tk-credit">这只遥控来自我们的好朋友 fJForever 的 <span data-tk="credit">TOY·LINK ♡ ›</span></div>';
+    h += '<div class="sb-tk-credit"><div>遥控玩具 made by fJForever with love</div><span data-tk="credit">TOY·LINK ♡ 点击这里安装到其他角色卡 ›</span></div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
@@ -991,7 +991,7 @@
   // 生成器给 THEM 消息标 pending + dueDay/dueMin（时间戳已写成送达那一刻）。每次刷新看剧情钟走没走到点，到点才「送达」：
   // 去掉 pending、未读+1、列表预览/last_contact 那一刻才更新，所以送达前列表和角标都看不出有东西在路上。
   // 兜底：真实时间过了 8 分钟也送达（玩家只在手机里聊、正文不推进时，剧情钟不走，不能让消息卡死）。
-  var PENDING_REAL_MS = 8 * 60 * 1000;
+  var PENDING_REAL_MS = 0;   // 2026-10-11 不秒回撤掉：老存档里还在路上的，下一次刷新全部马上送达（原来是真实 8 分钟兜底）
   function storyNowMin() { return { day: (state && state.game && state.game.day) || 1, min: hhmmMin(nowT()) }; }
   function revealIn(sbObj, now, real) {
     var n = 0; var npcs = (sbObj && sbObj.npcs) || {};
@@ -1550,8 +1550,10 @@
     '#sbnyc-panel .sb-tk-shop b{font-family:var(--font-cn);font-size:13.5px;color:var(--ink);font-weight:600;}',
     '#sbnyc-panel .sb-tk-shop small{font-size:11px;color:var(--ink-sub);line-height:1.5;}',
     '#sbnyc-panel .sb-tk-buy{flex:none;padding:6px 12px;border-radius:999px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-family:var(--font-en);font-size:12px;cursor:pointer;}',
+    '#sbnyc-panel .sb-tk-chip{display:inline-block;margin-left:8px;padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-family:var(--font-sans);font-size:9.5px;letter-spacing:.5px;text-transform:none;font-weight:400;color:var(--ink-sub);cursor:pointer;vertical-align:1px;}',
+    '#sbnyc-panel .sb-tk-chip.on{border-color:var(--plum);color:var(--plum);}',
     '#sbnyc-panel .sb-tk-credit{text-align:center;font-size:10.5px;color:var(--ink-faint);padding:14px 0 4px;}',
-    '#sbnyc-panel .sb-tk-credit span{color:var(--gold);cursor:pointer;}',
+    '#sbnyc-panel .sb-tk-credit span{display:inline-block;margin-top:4px;color:var(--gold);cursor:pointer;font-size:11.5px;}',
     // 装置开着时悬浮手机外面一圈梅紫晕光，亮度跟实时强度走（--tk 由 toyFab 每 100ms 写）
     '#sbnyc-fab.toy-on{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 calc(3px + var(--tk,0) * 12px) rgba(196,110,214,calc(.25 + var(--tk,0) * .6)));}',
   ].join('\n');
@@ -4412,6 +4414,8 @@
     var subLine = isGrp
       ? '<span class="sb-gmem">' + ((npc.members || []).length) + ' 人 ›</span>' + (npc.anon ? ' 匿名 · 你是「' + esc(npc.myHandle || '？') + '」' : '')
       : esc(npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已把你拉黑' : '');
+    var tkO = !isGrp && toysOf().owned[name];   // 🎛 她有遥控玩具 → 名字下面一眼看到戴没戴（Fan 10-11 真机：「我找不到对方戴了没有」）
+    if (tkO) subLine += '<span class="sb-tk-chip' + (tkO.wearing ? ' on' : '') + '" data-tkchip="1">TOY·LINK · ' + ((TK.live && TK.live.on && TK.live.who === name) ? '开着' : (tkO.wearing ? '戴着' : '还没戴')) + ' ›</span>';
     var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + '</small></div>' +
       (isGrp ? '<button class="sb-ch-dnd sb-ik' + (npc.dnd ? ' on' : '') + '" title="消息免打扰（照常收，只是不吵你）">' + sbIcon(npc.dnd ? 'bellOff' : 'bell') + '</button>' : '') +
       '<button class="sb-ch-pin sb-ik' + (npc.pinned ? ' on' : '') + '" title="置顶/取消置顶（置顶的联系人不会被自动清理）">' + sbIcon('pin') + '</button>' +
@@ -4445,6 +4449,8 @@
     h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
 
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    var tkChip = chatEl.querySelector('[data-tkchip]');
+    if (tkChip) tkChip.addEventListener('click', function (e) { e.stopPropagation(); TK.sel = name; openRemote(); });
     var me = chatEl.querySelector('.sb-msgs'); if (me) me.scrollTop = me.scrollHeight;
 
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
