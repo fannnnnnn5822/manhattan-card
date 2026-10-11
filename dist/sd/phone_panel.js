@@ -674,7 +674,7 @@
   function toyHz(f) { return Math.round(0.6 * Math.pow(33.3, (f - 1) / 99) * 10) / 10; }
   function toysOf() {
     var t = (state && state.toys) || {};
-    return { owned: (t.owned && typeof t.owned === 'object') ? t.owned : {}, run: t.run || {}, last: t.last || {}, here: t.here || 'auto', cut: t.cut || 'peak' };
+    return { owned: (t.owned && typeof t.owned === 'object') ? t.owned : {}, run: t.run || {}, last: t.last || {}, here: t.here === 'with' ? 'with' : 'away', cut: t.cut || 'peak' };
   }
   var TK = { live: null, timer: 0, last: 0, clock: 0, env: 0, glow: 0, saveAt: 0, reqAt: 0, reqTimer: 0, reqWhy: '', sel: '' };
   // 写 sb.toys 的唯一入口：镜像 + 变量两头一起改（同 setSkinActive 的手法）
@@ -682,19 +682,10 @@
     if (state) { if (!state.toys || typeof state.toys !== 'object') state.toys = {}; fn(state.toys); }
     return SBupdate(function (v) { if (!v.sb) return v; if (!v.sb.toys || typeof v.sb.toys !== 'object') v.sb.toys = {}; fn(v.sb.toys); return v; });
   }
-  function toySnap(r) { return { who: r.who, on: !!r.on, mode: r.mode, pow: r.pow, freq: r.freq, aro: Math.round(r.aro * 10) / 10, stage: r.stage, peak: r.peak, here: r.here }; }
-  // 她在不在身边：玩家点过就听玩家的；「自动」＝最新一层正文里出现了她的名字就算在身边
+  function toySnap(r) { return { who: r.who, on: !!r.on, mode: r.mode, pow: r.pow, freq: r.freq, aro: Math.round(r.aro * 10) / 10, stage: r.stage, peak: r.peak, here: r.here, lastEvent: r.lastEvent || '' }; }
+  // 她在不在身边：默认别处（遥控器在手机里）；真在你身边由你点「你身边」——10-11 拿「正文里有没有她名字」猜过，提到≠在场，猜错了
   function toyHere(who, mode) {
-    if (mode === 'with' || mode === 'away') return mode;
-    try {
-      var id = getLastMessageId();
-      for (var k = id; k >= 0 && k > id - 3; k--) {
-        var ms = getChatMessages(k) || [];
-        var m = ms[0];
-        if (m && m.role === 'assistant') return String(m.message || '').indexOf(who) !== -1 ? 'with' : 'away';
-      }
-    } catch (e) {}
-    return 'away';
+    return mode === 'with' ? 'with' : 'away';
   }
   function toyStart(who) {
     var b = toysOf(), o = b.owned[who];
@@ -745,8 +736,10 @@
       : kind === 'peak' ? '她刚刚到了顶点（第 ' + r.peak + ' 次）' + (m.oneShot ? '，装置冲到顶自己停了' : '，装置还在继续，余韵没过去就又开始往上爬')
       : kind === 'stage' ? '装置还开着，她刚被推到第 ' + r.stage + ' 阶段（' + TOY_STAGE_CN[r.stage - 1] + '）'
       : 'User 刚把装置换成「' + m.name + '」、强度 ' + r.pow + '%';
-    if (kind === 'peak' && r.here !== 'with' && b.cut === 'peak') toyFillInput('（镜头切到' + who + '那边——遥控器还开着。）', true);
+    r.lastEvent = evt;
+    if (kind === 'peak' && r.here !== 'with' && b.cut === 'peak') { toyWrite(function (t) { t.cutReq = { who: who, at: Date.now(), here: 'away' }; }); toyFillInput('（看看' + who + '那边。）', true); }
     if (r.here === 'with') {
+      toyWrite(function (t) { if (t.run && t.run.who === who) { var s0 = toySnap(r); for (var k0 in s0) t.run[k0] = s0[k0]; } });
       if (kind === 'start') toast('info', '🎛 ' + who + ' 就在你身边——在正文里写一句，看她的反应');
       else if (kind === 'peak') toast('info', '🎛 ' + who + ' 到了');
       return;
@@ -909,7 +902,7 @@
     h += '<div class="sb-tk-row"><span>强度</span><button class="sb-tk-step" data-tk="pow" data-v="-5">−</button><i class="sb-tk-bar"><i style="width:' + P.pow + '%"></i></i><b>' + P.pow + '%</b><button class="sb-tk-step" data-tk="pow" data-v="5">＋</button></div>';
     h += '<div class="sb-tk-row"><span>频率</span><button class="sb-tk-step" data-tk="freq" data-v="-5">−</button><i class="sb-tk-bar"><i style="width:' + P.freq + '%"></i></i><b>' + toyHz(P.freq) + 'Hz</b><button class="sb-tk-step" data-tk="freq" data-v="5">＋</button></div>';
     var here = mine ? L.here : toyHere(who, b.here);
-    h += '<div class="sb-tk-row"><span>她在</span>' + [['auto', '自动'], ['with', '你身边'], ['away', '别处']].map(function (x) { return '<button class="sb-tk-pill sm' + (b.here === x[0] ? ' on' : '') + '" data-tk="here" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '<small class="sb-tk-now">' + (here === 'with' ? '在身边' : '远程') + '</small></div>';
+    h += '<div class="sb-tk-row"><span>她在</span>' + [['with', '你身边'], ['away', '别处']].map(function (x) { return '<button class="sb-tk-pill sm' + (b.here === x[0] ? ' on' : '') + '" data-tk="here" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '<small class="sb-tk-now">' + (here === 'with' ? '在身边' : '远程') + '</small></div>';
     h += '<div class="sb-tk-go"><button class="sb-tk-power' + (mine ? ' stop' : '') + '" data-tk="' + (mine ? 'stop' : 'start') + '">' + (mine ? '停 下' : '启 动') + '</button>' +
       '<button class="sb-tk-line" data-tk="cut">' + (here === 'with' ? '写进正文' : '切到她那边') + '</button></div>';
     h += '<div class="sb-tk-row sm"><span>远程到顶时</span>' + [['peak', '帮我填好正文'], ['manual', '不打扰']].map(function (x) { return '<button class="sb-tk-pill sm' + (b.cut === x[0] ? ' on' : '') + '" data-tk="cutmode" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>';
@@ -948,9 +941,9 @@
     else if (k === 'cutmode') { toyWrite(function (t) { t.cut = v; }); toyPaintAll(); }
     else if (k === 'cut') {
       var who = TK.sel, here = TK.live ? TK.live.here : toyHere(who, toysOf().here);
-      var line = here === 'with' ? '（手里的遥控器' + (TK.live ? '还开着' : '') + '——' + who + '就在旁边。）' : '（镜头切到' + who + '那边' + (TK.live ? '——遥控器还开着' : '') + '。）';
-      var go = function () { if (toyFillInput(line, false)) panel.classList.remove('open'); };
-      if (TK.live) toyWrite(function (t) { if (t.run && TK.live) { var s = toySnap(TK.live); for (var kk in s) t.run[kk] = s[kk]; } }).then(go); else go();
+      var line = here === 'with' ? '（看着身边的' + who + '。）' : '（看看' + who + '那边。）';
+      toyWrite(function (t) { t.cutReq = { who: who, at: Date.now(), here: here }; if (t.run && TK.live && t.run.who === TK.live.who) { var s = toySnap(TK.live); for (var kk in s) t.run[kk] = s[kk]; } })
+        .then(function () { if (toyFillInput(line, false)) panel.classList.remove('open'); });
     }
     else if (k === 'credit') { try { (DOC.defaultView || window).open(TOYLINK_URL, '_blank'); } catch (e) {} }
   }
