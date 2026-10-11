@@ -58,7 +58,7 @@ var NAME_MAP = {
   'David': 'David Pemberton',
   'Hudson': 'Hudson Park',
   'Cole': 'Cole Marlowe',
-  'Father Daniel': 'Father Dan', 'D.': 'Father Dan',
+  'Father Daniel': 'Father Dan', 'D.': 'Father Dan', 'Daniel Carrington': 'Father Dan', 'Father Daniel Carrington': 'Father Dan',
   'Larry': 'L.', 'Larry Voss': 'L.',
   'S.': 'SugarElite™',
   'Akuma老师': 'Akuma', 'akuma': 'Akuma',
@@ -380,6 +380,16 @@ function mergeDupeNpcs() {
   });
 }
 function isPersistent(name) { return PERSISTENT_CANONICAL.indexOf(normalizeName(name)) !== -1; }
+// 匿名群定身份用：通讯录里自带的人（随机版只有 Akuma）
+function fixedCast(sb) { return (sb && sb.game && sb.game.random_only) ? ['Akuma'] : Object.keys(VOICES); }
+// 陌生人的昵称借了固定角色的号（「方总_化工二代」里的「方总」＝方屿）→ 返回被借的那位，没借返回空串
+function borrowsFixed(name) {
+  var s = String(name || '');
+  if (isPersistent(s)) return '';
+  var parts = s.split(/[_＿·\-—\s]+/);
+  for (var i = 0; i < parts.length; i++) { if (parts[i] && parts[i] !== s && isPersistent(parts[i])) return normalizeName(parts[i]); }
+  return '';
+}
 // 老存档补档：私享版的 🥂 闺蜜群 以前是"一个名字特殊的联系人"，现在统一当群处理（成员=S.+Akuma）。
 // 老消息的说话人还写在内容开头（"S.：…"），渲染端会兜底拆一次，不用改历史数据。
 function migrateGroups() {
@@ -804,6 +814,24 @@ function tavernPersona() {
 }
 
 // ── 世界状态 → 文本（喂给 generateRaw） ──
+// 固定角色也混在匿名群里时（花名册 real＝TA），私信里给 TA 一句「你在群里是谁、说过什么」——不然转头私聊就像换了个人
+function anonSelfLine(sb, name) {
+  var npcs = (sb && sb.npcs) || {}, out = [];
+  for (var gk in npcs) {
+    var g = npcs[gk];
+    if (!npcs.hasOwnProperty(gk) || !g || !g.isGroup || !g.anon || !g.roster) continue;
+    for (var hd in g.roster) {
+      var r = g.roster[hd];
+      if (!g.roster.hasOwnProperty(hd) || !r || normalizeName(r.real || '') !== name) continue;
+      var said = [], h = g.dm_history || [];
+      for (var i = h.length - 1; i >= 0 && said.length < 6; i--) { if (h[i] && h[i].who === hd && h[i].type !== 'system') said.unshift(String(h[i].content || '').replace(/[。.！!？?]+$/, '')); }
+      out.push('    （TA 也在匿名群「' + gk + '」里，代号「' + hd + '」，群里没人知道是 TA' +
+        (said.length ? '；TA 在群里最近说过：' + said.join('｜') : '') +
+        '。User 在群里的代号是「' + (g.myHandle || '匿名') + '」' + (r.revealed ? '——两人已经私下挑明了彼此是谁' : '——TA 不确定那是不是 User，User 挑明了才知道') + '）');
+    }
+  }
+  return out.join('\n');
+}
 function describeState(sb) {
   var p = sb.profile || {};
   var lines = [];
@@ -861,6 +889,7 @@ function describeState(sb) {
       known.push('- ' + n.name + (n.persistent ? '(固定)' : '(' + (n.archetype || '陌生') + ')') + '，关系度' + (n.relationship || 0));
       // 带简历的联系人（招聘版帖子原文/评论区来路/玩家新建时写的备注/旧识摘要）：TA是谁以此为准，回话贴着演。
       // 整段给——评论区来的人 bio 里先是帖子原文、结尾才是"语气接着往下演"的指令，旧版砍 300 字正好把指令砍掉
+      var anL = anonSelfLine(sb, n.name); if (anL) known.push(anL);   // 👥 TA 也在匿名群里：自己说过的话自己记得
       var toyL = toyNpcLine(sb, n.name); if (toyL) known.push(toyL);   // 🎛 遥控玩具
       if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio) + '）');
       var h = n.dm_history || [];
@@ -1369,9 +1398,13 @@ async function groupMemberCard(sb, g, order, i) {
   if (g.anon) {
     // 匿名群：代号背后是谁由模型定；定过一次（roster 里有 real）就一直是这个人
     var r = (g.roster && g.roster[name]) || null;
-    body = r && r.real
+    var rc = r && r.real ? normalizeName(r.real) : '';
+    body = rc && VOICES[rc]
+      ? '这个代号背后是：' + rc + '（通讯录里的那个 ' + rc + '，群里没人知道是 TA）。就照 TA 本人演：\n' + VOICES[rc]
+      : r && r.real
       ? '这个代号背后是：' + String(r.real) + (r.secret ? '。底细：' + String(r.secret) : '') + '。就照这个人演，别换人。'
-      : '这个代号背后是谁还没定——这一轮你从【随机NPC素材库】里给 TA 挑一个身份（什么人都行：平台两边的人、看热闹的、来做生意的、来找人的），挑好先写一行 who 把 TA 定下来，之后一直是这个人。';
+      : '这个代号背后是谁还没定——这一轮你从【随机NPC素材库】里给 TA 挑一个身份（什么人都行：平台两边的人、看热闹的、来做生意的、来找人的），挑好先写一行 who 把 TA 定下来，之后一直是这个人。' +
+        '起的昵称要一眼就是个新面孔：和通讯录里这些人（' + fixedCast(sb).join('、') + '）不同姓、不用他们的称呼和论坛 ID——素材库里的例子换个说法再用。';
   } else if (VOICES[name]) {
     body = VOICES[name];
     var ds = await wbContent(NPC_WB_KEY[name], '');
@@ -1912,6 +1945,8 @@ function landGroupRows(sb, gKey, rows) {
       var ex = g.roster[who];
       if (ex && ex.real) continue;                     // 定过一次就不再改（不然同一个代号下一轮换了个人）
       var bits = String(r.content || '').split(/[；;]/);
+      var bf = borrowsFixed(String(bits[0] || '').trim());
+      if (bf) { console.warn('[SB v4] 匿名群 who 借了 ' + bf + ' 的号，这一轮不定，下一轮重来：' + bits[0]); continue; }
       g.roster[who] = {
         real: normalizeName(String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24)),
         secret: bits.slice(1).join('；').trim(),
