@@ -1029,7 +1029,7 @@ function toyWb(k, giver) {
 function toyNpcLine(sb, name) {
   var g0 = TOY_GIVERS[name]; if (!g0) return '';
   var b = toyBook(sb), gf = b.gifts[name], r = b.run;
-  if (!gf) return toyCanOffer(sb, name) ? '    （遥控玩具·他可能动的念头：' + g0[0] + '。有由头才送，大部分时候根本不提）' : '';
+  if (!gf) return toyCanOffer(sb, name) ? '    （遥控玩具·他可能动的念头：' + g0[0] + '。有由头才送，大部分时候根本不提）\n    （⚠ 事实以手机为准：她手机里没有任何他送的遥控玩具。礼物卡只有他写出 ' + name + '|toy|送 那一行才会出现——聊天里说过「寄了」「让助理送」「已经签收」都不算，她什么也没收到）' : '';
   if (gf.status === 'offered') return '    （遥控玩具：他送她的那个，她还没回应——收不收是她的事）';
   if (gf.status === 'returned') return '    （遥控玩具：他送的，她退回去了' + (toyCanOffer(sb, name) ? '；过了几天了，要不要再试一次看他自己' : '') + '）';
   if (toyHolder(sb) !== name) return '    （遥控玩具：她收下了他送的那个；她戴没戴，他不知道）';
@@ -1042,7 +1042,9 @@ function toyNpcLine(sb, name) {
 function toyFormatLine(sb) {
   var out = '', can = [];
   for (var n in TOY_GIVERS) if (toyCanOffer(sb, n) && (sb.npcs || {})[n]) can.push(n);
-  if (can.length) out += '- 遥控玩具（只有 ' + can.join('、') + ' 可能动这个念头，各自为什么见他那一行）：有由头才送——见过面之后、关系走近了、或者他就是想换一种方式让她想着他；不是每轮都提，大部分时候根本不提。答应送就是这一轮送到——东西由他的人直接交到她手上，不用地址、不用等快递、不用「回头让助理联系你」；送的那一刻单独写一行 名字|toy|送（送金的写 名字|toy|送金），配一条 text 说句话。嘴上答应了却没写这一行，她手里什么都收不到。收不收、戴不戴是她的事\n';
+  if (can.length) out += '- 遥控玩具（只有 ' + can.join('、') + ' 可能动这个念头，各自为什么见他那一行）：有由头才送——见过面之后、关系走近了、她开口要了、或者他就是想换一种方式让她想着他；不是每轮都提，大部分时候根本不提。\n' +
+    '  怎么送（照做，少一步她就收不到）：①同一轮里先写一条 text 说句话；②紧接着单独写一行 名字|toy|送（送金的写 名字|toy|送金）。东西当场就到她手上——这个世界里不需要地址、快递、助理转交、签收，这些都不要写。\n' +
+    '  例：' + can[0] + '|text|东西放在你门口了。说明书在盒子里，先看。§\n  ' + can[0] + '|toy|送\n'
   var h = toyHolder(sb);
   if (h) out += '- 遥控器在 ' + h + ' 手里（只有他能写）：想开、换档、关，单独写一行 ' + h + '|toy|开|模式|强度（模式只能是 脉冲/潮汐/心跳/渐强/乱流/撩拨/暴雨/临界/冲刺，强度 1-100）或 ' + h + '|toy|关；开不开、开多大按他的性格和此刻的心情定，不是每轮都动\n';
   return out;
