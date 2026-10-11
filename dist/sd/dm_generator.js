@@ -595,6 +595,20 @@ function pushThem(sb, name, type, content, zh, delay, who) {
     try { if (typeof toastr !== 'undefined') toastr.success('✨ S. 送了你一套气泡皮肤「' + SKIN_CN[skKey] + '」', 'SugarOS'); } catch (e) {}
     content = skKey;
   }
+  // 🎛 toy：她戴上 / 摘下 User 送的遥控玩具（内容 on/off）。闸：手里有玩具的人才认、on 只在没戴时、off 只在戴着时；不合规整行丢
+  //    落账成一句人话（历史/摘要/楼层都直接读得懂），机器读的是 rec.toy
+  var toyFlag = '';
+  if (type === 'toy') {
+    var tv = String(content || '').trim().toLowerCase();
+    var tOn = /^(on|戴上|戴好|戴着|wear)/.test(tv), tOff = /^(off|摘|取下|拿掉|脱)/.test(tv);
+    var tBook = toyBook(sb).owned[name];
+    if (!tBook || (!tOn && !tOff) || (tOn && tBook.wearing) || (tOff && !tBook.wearing)) return;
+    tBook.wearing = tOn;
+    if (tOff && sb.toys.run && sb.toys.run.who === name) sb.toys.run.on = false;   // 她摘了，装置跟着停（面板那边看到 on=false 会收摊）
+    toyFlag = tOn ? 'on' : 'off';
+    content = tOn ? '戴上了 User 送的遥控玩具' : '把遥控玩具摘下来了';
+    try { if (typeof toastr !== 'undefined') toastr.info(tOn ? '🎛 ' + name + ' 戴上了' : '🎛 ' + name + ' 摘下来了', 'SugarOS'); } catch (e) {}
+  }
   if (type === 'gift') {
     var gm = String(content).match(/^(.*?)(?:—+|--)\s*[$￥¥]?\s*([\d,.]+)\s*元?\s*$/);
     var gName = (gm ? gm[1] : String(content)).trim().slice(0, 40);
@@ -615,7 +629,8 @@ function pushThem(sb, name, type, content, zh, delay, who) {
   }
   var rec = { sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '', gameDay: (sb.game && sb.game.day) || 1 };   // ts=真时间戳；gameDay=剧情第几天（UWU 日期标签/分割线靠它）
   if (who) rec.who = who;   // 👥 群消息的说话人（私信没有这个字段）
-  // ⏳ 不秒回（2026-09-16，学墨韵手机的 delayMinutes，钟用我们自己的 game.day+game.time）：模型按剧情/人设在内容前写 ⏳分钟数
+  if (toyFlag) rec.toy = toyFlag;
+  // ⏳ 不秒回（2026-09-16，钟用我们自己的 game.day+game.time）：模型按剧情/人设在内容前写 ⏳分钟数
   //    → 这条先「在路上」（pending），时间戳直接写成送达那一刻；phone_panel 的 revealDue 看剧情钟走到点（或真实 8 分钟兜底）才显示。
   //    只对聊天类消息生效，转账/礼物/付账/系统行照旧秒到（钱和账不能跟气泡错位）。未读/列表预览/last_contact 都等送达那刻再记，不然列表先漏底。
   var dly = Math.max(0, Math.min(1440, parseInt(delay, 10) || 0));
@@ -847,6 +862,7 @@ function describeState(sb) {
       //   其余 300 = 只要够认出"这人是谁"，反正你没在跟TA说话
       // 旧值是全员 300：正好把论坛 bio 末尾的演技交代砍掉只剩两段引文，TA 不知道该拿这些干嘛
       if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio).substring(0, ki < 3 ? 900 : 300) + '）');
+      var toyL = toyNpcLine(sb, n.name); if (toyL) known.push(toyL);   // 🎛 遥控玩具：有没有、戴没戴、开着时的体感
       var h = n.dm_history || [];
       // 正在聊的前3人给整段历史（不截条数、不截字数）——防"只看到最后几条→已读乱回"；其余给最近8条
       var recent = ki < 3 ? h : h.slice(-8);
@@ -936,10 +952,82 @@ function inSceneNames(plot, sb) {
 
 // ── 解析 generateRaw 输出：每行 名字|类型|内容 ──
 // 严格模式：只认 名字|合法类型|内容。挡掉预设(如Mortal)注入的 <horae> 标签 + npc:/time: 等字段行。
-var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker', 'block', 'unblock', 'skin'];   // block·unblock=TA拉黑·解除拉黑 User（2026-09-16）
+var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker', 'block', 'unblock', 'skin', 'toy'];   // block·unblock=TA拉黑·解除拉黑 User（2026-09-16）；toy=她戴上/摘下遥控玩具（2026-10-11）
 // ✨ 气泡皮肤（2026-10-09）：skin 行只认 S.（SugarElite™）发、只认这张表里的代号——提示词管不住的这里管
 var SKIN_KEYS = ['gold', 'moon', 'jade', 'bubbly', 'velvet', 'robin', 'lace', 'iron', 'neon', 'leopard', 'galaxy', 'holo', 'bling', 'unicorn'];
 var SKIN_CN = { gold: '古典金', moon: '月光银', jade: '翡翠', bubbly: '香槟', velvet: '红丝绒', robin: '知更鸟蓝', lace: '粉色蕾丝', iron: '哥特铁艺', neon: '霓虹', leopard: '豹纹', galaxy: '星河', holo: '全息', bling: '金光闪闪', unicorn: '独角兽' };
+
+// ── 🎛 遥控玩具（2026-10-11，玩法移植自 TOY·LINK by fJForever）──
+// 状态存 sb.toys = { owned: { 名字: { tier:'std'|'gold', wearing:bool, day } }, run: { who, on, mode, pow, freq, aro, stage, peak, here:'with'|'away' }, cut }
+// 账归代码：谁有、谁戴着、开没开、几档、她在不在 User 身边，全在变量里；LLM 只管演。
+// 戴不戴由她定：toy 行只认手里有玩具的人，on 只在没戴时生效、off 只在戴着时生效，其余整行丢。
+// 下面的体感材料改写自 TOY·LINK 的世界书（身体反应 / 九种模式 / 累积阶段），只在装置开着时按「当前这一档」挑一段喂，不整本塞。
+var TOY_TIER_CN = { std: 'TOY·LINK 遥控套装', gold: 'TOY·LINK 24K 金定制款（金环上刻着她的名字）' };
+var TOY_MODE_CN = { pulse: '脉冲', wave: '潮汐', heart: '心跳', ramp: '渐强', chaos: '乱流', tease: '撩拨', storm: '暴雨', edge: '临界', rush: '冲刺' };
+var TOY_MODE_FEEL = {
+  pulse: '一下一下地点，每下之间留一点空档——身体跟着绷紧又松开，最难熬的是刚放松又被点中。',
+  wave: '像水一层层漫上来又退下去，退的时候人会不自觉地去追。',
+  heart: '两下连着来、后一下更重，空档被拉长，呼吸会被这个节奏带跑。',
+  ramp: '慢慢爬到顶再突然落下，每次落下都更难熬，因为已经知道下一轮要爬多高。',
+  chaos: '没有规律，猜不到下一拍落在哪，等的时候比真来的时候更磨人。',
+  tease: '长时间空着，偶尔轻轻碰一下就走；累积得慢，人会被吊得发慌、开始主动去要。',
+  storm: '密到几乎不留空隙，很快没法思考，只剩喘。',
+  edge: '一直顶在很高的位置，然后整个撤走——那一下落空比任何强度都磨人。',
+  rush: '没有铺垫直冲顶点，从第一秒就在往上压，到顶后装置自己停下。'
+};
+var TOY_STAGE_TXT = ['',
+  '第1阶段·适应：呼吸略乱，会走神，腿不自觉并拢，话还能说完整。',
+  '第2阶段·升温：语速忽快忽慢，耳根发烫，手指抓紧身边的东西，尾音发抖。',
+  '第3阶段·攀升：句子碎掉，腰塌下去，得扶着什么才稳，压不住的轻哼往外漏。',
+  '第4阶段·濒临：意识被节奏牵着走，眼角发潮，口齿不清，开始求人。',
+  '第5阶段·临界：理智断线，只剩本能反应。'];
+var TOY_TIER_TXT = [
+  [35, '轻', '皮肤表面发麻，小腹深处泛出一丝酸，大腿内侧不自觉收紧；话能说完但末尾发飘，被问话会慢半拍；悄悄换坐姿，膝盖并拢又松开。'],
+  [65, '中', '热从下腹往上漫到耳根，腰使不上力、坐不住也站不直；一句话分两三次才说完，开始用"没事""等一下"敷衍；手去找扶手、衣角、桌沿，脚趾蜷起来。'],
+  [85, '重', '整条腿在抖，膝盖并不拢，小腹一阵阵抽紧，视线失焦、皮肤浮起薄汗；说不出完整的句子，只剩碎片、讨饶或失语；弓背、抓紧什么就不放，眼泪往外冒。'],
+  [100, '极限', '意识被搅成一片白，肌肉不受控地痉挛；只剩气音和单字；身体弓成拉满的弦，脚背绷直，指甲掐进掌心。']];
+function toyBook(sb) { var t = sb && sb.toys; return { owned: (t && t.owned && typeof t.owned === 'object') ? t.owned : {}, run: (t && t.run) || {} }; }
+function toyRunning(sb, name) { var r = toyBook(sb).run; return !!(r.on && (!name || r.who === name)); }
+function toyTier(pow) { for (var i = 0; i < TOY_TIER_TXT.length; i++) if (pow <= TOY_TIER_TXT[i][0]) return TOY_TIER_TXT[i]; return TOY_TIER_TXT[TOY_TIER_TXT.length - 1]; }
+// 装置开着时的体感：只给当前模式、当前强度档、当前阶段三句 + 一条写法，不整本塞
+function toyFeel(r) {
+  var tier = toyTier(r.pow || 0);
+  return '模式「' + (TOY_MODE_CN[r.mode] || '潮汐') + '」：' + (TOY_MODE_FEEL[r.mode] || TOY_MODE_FEEL.wave) + '\n' +
+    '强度' + tier[1] + '：' + tier[2] + '\n' +
+    (TOY_STAGE_TXT[Math.max(1, Math.min(5, r.stage || 1))]) + (r.peak ? '（已经到过 ' + r.peak + ' 次顶点：一波刚落下一波就能接上，余韵没过去就比之前更敏感）' : '') + '\n' +
+    '写法：它是贴着皮肤的高频震颤（麻、酥、酸、发胀），不是敲打；写震感落在哪、往哪漫、她怎么忍怎么藏、控制在哪里断、别人看得见什么，每次只比上一次深一点。数字和档位名一个都不出现，全用身体表现。';
+}
+// 私信侧：每个拿到玩具的人一行（describeState 里接在她的名字后面）
+function toyNpcLine(sb, name) {
+  var o = toyBook(sb).owned[name]; if (!o) return '';
+  var s = '    （遥控玩具：User 送过她一个' + (TOY_TIER_CN[o.tier] || TOY_TIER_CN.std) + '，遥控器在 User 手机里；她现在' + (o.wearing ? '正戴着' : '没戴') + '）';
+  if (o.wearing && toyRunning(sb, name)) {
+    var r = toyBook(sb).run;
+    s += '\n    （此刻装置开着，' + (r.here === 'with' ? '她就在 User 身边' : 'User 在别处远程开着它') + '。她的私信跟着身体走：阶段越往上越没法好好打字——尾音拖长、错字、一句话断成几条、半句就发出去，到后面只剩单字或一条喘着的语音；也可以干脆不回。要停可以直说、可以求，也可以自己摘掉（写 toy|off）。\n' +
+      toyFeel(r).split('\n').map(function (l) { return '     ' + l; }).join('\n') + '）';
+  }
+  return s;
+}
+// 格式块里的一行：只有有人拿到过玩具才出现
+function toyFormatLine(sb) {
+  if (!Object.keys(toyBook(sb).owned).length) return '';
+  return '- 遥控玩具（User 送的 TOY·LINK）：戴不戴、什么时候戴，由收到它的人按人设和你们的关系自己定——可以答应、拖着、讨价还价、拒绝，也可以哪天自己提起来。真正戴上的那一刻单独写一行 名字|toy|on，摘下来写 名字|toy|off；嘴上答应还没戴，就只写 text。手里有这个玩具的人才能写这一行，配一条 text 说句话\n';
+}
+// 正文注入：有人戴着就交代一句；开着时按在不在身边分两种写法
+function toyDigest(sb) {
+  var b = toyBook(sb), names = Object.keys(b.owned), r = b.run;
+  if (!names.length) return '';
+  var wearing = names.filter(function (n) { return b.owned[n].wearing; });
+  var out = '【遥控玩具】User 送过遥控玩具的人：' + names.map(function (n) { return n + (b.owned[n].wearing ? '（正戴着）' : '（没戴）'); }).join('、') + '。遥控器在 User 手机里，只有戴着的人自己和 User 知道这件事。\n';
+  if (r.on && r.who && b.owned[r.who] && b.owned[r.who].wearing) {
+    if (r.here === 'with') {
+      out += '【此刻·装置开着】' + r.who + ' 就在 User 身边，正戴着它，遥控器在 User 手里。这一轮正文的主体是她的反应：身体与语言占七成，环境与声音两成。周围有别人时，她得在人前装镇定——破绽全在细节里。\n' + toyFeel(r) + '\n';
+    } else {
+      out += '【此刻·装置开着（远程）】' + r.who + ' 不在 User 身边，User 在别处远程开着它。正文镜头在 User 这边时，User 看不见她的身体，只能从手机上她的消息里感觉到；User 明确说要「看她那边」时，镜头切到她所在的地方，写她此刻在哪、身边有谁、身体怎样。\n' + toyFeel(r) + '\n';
+    }
+  }
+  return out;
+}
 
 // 👥 群行允许的类型：聊天类 + 群专属（leave=退群 / who=交代代号背后是谁 / dm=群里有人私下加你）。
 // 钱类（transfer/gift/paybill）和 tag/sched/song/block/unblock 在群行里一律丢弃——钱只走私信一个口子。
@@ -1435,6 +1523,7 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
     '- 真买下她转发的商品（**真买才写，口头答应不算**）：名字|gift|商品名——价格数字（照她链接里的原样），系统会把东西直接放进她衣橱。通常配一条 text 说句话\n' +
     (sb.sugarelite && sb.sugarelite.subscribed ? '- S. 专属（只有 SugarElite™ 能发，别人写了无效）：送 User 一套气泡皮肤 SugarElite™|skin|代号 —— 代号只能是 ' + SKIN_KEYS.map(function (k) { return k + '=' + SKIN_CN[k]; }).join('／') + '。只在有由头时送（会员礼遇、庆祝、赔罪、User 刚念叨过想换个样子），一次一套，配一条 text 说一句；User 已有：' + ((sb.skins && Array.isArray(sb.skins.owned) && sb.skins.owned.length) ? sb.skins.owned.map(function (k) { return SKIN_CN[k] || k; }).join('、') : '还没有') + '，已有的不再送\n' : '') +
+    toyFormatLine(sb) +
     '- 真替她交账单（只在她转发过账单、且这个人真愿意时）：名字|paybill|账单名（照她转发的名字写），系统会把这张账单标成已付进入下期；只想给钱让她自己交的就发 transfer\n' +
     '- 严禁输出任何叙事、旁白、环境描写、心理描写、解释、标题、空行以外的东西\n' +
     '- 严禁代替 User 说话或回复\n' +
@@ -2325,7 +2414,8 @@ function buildDigest(sb) {
     blocks.push(lines.join('\n'));
   }
   var closet = (sb.closet || []).slice(-10).map(function (c) { return c.name; });
-  if (!blocks.length && !closet.length) return '';
+  var toyD = toyDigest(sb);   // 🎛 遥控玩具（谁戴着 / 开着时按在不在身边分写法）
+  if (!blocks.length && !closet.length && !toyD) return '';
   var out = '【User 手机上的时间：' + nowTime() + '（正文的时刻感尽量与之呼应）】\n';
   if (blocks.length) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
@@ -2333,6 +2423,7 @@ function buildDigest(sb) {
   if (closet.length) {
     out += '【User 送出去的礼物（他买给她们的，收礼的人会戴着/用着出现，别人看得见的是"东西在她身上"，不是价格和来路）】' + closet.join('、') + '\n';
   }
+  if (toyD) out += toyD;
   var schD = (sb.schedule || []).filter(function (s) { return !s.done; }).slice(-8).map(function (s) {
     var label = s.academic ? '📚' : '📅';
     var dateStr = s.gameDay ? (' ' + gameDayToMD(s.gameDay, sb) + ' ' + gameDayToWeekday(s.gameDay, sb)) : '';
