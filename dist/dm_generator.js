@@ -601,10 +601,12 @@ function pushThem(sb, name, type, content, zh, delay, who) {
   }
   var rec = { sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '', gameDay: (sb.game && sb.game.day) || 1 };   // ts=真时间戳；gameDay=剧情第几天（UWU 日期标签/分割线靠它）
   if (who) rec.who = who;   // 👥 群消息的说话人（私信没有这个字段）
-  // ⏳ 不秒回（2026-09-16，学墨韵手机的 delayMinutes，钟用我们自己的 game.day+game.time）：模型按剧情/人设在内容前写 ⏳分钟数
+  // ⏳ 不秒回（2026-09-16，钟用我们自己的 game.day+game.time）：模型按剧情/人设在内容前写 ⏳分钟数
   //    → 这条先「在路上」（pending），时间戳直接写成送达那一刻；phone_panel 的 revealDue 看剧情钟走到点（或真实 8 分钟兜底）才显示。
   //    只对聊天类消息生效，转账/礼物/付账/系统行照旧秒到（钱和账不能跟气泡错位）。未读/列表预览/last_contact 都等送达那刻再记，不然列表先漏底。
-  var dly = Math.max(0, Math.min(1440, parseInt(delay, 10) || 0));
+  // 2026-10-11 Fan：不秒回整个撤掉（「感觉稍后回复让手机混乱…完全没有人反馈这个功能」）——模型再写 ⏳ 也一律马上送达；
+  //   解析层照旧把 ⏳ 标记剥掉，免得它变成正文里的字
+  var dly = 0;
   if (dly > 0 && /^(text|image|voice|sticker|recall)$/.test(rec.type)) {
     var total = sbMinOfHHMM(t) + dly;
     rec.dueDay = rec.gameDay + Math.floor(total / 1440);
@@ -1390,7 +1392,6 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
     '- 行程：私信或最近剧情里**新敲定**了约会/预约/安排时，额外补一行 📅|sched|内容，内容格式**严格统一**为：M/D / HH:MM / 地点 / 和谁·干嘛（斜杠隔断，日期必须带月/日，如 4/18 / 20:00 / Le Bernardin / 和T.晚餐）。日期是强制项，绝不省略——没有 M/D 的日程系统无法识别，会排错日子。' +
     '时间一律24小时制**绝不写早/晚/下午**；对方只说了"晚上见"没给钟点，按场合补常识时间（晚餐20:00/午餐13:00/brunch 11:00/夜局23:00）；对方故意卖关子不给地点，地点位写"待TA通知"。【已排行程】里已有的绝不重复生成\n' +
     '- 撤回（稀用，一个月两三次）：某人发出消息又立刻后悔时，可发 名字|recall|他没说出口的那句话——手机上只显示"撤回了一条消息"，User看不到内容（但他自己记得说了什么）。' + (RANDOM_ONLY ? '' : '最适合"上夜班的人"这种人') + '\n' +
-    '- 不秒回：根据剧情和人设决定 TA 是马上回、还是过一会儿才回、隔多久。不是马上回的，在内容最前面写 ⏳分钟数（例：T.|text|⏳45 Polo. 7pm.§…），手机到点才显示；马上回的什么都不加\n' +
     '- 拉黑（极稀有，比撤回还稀有）：TA 被冒犯到底、受够了、或高危人设觉得暴露风险时，可以发 名字|block|一句话理由 —— 之后 User 的消息发不出去（拒收），TA 也不再回复，直到剧情里两人真的和好，TA 先发 名字|unblock| 再说话。冷淡不是拉黑，拉黑是关门\n' +
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
     '- 真买下她转发的商品（**真买才写，口头答应不算**）：名字|gift|商品名——价格数字（照她链接里的原样），系统会把东西直接放进她衣橱。通常配一条 text 说句话\n' +

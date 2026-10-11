@@ -669,11 +669,11 @@
     return null;
   }
   function dividerHtml(txt) { return '<div class="sb-msg system" style="font-weight:500;color:var(--gold);">' + esc(txt) + '</div>'; }
-  // ── ⏳ 不秒回（2026-09-16，学墨韵手机的 delayMinutes；钟用我们自己的 game.day + game.time）──
+  // ── ⏳ 不秒回（2026-09-16；钟用我们自己的 game.day + game.time）──
   // 生成器给 THEM 消息标 pending + dueDay/dueMin（时间戳已写成送达那一刻）。每次刷新看剧情钟走没走到点，到点才「送达」：
   // 去掉 pending、未读+1、列表预览/last_contact 那一刻才更新，所以送达前列表和角标都看不出有东西在路上。
   // 兜底：真实时间过了 8 分钟也送达（玩家只在手机里聊、正文不推进时，剧情钟不走，不能让消息卡死）。
-  var PENDING_REAL_MS = 8 * 60 * 1000;
+  var PENDING_REAL_MS = 0;   // 2026-10-11 不秒回撤掉：老存档里还在路上的，下一次刷新全部马上送达（原来是真实 8 分钟兜底）
   function storyNowMin() { return { day: (state && state.game && state.game.day) || 1, min: hhmmMin(nowT()) }; }
   function revealIn(sbObj, now, real) {
     var n = 0; var npcs = (sbObj && sbObj.npcs) || {};
