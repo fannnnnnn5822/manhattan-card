@@ -40,7 +40,7 @@ var RANDOM_NPC_GUIDE =
   '· **反扁平铁律**：性格必须抽两个混（单一性格=人机）；给每个人一个让人心软的细节和一个让人警惕的细节——两者可以是同一件事的两面\n' +
 '· **称呼铁律·各叫各的**：每个女孩怎么称呼 User，由**她自己的人设**决定，绝不全场统一成同一个词。清纯型可能叫「叔叔」，职业型直呼名字或「先生」，撒娇型「哥哥~」，拜金直球型连称呼都懒得给直接说事，杀猪盘会挑最能拉近距离的叫法而且换着叫。同一个人前后一致（这是她的声音指纹之一），不同的人之间必须听得出差别。\n' +
   '· **逆向 sugar（约5%低频，别每轮都来）**：偶尔来一个**钱从她那边出**的女金主——离异富太（只要人陪，随叫随到）／女老板（把他当项目，一切都有报价单）／年下富家女（觉得养个叔叔很好玩，当众转账看他脸红）／同行女金主（她也在养男孩，笑你被宰顺手转你一笔）。转账写 [WALLET:+金额]。⚠️ 爽点是**他头一次坐到桌子的另一边**——被安排、被点评、被人用他自己那套话术对待，不是他捡了便宜。别写成爽文，他可以享受也可以不适应。\n' +
-  '· **名字铁律·中文优先**：这是中国 S 市，不是纽约。昵称/ID/代号**一律以中文为主**——英文最多占十分之一，且只能是中国人真会用的那种混搭（QueenA / Vivi / 七_ / L小姐），**绝不出现 Marco/David/Hudson/Ethan 这类纯外国人名**。金主的代号同理（陈总/方总/老周/眼镜哥/开保时捷那个），别给中国人起英文本名。\n' +
+  '· **名字铁律·中文优先**：这是中国 S 市，不是纽约。昵称/ID/代号**一律以中文为主**——英文最多占十分之一，且只能是中国人真会用的那种混搭（QueenA / Vivi / 七_ / L小姐），**绝不出现 Marco/David/Hudson/Ethan 这类纯外国人名**。金主的代号同理（陈总/邵总/老周/眼镜哥/开保时捷那个），别给中国人起英文本名。\n' +
   '· ID风格：清纯型(糖糖_不熬夜/小鹿_大三/栀子花开/第一次好紧张🥺/学费还差两万) / 职业型(七_/QueenA/别浪费我时间/看心情接单) / ' +
   '撒娇型(你的小猫咪🥺/想被哥哥宠/甜甜圈_只吃贵的/哥哥带我去吃好吃的嘛💕) / 直球型(别跟我谈感情/ATM请对号入座/先转再说)\n' +
   '· 原型：清纯新人(真假参半) / 职业顶级(服务好底线高贵得理直气壮) / 撒娇大师(emoji三倍密度) / 拜金直球(反而最诚实) / ' +
@@ -72,7 +72,9 @@ var NAME_MAP = {
   '思瑶': '纪思瑶', '瑶瑶': '纪思瑶', '小瑶_第一次': '纪思瑶',
   '知秋': '叶知秋', '叶老师': '叶知秋',
   '老林': '林也', '林总': '林也',
-  '方总': '方屿',
+  '方总': '方屿', '方少': '方屿', '方公子': '方屿',
+  // 世界书标题里的拼音名（模型偶尔写拼音；空格和大小写 nameKey 会折叠）
+  'Su Nian': '苏念', 'Shen Bingyue': '沈冰月', 'Bingyue': '沈冰月', 'Ji Siyao': '纪思瑶', 'Ye Zhiqiu': '叶知秋', 'Lin Ye': '林也', 'Fang Yu': '方屿',
   'S.': 'SugarElite™',
   'Akuma老师': 'Akuma', 'akuma': 'Akuma',
 };
@@ -394,6 +396,16 @@ function mergeDupeNpcs() {
   });
 }
 function isPersistent(name) { return PERSISTENT_CANONICAL.indexOf(normalizeName(name)) !== -1; }
+// 匿名群定身份用：通讯录里自带的人（随机版只有 Akuma）
+function fixedCast(sb) { return (sb && sb.game && sb.game.random_only) ? ['Akuma'] : Object.keys(VOICES); }
+// 陌生人的昵称借了固定角色的号（「方总_化工二代」里的「方总」＝方屿）→ 返回被借的那位，没借返回空串
+function borrowsFixed(name) {
+  var s = String(name || '');
+  if (isPersistent(s)) return '';
+  var parts = s.split(/[_＿·\-—\s]+/);
+  for (var i = 0; i < parts.length; i++) { if (parts[i] && parts[i] !== s && isPersistent(parts[i])) return normalizeName(parts[i]); }
+  return '';
+}
 // 老存档补档：私享版的 🥂 兄弟群 以前是"一个名字特殊的联系人"，现在统一当群处理（成员=S.+Akuma）。
 // 老消息的说话人还写在内容开头（"S.：…"），渲染端会兜底拆一次，不用改历史数据。
 function migrateGroups() {
@@ -804,6 +816,24 @@ function userIdentity() {
   return { name: name, persona: persona };
 }
 
+// 固定角色也混在匿名群里时（花名册 real＝TA），私信里给 TA 一句「你在群里是谁、说过什么」——不然转头私聊就像换了个人
+function anonSelfLine(sb, name) {
+  var npcs = (sb && sb.npcs) || {}, out = [];
+  for (var gk in npcs) {
+    var g = npcs[gk];
+    if (!npcs.hasOwnProperty(gk) || !g || !g.isGroup || !g.anon || !g.roster) continue;
+    for (var hd in g.roster) {
+      var r = g.roster[hd];
+      if (!g.roster.hasOwnProperty(hd) || !r || normalizeName(r.real || '') !== name) continue;
+      var said = [], h = g.dm_history || [];
+      for (var i = h.length - 1; i >= 0 && said.length < 6; i--) { if (h[i] && h[i].who === hd && h[i].type !== 'system') said.unshift(String(h[i].content || '').replace(/[。.！!？?]+$/, '')); }
+      out.push('    （TA 也在匿名群「' + gk + '」里，代号「' + hd + '」，群里没人知道是 TA' +
+        (said.length ? '；TA 在群里最近说过：' + said.join('｜') : '') +
+        '。User 在群里的代号是「' + (g.myHandle || '匿名') + '」' + (r.revealed ? '——两人已经私下挑明了彼此是谁' : '——TA 不确定那是不是 User，User 挑明了才知道') + '）');
+    }
+  }
+  return out.join('\n');
+}
 function describeState(sb) {
   var p = sb.profile || {};
   var lines = [];
@@ -872,6 +902,7 @@ function describeState(sb) {
       //   其余 300 = 只要够认出"这人是谁"，反正你没在跟TA说话
       // 旧值是全员 300：正好把论坛 bio 末尾的演技交代砍掉只剩两段引文，TA 不知道该拿这些干嘛
       if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio).substring(0, ki < 3 ? 900 : 300) + '）');
+      var anL = anonSelfLine(sb, n.name); if (anL) known.push(anL);   // 👥 TA 也在匿名群里：自己说过的话自己记得
       var toyL = toyNpcLine(sb, n.name); if (toyL) known.push(toyL);   // 🎛 遥控玩具：有没有、戴没戴、开着时的体感
       var h = n.dm_history || [];
       // 正在聊的前3人给整段历史（不截条数、不截字数）——防"只看到最后几条→已读乱回"；其余给最近8条
@@ -1307,9 +1338,13 @@ async function groupMemberCard(sb, g, order, i) {
   if (g.anon) {
     // 匿名群：代号背后是谁由模型定；定过一次（roster 里有 real）就一直是这个人
     var r = (g.roster && g.roster[name]) || null;
-    body = r && r.real
+    var rc = r && r.real ? normalizeName(r.real) : '';
+    body = rc && VOICES[rc]
+      ? '这个代号背后是：' + rc + '（通讯录里的那个 ' + rc + '，群里没人知道是 TA）。就照 TA 本人演：\n' + VOICES[rc]
+      : r && r.real
       ? '这个代号背后是：' + String(r.real) + (r.secret ? '。底细：' + String(r.secret) : '') + '。就照这个人演，别换人。'
-      : '这个代号背后是谁还没定——这一轮你从【随机NPC素材库】里给 TA 挑一个身份（什么人都行：圈子两边的人、看热闹的、来做生意的、来找人的），挑好先写一行 who 把 TA 定下来，之后一直是这个人。';
+      : '这个代号背后是谁还没定——这一轮你从【随机NPC素材库】里给 TA 挑一个身份（什么人都行：圈子两边的人、看热闹的、来做生意的、来找人的），挑好先写一行 who 把 TA 定下来，之后一直是这个人。' +
+        '起的昵称要一眼就是个新面孔：和通讯录里这些人（' + fixedCast(sb).join('、') + '）不同姓、不用他们的称呼和论坛 ID——素材库里的例子换个说法再用。';
   } else if (VOICES[name]) {
     body = VOICES[name];
     var ds = await wbContent(NPC_WB_KEY[name], '');
@@ -1865,6 +1900,8 @@ function landGroupRows(sb, gKey, rows) {
       var ex = g.roster[who];
       if (ex && ex.real) continue;                     // 定过一次就不再改（不然同一个代号下一轮换了个人）
       var bits = String(r.content || '').split(/[；;]/);
+      var bf = borrowsFixed(String(bits[0] || '').trim());
+      if (bf) { console.warn('[SD-S v4] 匿名群 who 借了 ' + bf + ' 的号，这一轮不定，下一轮重来：' + bits[0]); continue; }
       g.roster[who] = {
         real: normalizeName(String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24)),
         secret: bits.slice(1).join('；').trim(),
