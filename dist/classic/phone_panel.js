@@ -749,8 +749,13 @@
   }
   // ── 物理：跑在你手机上 ──
   function toyStopLocal() { clearInterval(TK.timer); TK.timer = 0; TK.env = 0; TK.live = null; toyFab(0); }
+  // 他按下遥控的那一刻真机震一下（安卓）：开/换档＝两下，关＝轻轻一下。走酒馆主页面的 navigator（脚本 iframe 里的可能被权限策略拦）
+  function toyBuzz(off) { try { var nv = (DOC.defaultView || window).navigator; if (nv && nv.vibrate) nv.vibrate(off ? [60] : [90, 60, 140]); } catch (e) {} }
   function toySync() {
     var b = toysOf(), r = b.run, who = toyHolder();
+    var sig = (who && r.on) ? (r.mode + '|' + r.pow) : 'off';   // 只看他能动的那三样：开没开、什么模式、几档
+    if (TK.sig !== undefined && who && sig !== TK.sig) toyBuzz(sig === 'off');
+    TK.sig = sig;
     if (!who || !r.on) { if (TK.live) toyStopLocal(); if (r.on && !who) toyWrite(function (t) { if (t.run) t.run.on = false; }); return; }
     if (!TK.live) { TK.live = { who: who, aro: r.aro || 0, stage: r.stage || 1, peak: r.peak || 0 }; TK.clock = 0; TK.last = 0; TK.saveAt = Date.now(); clearInterval(TK.timer); TK.timer = setInterval(toyTick, 100); }
   }
