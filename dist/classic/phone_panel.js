@@ -112,6 +112,7 @@
     pin: '<line x1="12" y1="15" x2="12" y2="21.2"/><path d="M8 3h8l-1 6 3 3v1H6v-1l3-3-1-6z"/>',
     trash: '<line x1="3.5" y1="6" x2="20.5" y2="6"/><path d="M8 6V4.5A1.5 1.5 0 0 1 9.5 3h5A1.5 1.5 0 0 1 16 4.5V6"/><path d="M6 6v13.5A1.5 1.5 0 0 0 7.5 21h9a1.5 1.5 0 0 0 1.5-1.5V6"/><line x1="10" y1="10.5" x2="10" y2="17"/><line x1="14" y1="10.5" x2="14" y2="17"/>',
     group: '<circle cx="9" cy="8" r="3.2"/><path d="M2.5 20v-1a5 5 0 0 1 5-5h3a5 5 0 0 1 5 5v1"/><path d="M16.4 5.3a3.2 3.2 0 0 1 0 5.4"/><path d="M18 14.2a5 5 0 0 1 3.5 4.8v1"/>',
+    toy: '<path d="M11.2 8.6c2.6-2.8 6.6-4.6 8.6-3.1 1.6 1.2.4 4.1-2.6 5.6-1.8.9-3.7 1-5.2.6"/><path d="M11.2 8.6 9.4 10.4"/><path d="M9.4 10.4c-3 2.3-4.4 5.8-2.8 7.8 1.8 2.2 6.2 1.3 9-1.7"/>',
     mask: '<path d="M3 7.5C6 6 9 5.4 12 5.4s6 .6 9 2.1c0 5-2.5 10-5.5 10-1.5 0-2.3-1-3.5-1s-2 1-3.5 1C5.5 17.5 3 12.5 3 7.5z"/><path d="M6.9 10.2c.8-.8 2-.8 2.8 0"/><path d="M14.3 10.2c.8-.8 2-.8 2.8 0"/>',
   };
   function sbIcon(name, px) {
@@ -199,6 +200,7 @@
   function lastPreview(m) {
     if (!m) return '';
     if (m.type === 'recall') return (m.sender === 'USER' ? '你：' : '') + '撤回了一条消息';
+    if (m.type === 'toy') return (m.sender === 'USER' ? '你：' : '') + '[遥控] ' + String(m.content || '').substring(0, 30);
     if (m.type === 'sticker') return (m.sender === 'USER' ? '你：' : '') + '[表情包] ' + String(m.content || '').substring(0, 20);
     // system 行不加 [system] 标签（和 dm_generator.pushThem 同一条理由：那句话本来就是写给玩家看的）
     return (m.sender === 'USER' ? '你：' : '') + ((m.type && m.type !== 'text' && m.type !== 'system') ? '[' + m.type + '] ' : '') + String(m.content || '').substring(0, 50);
@@ -426,6 +428,8 @@
         if (m.type === 'transfer') {
           var amt = parseFloat(String(m.content).replace(/[^0-9.]/g, '')) || 0;
           if (amt > 0) { walletObj.balance = Math.max(0, (walletObj.balance || 0) - amt); reversedAmt += amt; }
+        } else if (m.type === 'toy' && m.toy === 'gift') {
+          if (!silent) { var tkN = npcName; toyWrite(function (t) { if (t.gifts[tkN] && t.gifts[tkN].status === 'offered') delete t.gifts[tkN]; }); }
         } else if (m.type === 'skin') {
           if (!silent) {   // 调用方会再用 v.sb 静默跑一遍，皮肤这边一次管两头（镜像 + 变量）
             var skk = String(m.content || '');
@@ -634,6 +638,224 @@
         });
       })(bs[i]);
     }
+  }
+
+  // ══ 🎛 遥控玩具（2026-10-11，玩法来自 fJForever 的 TOY·LINK「TA 拿着遥控器」那一档）══
+  // 女性向反过来：金主在私信里送（dm_generator 的 toy 行，名单闸+时机闸）→ 你在礼物卡上「收下 / 退回」→
+  // 在遥控页自己「戴上」，问一句「告诉他 / 偷偷戴着」→ 告诉了，遥控器才到他手里，他在私信里开、换档、关；
+  // 他就在你身边时，正文里也能当面按（正文末尾 <TOY> 读数）。你的身体只在你手里：戴、摘、告诉、求他停都是你按的。
+  // 物理（九种模式包络、累积、阶段、顶点）照 TOY·LINK 搬，跑在你手机上：开不开、什么模式几档归他（变量 sb.toys.run 的 on/mode/pow），
+  // 你被推到第几阶段、到没到顶归这边（aro/stage/peak，每 5 秒落一次给正文读）。他看不到这些。
+  var TOYLINK_URL = 'https://discord.com/channels/1291925535324110879/1558767687793123408';   // fJForever 在女性向工具区的 TOY·LINK 帖子
+  var TOY_TIER_NAME = { std: 'TOY·LINK 遥控套装', gold: 'TOY·LINK 24K 金定制款' };
+  var TOY_BEG_NEED = {"上夜班的人":1,"释空":3,"纪司柏":2};   // 求几次才松口（人设，和 dm_generator 的 TOY_GIVERS 同一张表）
+  function toyClamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function toyNoise(t) { var x = Math.sin(t * 127.1) * 43758.5453; return x - Math.floor(x); }
+  var TOY_MODES = [
+    { id: 'pulse', name: '脉冲', gain: 1.0, env: function (t, p) { var T = 1 / p.hz, x = (t % T) / T; return toyClamp(p.pow * (x < 0.22 ? 1 : 0.10), 0, 1); } },
+    { id: 'wave', name: '潮汐', gain: 1.05, env: function (t, p) { var T = 1 / Math.max(p.hz, 0.4), s = 0.5 + 0.5 * Math.sin((t / T) * Math.PI * 2); return toyClamp(p.pow * (0.25 + 0.75 * Math.pow(s, 1.4)), 0, 1); } },
+    { id: 'heart', name: '心跳', gain: 1.15, env: function (t, p) { var T = 1 / p.hz, x = (t % T) / T, a = x < 0.10 ? 1 : 0, b = (x > 0.20 && x < 0.29) ? 0.72 : 0; return toyClamp(p.pow * Math.max(a, b, 0.06), 0, 1); } },
+    { id: 'ramp', name: '渐强', gain: 1.35, env: function (t, p) { var T = 1 / Math.max(p.hz * 0.35, 0.25), x = (t % T) / T, v = x < 0.78 ? Math.min(1, x / 0.78) : Math.max(0, 1 - (x - 0.78) / 0.22); return toyClamp(p.pow * (0.08 + 0.92 * v), 0, 1); } },
+    { id: 'chaos', name: '乱流', gain: 1.2, env: function (t, p) { var r = toyNoise(Math.floor(t * p.hz) + p.phase), micro = 0.5 + 0.5 * Math.sin(t * p.hz * Math.PI * 2); return toyClamp(p.pow * (0.25 + 0.75 * r) * (0.55 + 0.45 * micro), 0, 1); } },
+    { id: 'tease', name: '撩拨', gain: 0.88, env: function (t, p) { var T = 1 / Math.max(p.hz * 0.30, 0.22), x = (t % T) / T; return toyClamp(p.pow * (x < 0.14 ? 0.62 : 0.03), 0, 1); } },
+    { id: 'storm', name: '暴雨', gain: 1.45, env: function (t, p) { var T = 1 / p.hz, x = (t % T) / T, base = 0.62 + 0.30 * Math.sin((t / T) * Math.PI * 2), spike = toyNoise(Math.floor(t * p.hz * 1.7)) > 0.86 ? 0.38 : 0; return toyClamp(p.pow * (x < 0.62 ? base + spike : 0.30), 0, 1); } },
+    { id: 'edge', name: '临界', gain: 1.6, env: function (t, p) { var T = 1 / Math.max(p.hz * 0.18, 0.16), x = (t % T) / T; if (x < 0.70) return toyClamp(p.pow * (0.80 + 0.20 * Math.sin(t * 5)), 0, 1); return toyClamp(p.pow * (x < 0.76 ? 0.04 : 0.25), 0, 1); } },
+    { id: 'rush', name: '冲刺', gain: 30.0, oneShot: true, env: function (t, p) { return toyClamp(p.pow * (0.86 + 0.14 * Math.sin(t * 7.3)), 0, 1); } }
+  ];
+  var TOY_STAGE_AT = [0, 22, 48, 74, 93], TOY_STAGE_CN = ['适应', '升温', '攀升', '濒临', '临界'];
+  function toyMode(id) { for (var i = 0; i < TOY_MODES.length; i++) if (TOY_MODES[i].id === id) return TOY_MODES[i]; return TOY_MODES[1]; }
+  function toyStageOf(aro) { var s = 1; for (var i = 0; i < TOY_STAGE_AT.length; i++) if (aro >= TOY_STAGE_AT[i]) s = i + 1; return s; }
+  function toyHz(f) { return Math.round(0.6 * Math.pow(33.3, (f - 1) / 99) * 10) / 10; }
+  function toysOf() {
+    var t = (state && state.toys) || {};
+    return { gifts: (t.gifts && typeof t.gifts === 'object') ? t.gifts : {}, wear: t.wear || {}, run: t.run || {}, here: t.here === 'with' ? 'with' : 'away', body: t.body === 'male' ? 'male' : 'female' };
+  }
+  function toyHolder() { var b = toysOf(); return (b.wear.who && b.wear.told && b.gifts[b.wear.who] && b.gifts[b.wear.who].status === 'owned') ? b.wear.who : ''; }
+  var TK = { live: null, timer: 0, last: 0, clock: 0, env: 0, glow: 0, saveAt: 0 };
+  function toyWrite(fn) {
+    if (state) { if (!state.toys || typeof state.toys !== 'object') state.toys = {}; if (!state.toys.gifts) state.toys.gifts = {}; fn(state.toys); }
+    return SBupdate(function (v) { if (!v.sb) return v; if (!v.sb.toys || typeof v.sb.toys !== 'object') v.sb.toys = {}; if (!v.sb.toys.gifts) v.sb.toys.gifts = {}; fn(v.sb.toys); return v; });
+  }
+  // 往他的聊天里记一条「你做了什么」（收下/退回/戴上/摘下/求停），progress 进待发队列，点发送他才知道
+  function toyUserMsg(who, text, outbox) {
+    var t = nowT(), gd = (state && state.game && state.game.day) || 1;
+    var msg = { sender: 'USER', time: t, ts: Date.now(), type: 'toy', content: text, note: '', gameDay: gd };
+    SBupdate(function (v) {
+      var n = v.sb && v.sb.npcs && v.sb.npcs[who]; if (!n) return v;
+      if (!n.dm_history) n.dm_history = []; n.dm_history.push(JSON.parse(JSON.stringify(msg)));
+      if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400);
+      n.engaged = true; n.muted = false; n.last_ts = Date.now(); n.last_contact = t; n.last_message = lastPreview(msg); return v;
+    });
+    var m0 = state && state.npcs && state.npcs[who];
+    if (m0) { if (!m0.dm_history) m0.dm_history = []; m0.dm_history.push(msg); m0.last_ts = Date.now(); m0.last_message = lastPreview(msg); }
+    if (outbox) queueOutbox(who, outbox);
+  }
+  function toyAccept(who) {
+    toyWrite(function (t) { if (t.gifts[who]) t.gifts[who].status = 'owned'; });
+    toyUserMsg(who, '收下了你送的遥控玩具', '（她收下了你送的遥控玩具）');
+    SBemit('sb_updated'); toast('success', '🎁 收下了——去「遥控」里决定什么时候戴；他那边点「发送」才知道你收了');
+  }
+  function toyReturn(who) {
+    toyWrite(function (t) { if (t.gifts[who]) { t.gifts[who].status = 'returned'; t.gifts[who].day = (state && state.game && state.game.day) || 1; } });
+    toyUserMsg(who, '把遥控玩具退回去了', '（她把你送的遥控玩具退回去了）');
+    SBemit('sb_updated'); toast('info', '退回了——点「发送」让他知道');
+  }
+  // 戴上：问一句告不告诉他（复用长按菜单的样式）
+  function toyWear(who) {
+    closeMsgMenu();
+    var menu = DOC.createElement('div'); menu.className = 'sb-msgmenu';
+    menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '26%';
+    menu.innerHTML = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">戴上 ' + esc(who) + ' 送的那个。要告诉他吗？</div>' +
+      '<button data-w="tell">告诉他——遥控器交到他手里</button><button data-w="secret">偷偷戴着——他不知道</button><button data-w="">✕ 算了</button>';
+    panel.appendChild(menu);
+    menu.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest && e.target.closest('[data-w]'); if (!b) return;
+      e.stopPropagation();
+      var w = b.getAttribute('data-w'); closeMsgMenu(); _msgMenu = null; if (!w) return;
+      var prev = toysOf().wear.who;
+      if (prev && prev !== who) toyTakeOff(true);
+      toyWrite(function (t) { t.wear = { who: who, told: w === 'tell', beg: 0 }; });
+      if (w === 'tell') toyUserMsg(who, '戴上了你送的那个——遥控器在你手里了', '（她戴上了你送的遥控玩具——遥控器在你手里了）');
+      SBemit('sb_updated');
+      toast('success', w === 'tell' ? '🎛 戴上了。点「发送」他就知道遥控器能用了' : '🎛 偷偷戴着——他不知道');
+    });
+    _msgMenu = menu;
+  }
+  function toyTell(who) {
+    toyWrite(function (t) { if (t.wear && t.wear.who === who) t.wear.told = true; });
+    toyUserMsg(who, '戴上了你送的那个——遥控器在你手里了', '（她戴上了你送的遥控玩具——遥控器在你手里了）');
+    SBemit('sb_updated'); toast('success', '点「发送」他就知道了');
+  }
+  function toyTakeOff(quiet) {
+    var b = toysOf(), who = b.wear.who; if (!who) return;
+    var told = !!b.wear.told;
+    toyStopLocal();
+    toyWrite(function (t) { t.wear = {}; if (t.run) { t.run.on = false; t.run.lastEvent = 'User 把它摘下来了'; } });
+    if (told && !quiet) toyUserMsg(who, '把它摘下来了', '（她把你送的遥控玩具摘下来了）');
+    if (!quiet) { SBemit('sb_updated'); toast('info', '摘下来了'); }
+  }
+  // 求他停下：马上问他（不进待发——这种时候等不了），肯不肯停按他的性格：有人一求就停，有人要求两三次，有人反而往上拨
+  function toyBeg() {
+    var who = toyHolder(); if (!who) return;
+    var n = (toysOf().wear.beg || 0) + 1, need = TOY_BEG_NEED[who] || 2, give = n >= need;
+    toyWrite(function (t) { if (t.wear) t.wear.beg = n; });
+    toyUserMsg(who, n === 1 ? '求你停下' : '求你停下（第 ' + n + ' 次）', '');
+    var why = '🎛 遥控玩具：User 在求 ' + who + ' 停下，这是第 ' + n + ' 次开口，语气' + (n === 1 ? '还带着点不好意思' : (n === 2 ? '已经是在服软了' : '几乎是明着认输')) + '。' +
+      (give ? '这一次应当答应：单独写一行 ' + who + '|toy|关，再按他的性格说句话（得意、心疼、或者嘴上不认但手上停了）。'
+            : '按 ' + who + ' 的性格，这一次可以不听——还想再看一会儿，或者故意拖着，甚至把档位往上拨一点（写 ' + who + '|toy|开|模式|更高的强度）；人设本来就不忍心的，也可以提前答应。') +
+      '只让 ' + who + ' 本人回应。';
+    SBupdate(function (v) { return v; }).then(function () { SBemit('sb_request_dm', { reason: why, n: '1-2', to: [who] }); });
+    toast('info', '求他了……');
+  }
+  // ── 物理：跑在你手机上 ──
+  function toyStopLocal() { clearInterval(TK.timer); TK.timer = 0; TK.env = 0; TK.live = null; toyFab(0); }
+  function toySync() {
+    var b = toysOf(), r = b.run, who = toyHolder();
+    if (!who || !r.on) { if (TK.live) toyStopLocal(); if (r.on && !who) toyWrite(function (t) { if (t.run) t.run.on = false; }); return; }
+    if (!TK.live) { TK.live = { who: who, aro: r.aro || 0, stage: r.stage || 1, peak: r.peak || 0 }; TK.clock = 0; TK.last = 0; TK.saveAt = Date.now(); clearInterval(TK.timer); TK.timer = setInterval(toyTick, 100); }
+  }
+  function toyTick() {
+    var b = toysOf(), r = b.run, L = TK.live; if (!L || !r.on) { toyStopLocal(); return; }
+    var now = Date.now(), dt = TK.last ? Math.min(0.5, (now - TK.last) / 1000) : 0.1; TK.last = now;
+    var m = toyMode(r.mode), pow = r.pow || 55, freq = r.freq || 40;
+    TK.clock += dt;
+    TK.env = m.env(TK.clock, { pow: pow / 100, hz: toyHz(freq), phase: TK.clock * 0.37 });
+    L.aro = toyClamp(L.aro + (0.075 * pow / 100 + 0.055 * Math.pow(freq / 100, 0.8)) * m.gain * dt * 6.2, 0, 100);
+    var st = toyStageOf(L.aro), ev = '';
+    if (st > L.stage) ev = 'User 被推到了第 ' + st + ' 阶段（' + TOY_STAGE_CN[st - 1] + '）';
+    L.stage = st;
+    var stop = false;
+    if (L.aro >= 99.5) {
+      L.peak++; triggerVibration();
+      if (m.oneShot) { L.aro = 100; L.stage = 5; ev = 'User 被冲刺模式冲到顶，装置冲到顶自己停了'; stop = true; }
+      else { L.aro = 6; L.stage = 1; ev = 'User 刚到了顶点（第 ' + L.peak + ' 次），装置还在继续'; }
+    }
+    if (ev || now - TK.saveAt > 5000 || stop) {
+      TK.saveAt = now;
+      var snap = { aro: Math.round(L.aro * 10) / 10, stage: L.stage, peak: L.peak };
+      toyWrite(function (t) { if (!t.run) return; t.run.aro = snap.aro; t.run.stage = snap.stage; t.run.peak = snap.peak; if (ev) t.run.lastEvent = ev; if (stop) t.run.on = false; });
+    }
+    if (stop) { toyStopLocal(); return; }
+    toyFab(TK.env); toyPaint();
+  }
+  function toyFab(env) {
+    TK.glow += (env - TK.glow) * 0.35;
+    if (!fab) return;
+    fab.classList.toggle('toy-on', !!TK.live);
+    fab.style.setProperty('--tk', TK.glow.toFixed(3));
+  }
+  // ── 遥控页 ──
+  function openRemote() {
+    currentPage = 'remote';
+    var b = toysOf(), names = Object.keys(b.gifts), holder = toyHolder(), r = b.run;
+    var h = pageHeader('遥控', 'TOY·LINK', false, sbIcon('toy', 15) + ' ');
+    h += '<div class="sb-msgs sb-tk" style="display:block;">';
+    if (b.wear.who && b.gifts[b.wear.who] && b.gifts[b.wear.who].status === 'owned') {
+      var w = b.wear.who;
+      h += '<div class="sb-sec">戴在你身上</div>';
+      if (!b.wear.told) {
+        h += '<div class="sb-empty" style="padding:4px 16px 6px;">' + esc(w) + ' 送的那个，你偷偷戴着——他不知道，遥控器在他手里也用不上。</div>' +
+          '<div class="sb-tk-go"><button class="sb-tk-line" data-tk="tell" data-v="' + esc(w) + '">告诉他</button><button class="sb-tk-line" data-tk="off">摘下来</button></div>';
+      } else {
+        var C1 = 2 * Math.PI * 44, C2 = 2 * Math.PI * 52;
+        h += '<div class="sb-tk-ring' + (r.on ? ' live' : '') + '"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="tk-tr"/><circle cx="60" cy="60" r="52" class="tk-aro" id="sbnyc-tk-aro" stroke-dasharray="0 ' + C2.toFixed(1) + '"/><circle cx="60" cy="60" r="44" class="tk-tr2"/><circle cx="60" cy="60" r="44" class="tk-env" id="sbnyc-tk-env" stroke-dasharray="0 ' + C1.toFixed(1) + '"/></svg>' +
+          '<div class="tk-mid"><b id="sbnyc-tk-st">' + (r.on ? TOY_STAGE_CN[(r.stage || 1) - 1] : '安静') + '</b><small id="sbnyc-tk-sub">' + (r.on ? '第 ' + (r.stage || 1) + ' 阶段' + (r.peak ? ' · 到过 ' + r.peak + ' 次' : '') : '遥控器在 ' + esc(w) + ' 手里') + '</small></div></div>';
+        h += '<div class="sb-empty" style="text-align:center;padding:0 16px 6px;">' + (r.on ? esc(w) + ' 开着：' + esc(toyMode(r.mode).name) + ' · ' + (r.pow || 55) + '%' : esc(w) + ' 还没按') + '</div>';
+        h += '<div class="sb-tk-row"><span>他在</span>' + [['with', '你身边'], ['away', '别处']].map(function (x) { return '<button class="sb-tk-pill sm' + (b.here === x[0] ? ' on' : '') + '" data-tk="here" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>';
+        h += '<div class="sb-tk-go">' + (r.on ? '<button class="sb-tk-power stop" data-tk="beg">求他停下</button>' : '') + '<button class="sb-tk-line" data-tk="cut">写进正文</button><button class="sb-tk-line" data-tk="off">摘下来</button></div>';
+      }
+    }
+    h += '<div class="sb-sec">他们送的</div>';
+    if (!names.length) h += '<div class="sb-empty" style="padding:4px 16px;">还没有人送过。</div>';
+    for (var i = 0; i < names.length; i++) {
+      var nm = names[i], gf = b.gifts[nm], st = gf.status, worn = b.wear.who === nm;
+      h += '<div class="sb-tk-shop"><div><b>' + esc(nm) + '</b><small>' + esc(TOY_TIER_NAME[gf.tier] || TOY_TIER_NAME.std) + ' · ' + (st === 'offered' ? '还没回应' : st === 'returned' ? '退回了' : worn ? (b.wear.told ? '戴着' : '偷偷戴着') : '收下了，没戴') + '</small></div>' +
+        (st === 'offered' ? '<button class="sb-tk-buy" data-tk="accept" data-v="' + esc(nm) + '">收下</button><button class="sb-tk-buy" data-tk="return" data-v="' + esc(nm) + '">退回</button>'
+          : (st === 'owned' && !worn ? '<button class="sb-tk-buy" data-tk="wear" data-v="' + esc(nm) + '">戴上</button>' : '')) + '</div>';
+    }
+    h += '<div class="sb-tk-row sm"><span>身体</span>' + [['female', '女'], ['male', '男']].map(function (x) { return '<button class="sb-tk-pill sm' + (b.body === x[0] ? ' on' : '') + '" data-tk="body" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>';
+    h += '<div class="sb-tk-credit"><div>遥控玩具 made by fJForever with love</div><span data-tk="credit">TOY·LINK ♡ 点击这里安装到其他角色卡 ›</span></div>';
+    h += '</div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    bindPageChrome(closeChat);
+    var box = chatEl.querySelector('.sb-tk'); if (box) box.addEventListener('click', toyClick);
+    toyPaint();
+  }
+  function toyPaint() {
+    if (currentPage !== 'remote' || !panel.classList.contains('open') || !TK.live) return;
+    var e = DOC.getElementById('sbnyc-tk-env'), a = DOC.getElementById('sbnyc-tk-aro');
+    var C1 = 2 * Math.PI * 44, C2 = 2 * Math.PI * 52;
+    if (e) e.setAttribute('stroke-dasharray', (C1 * TK.env).toFixed(1) + ' ' + C1.toFixed(1));
+    if (a) a.setAttribute('stroke-dasharray', (C2 * TK.live.aro / 100).toFixed(1) + ' ' + C2.toFixed(1));
+    var s = DOC.getElementById('sbnyc-tk-st'), sub = DOC.getElementById('sbnyc-tk-sub');
+    if (s) s.textContent = TOY_STAGE_CN[TK.live.stage - 1];
+    if (sub) sub.textContent = '第 ' + TK.live.stage + ' 阶段' + (TK.live.peak ? ' · 到过 ' + TK.live.peak + ' 次' : '');
+  }
+  function toyClick(ev) {
+    var el = ev.target && ev.target.closest && ev.target.closest('[data-tk]'); if (!el) return;
+    ev.stopPropagation();   // 血泪教训 2：要开菜单的点击别冒泡给「点外面收菜单」
+    var k = el.getAttribute('data-tk'), v = el.getAttribute('data-v') || '';
+    if (k === 'accept') toyAccept(v);
+    else if (k === 'return') toyReturn(v);
+    else if (k === 'wear') toyWear(v);
+    else if (k === 'tell') toyTell(v);
+    else if (k === 'off') toyTakeOff(false);
+    else if (k === 'beg') toyBeg();
+    else if (k === 'here') { toyWrite(function (t) { t.here = v; }); openRemote(); }
+    else if (k === 'body') { toyWrite(function (t) { t.body = v; }); openRemote(); }
+    else if (k === 'cut') {
+      var who = toyHolder(); if (!who) return;
+      toyWrite(function (t) { t.cutReq = { at: Date.now() }; }).then(function () {
+        try {
+          var ta = DOC.getElementById('send_textarea'); if (!ta) return;
+          var line = '（遥控器在' + who + '手里。）', cur = String(ta.value || '');
+          ta.value = cur.trim() ? cur.replace(/\s+$/, '') + '\n' + line : line;
+          try { ta.dispatchEvent(new VIEW.Event('input', { bubbles: true })); } catch (e2) {}
+          toast('success', '✍️ 已填进正文输入框，点发送'); panel.classList.remove('open');
+        } catch (e3) {}
+      });
+    }
+    else if (k === 'credit') { try { (DOC.defaultView || window).open(TOYLINK_URL, '_blank'); } catch (e) {} }
   }
   // 优先剧情时间（正文 [TIME:] 标记 → sb.game.time）：手机时钟和正文同步，没有才退回真实时钟
   function nowT() {
@@ -1188,6 +1410,41 @@
     '#sbnyc-panel .sb-skbtn{font-size:11px;padding:3px 10px;border-radius:999px;border:1px solid var(--gold);color:var(--gold);background:transparent;cursor:pointer;}',
     '#sbnyc-panel .sb-skbtn.on{background:var(--gold);color:#fff;}',
     '#sbnyc-panel .sb-skbtn.off{border-color:var(--ink-faint);color:var(--ink-sub);}',
+    // 🎛 遥控玩具：框是本卡的金，跳动的那道弧是梅紫（和 TOY·LINK 的悬浮球一套）
+    '#sbnyc-panel{--plum:#8e2f8f;--plum-soft:rgba(142,47,143,.14);}',
+    '#sbnyc-panel.night{--plum:#c46ed6;--plum-soft:rgba(196,110,214,.16);}',
+    '#sbnyc-panel .sb-abtn.tk-on{border-color:var(--plum);color:var(--plum);}',
+    '#sbnyc-panel .sb-tk{padding-bottom:18px;}',
+    '#sbnyc-panel .sb-tk-pill{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:999px;padding:5px 12px;font-size:12px;cursor:pointer;font-family:var(--font-sans);}',
+    '#sbnyc-panel .sb-tk-pill.on{border-color:var(--gold);color:var(--gold);}',
+    '#sbnyc-panel .sb-tk-pill.sm{padding:3px 10px;font-size:11px;}',
+    '#sbnyc-panel .sb-tk-ring{position:relative;width:150px;height:150px;margin:8px auto 4px;}',
+    '#sbnyc-panel .sb-tk-ring svg{width:100%;height:100%;transform:rotate(-90deg);}',
+    '#sbnyc-panel .sb-tk-ring circle{fill:none;stroke-linecap:round;}',
+    '#sbnyc-panel .sb-tk-ring .tk-tr{stroke:var(--line);stroke-width:3;}',
+    '#sbnyc-panel .sb-tk-ring .tk-aro{stroke:var(--gold);stroke-width:3;transition:stroke-dasharray .3s linear;}',
+    '#sbnyc-panel .sb-tk-ring .tk-tr2{stroke:var(--plum-soft);stroke-width:7;}',
+    '#sbnyc-panel .sb-tk-ring .tk-env{stroke:var(--plum);stroke-width:7;}',
+    '#sbnyc-panel .sb-tk-ring .tk-mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;}',
+    '#sbnyc-panel .sb-tk-ring .tk-mid b{font-family:var(--font-cn);font-size:22px;font-weight:600;color:var(--ink);letter-spacing:2px;}',
+    '#sbnyc-panel .sb-tk-ring .tk-mid small{font-size:10.5px;color:var(--ink-sub);}',
+    '#sbnyc-panel .sb-tk-row{display:flex;align-items:center;gap:8px;padding:6px 16px;font-size:12px;color:var(--ink-sub);}',
+    '#sbnyc-panel .sb-tk-go{display:flex;gap:8px;padding:10px 16px 4px;flex-wrap:wrap;}',
+    '#sbnyc-panel .sb-tk-power{flex:1;padding:11px 0;border-radius:12px;border:none;background:var(--ink);color:var(--paper);font-size:14px;letter-spacing:4px;cursor:pointer;font-family:var(--font-cn);}',
+    '#sbnyc-panel .sb-tk-power.stop{background:var(--plum);color:#fff;}',
+    '#sbnyc-panel .sb-tk-line{padding:8px 14px;border-radius:12px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-size:12px;cursor:pointer;font-family:var(--font-sans);}',
+    '#sbnyc-panel .sb-tk-shop{display:flex;align-items:center;gap:8px;margin:6px 14px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;}',
+    '#sbnyc-panel .sb-tk-shop > div{flex:1;display:flex;flex-direction:column;gap:3px;}',
+    '#sbnyc-panel .sb-tk-shop b{font-family:var(--font-cn);font-size:13.5px;color:var(--ink);font-weight:600;}',
+    '#sbnyc-panel .sb-tk-shop small{font-size:11px;color:var(--ink-sub);line-height:1.5;}',
+    '#sbnyc-panel .sb-tk-buy{flex:none;padding:6px 12px;border-radius:999px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-size:12px;cursor:pointer;}',
+    '#sbnyc-panel .sb-tk-gbtn{display:flex;gap:6px;margin-top:6px;}',
+    '#sbnyc-panel .sb-tk-gbtn button{flex:1;padding:5px 0;border-radius:999px;border:1px solid currentColor;background:transparent;color:inherit;font-size:12px;cursor:pointer;}',
+    '#sbnyc-panel .sb-tk-chip{display:inline-block;margin-left:8px;padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-family:var(--font-sans);font-size:9.5px;letter-spacing:.5px;text-transform:none;font-weight:400;color:var(--ink-sub);cursor:pointer;vertical-align:1px;}',
+    '#sbnyc-panel .sb-tk-chip.on{border-color:var(--plum);color:var(--plum);}',
+    '#sbnyc-panel .sb-tk-credit{text-align:center;font-size:10.5px;color:var(--ink-faint);padding:14px 0 4px;}',
+    '#sbnyc-panel .sb-tk-credit span{display:inline-block;margin-top:4px;color:var(--gold);cursor:pointer;font-size:11.5px;}',
+    '#sbnyc-fab.toy-on{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 calc(3px + var(--tk,0) * 12px) rgba(196,110,214,calc(.25 + var(--tk,0) * .6)));}',
   ].join('\n');
 
   // ── 挂载（先拆旧的，脚本重载/换聊天时不留双份） ──
@@ -1276,6 +1533,7 @@
       if (state.game && !state.game.epoch) state.game.epoch = GAME_EPOCH_STR;
       if (state.wallet && !Array.isArray(state.wallet.allTransactions)) state.wallet.allTransactions = [];
       if (!state.skins || typeof state.skins !== 'object') state.skins = { owned: [], active: '' };   // ✨ 气泡皮肤（老存档补档，镜像侧）
+      try { toySync(); } catch (e) {}   // 🎛 他开了/关了 → 你手机上的装置跟着跑/停
       // 👥 老存档补档（镜像侧）：私享版闺蜜群以前只是个名字特殊的联系人，现在统一当群看
       // （变量侧由 dm_generator 的 migrateGroups 落盘，这里只保证本次渲染不瞎）
       if (state.npcs) {
@@ -1473,7 +1731,7 @@
   }
   function renderActions() {
     return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">' + sbIcon('refresh', 14) + ' 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button><button class="sb-abtn" data-act="closet">👗 衣橱</button></div>' +
-      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn" data-act="music">🎵 音乐</button></div>';   // 第二行（UWU 的三个新页面）
+      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn" data-act="music">🎵 音乐</button>' + (Object.keys(toysOf().gifts).length ? '<button class="sb-abtn' + (TK.live ? ' tk-on' : '') + '" data-act="remote">' + sbIcon('toy', 14) + ' 遥控</button>' : '') + '</div>';   // 第二行（UWU 的三个新页面）
   }
   function renderDMList(npcs) {
     var entries = []; for (var n in npcs) { if (!npcs.hasOwnProperty(n)) continue; var npc = npcs[n]; if (!npc.unlocked && !npc.persistent && (npc.unread || 0) <= 0 && !npc.engaged) continue; if (npc.muted && !(npc.dm_history && npc.dm_history.length) && (npc.unread || 0) <= 0 && !npc.engaged) continue; entries.push(npc); }
@@ -1582,6 +1840,7 @@
       else if (a === 'closet') openCloset();
       else if (a === 'calendar') openCalendar();
       else if (a === 'trans') openTransactions();
+      else if (a === 'remote') openRemote();
       else if (a === 'music') openMusic();
     }); })(btns[j]); }
     // 行程 todolist：⭕/✅打勾切换、点文字编辑、✕直接删（都不弹确认，误删了让TA重加——手机上确认框比误删烦）
@@ -1930,6 +2189,7 @@
     else if (currentPage === 'closet') openCloset();
     else if (currentPage === 'calendar') openCalendar();
     else if (currentPage === 'transactions') openTransactions();
+    else if (currentPage === 'remote') openRemote();   // 🎛 他开/关/送了 → 遥控页跟着变
     else if (currentPage && currentPage.indexOf('board:') === 0) openBoard(currentPage.slice(6));
     else if (currentPage && currentPage.indexOf('group:') === 0) openGroupMembers(currentPage.slice(6));   // 👥 成员页开着时（有人进群/退群）跟着刷新
   }
@@ -3972,10 +4232,11 @@
     var isSE = name === 'SugarElite™';
     var isGrp = !!npc.isGroup;
     var hist = npc.dm_history || [];
+    var tkG = !npc.isGroup && toysOf().gifts[name], tkB = toysOf();
     var subLine = isGrp
       ? '<span class="sb-gmem">' + ((npc.members || []).length) + ' 人 ›</span>' + (npc.anon ? ' 匿名 · 你是「' + esc(npc.myHandle || '？') + '」' : '')
       : esc(npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已把你拉黑' : '');
-    var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + '</small></div>' +
+    var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + (tkG ? '<span class="sb-tk-chip' + (tkB.wear.who === name ? ' on' : '') + '" data-tkchip="1">TOY·LINK · ' + (tkG.status === 'offered' ? '待你回应' : tkG.status === 'returned' ? '退回了' : tkB.wear.who === name ? (tkB.run.on && tkB.wear.told ? '开着' : '戴着') : '收下了') + ' ›</span>' : '') + '</small></div>' +
       (isGrp ? '<button class="sb-ch-dnd sb-ik' + (npc.dnd ? ' on' : '') + '" title="消息免打扰（照常收，只是不吵你）">' + sbIcon(npc.dnd ? 'bellOff' : 'bell') + '</button>' : '') +
       '<button class="sb-ch-pin sb-ik' + (npc.pinned ? ' on' : '') + '" title="置顶/取消置顶（置顶的联系人不会被自动清理）">' + sbIcon('pin') + '</button>' +
       '<button class="sb-ch-del sb-ik" title="' + (isGrp ? '退出并删除这个群' : '删除聊天记录') + '">' + sbIcon('trash') + '</button></div>';
@@ -4008,6 +4269,8 @@
     h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
 
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    var tkChip = chatEl.querySelector('[data-tkchip]'); if (tkChip) tkChip.addEventListener('click', function (e) { e.stopPropagation(); openRemote(); });
+    chatEl.querySelectorAll('[data-tkg]').forEach(function (b) { b.addEventListener('click', function (e) { e.stopPropagation(); if (b.getAttribute('data-tkg') === 'accept') toyAccept(name); else toyReturn(name); openChat(name, (state && state.npcs && state.npcs[name]) || npc); }); });
     var me = chatEl.querySelector('.sb-msgs'); if (me) me.scrollTop = me.scrollHeight;
 
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -4413,7 +4676,7 @@
     var dataA = '';
     if (trName != null && trIdx != null) {
       dataA = ' data-owner="' + (isU ? 'me' : 'them') + '" data-nm="' + esc(trName) + '" data-mi="' + trIdx + '"';
-      if (type !== 'transfer' && type !== 'recall' && type !== 'system' && type !== 'gift' && type !== 'dossier') {   // 档案卡不给重roll/编辑（它不是一条消息，卡上自带「再查一次」）
+      if (type !== 'transfer' && type !== 'recall' && type !== 'system' && type !== 'gift' && type !== 'dossier' && type !== 'toy') {   // 档案卡不给重roll/编辑（它不是一条消息，卡上自带「再查一次」）
         if (canReroll && !isU) dataA += ' data-rr="1"';
         if (isU && (type === 'text' || type === 'image' || type === 'voice' || type === 'sticker')) {
           if (type !== 'sticker') dataA += ' data-ed="1"';   // 表情包没有"编辑"这回事，只能撤
@@ -4430,6 +4693,15 @@
     }
     if (type === 'transfer') return '<div class="sb-msg transfer' + (isU ? ' me' : '') + '"' + dataA + ' data-tp="transfer"><div class="tl">' + (isU ? 'You sent' : 'Received') + '</div><div class="ta">' + fmtCNY(c) + '</div>' + (n ? '<div class="tl">' + esc(n) + '</div>' : '') + tH + '</div>';
     if (type === 'skin') { var skd = SKIN_BY[c] || [c, c]; return '<div class="sb-msg transfer"' + dataA + ' data-tp="skin"><div class="tl">Gift · 气泡皮肤</div><div class="sb-msg me sk-' + esc(skd[0]) + '" style="max-width:100%;margin:6px 0 2px;font-size:12px;padding:5px 10px;">' + esc(skd[1]) + '</div><div class="tl">去 SugarElite™ 商城换上</div>' + tH + '</div>'; }
+    if (type === 'toy') {   // 🎛 他送的礼物卡（带收下/退回）/ 他按了遥控 / 你做了什么
+      if (isU) return '<div class="sb-msg transfer me"' + dataA + ' data-tp="toy"><div class="tl">TOY·LINK</div><div class="ta" style="font-size:14px;">' + esc(c) + '</div>' + tH + '</div>';
+      if (m.toy === 'gift') {
+        var tgf = toysOf().gifts[trName || ''], pend = tgf && tgf.status === 'offered';
+        return '<div class="sb-msg transfer"' + dataA + ' data-tp="toy"><div class="tl">Gift · TOY·LINK</div><div class="ta" style="font-size:15px;">' + esc(m.tier === 'gold' ? '24K 金定制款' : '遥控套装') + '</div><div class="tl">遥控器在他手机里</div>' +
+          (pend ? '<div class="sb-tk-gbtn"><button data-tkg="accept">收下</button><button data-tkg="return">退回</button></div>' : (tgf ? '<div class="tl">' + (tgf.status === 'returned' ? '你退回了' : '你收下了') + '</div>' : '')) + tH + '</div>';
+      }
+      return '<div class="sb-msg transfer"' + dataA + ' data-tp="toy"><div class="tl">TOY·LINK</div><div class="ta" style="font-size:14px;">' + esc(c) + '</div>' + tH + '</div>';
+    }
     if (type === 'gift') return '<div class="sb-msg transfer"' + dataA + ' data-tp="gift"><div class="tl">Gift · 已入衣橱</div><div class="ta" style="font-size:16px;">🎁 ' + esc(c) + '</div>' + tH + '</div>';
     if (type === 'image') {
       // 消息带 imgUrl（🎨 AI生图）→ 渲染真实 <img>；否则保持旧文字样式（UWU）
@@ -5102,6 +5374,7 @@
   function sbSelfCleanup() {
     try { clearInterval(_songTimer); } catch (e) {}
     try { clearInterval(_revealTimer); } catch (e) {}
+    try { clearInterval(TK.timer); } catch (e) {}   // 🎛
     try { clearTimeout(_kvTimer); } catch (e) {}
     try { clearTimeout(_bubTimer); } catch (e) {}
     try { if (_bubObs) _bubObs.disconnect(); } catch (e) {}                   // 气泡观察器：挂在 parent 的 DOM 上，必须自己断

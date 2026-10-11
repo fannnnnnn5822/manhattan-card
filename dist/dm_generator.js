@@ -581,6 +581,33 @@ function pushThem(sb, name, type, content, zh, delay, who) {
     try { if (typeof toastr !== 'undefined') toastr.success('✨ S. 送了你一套气泡皮肤「' + SKIN_CN[skKey] + '」', 'SugarOS'); } catch (e) {}
     content = skKey;
   }
+  // 🎛 toy：「送 / 送金」＝名单里够得着的人送礼物；「开|模式|强度 / 关」＝她告诉了他、遥控器在他手里时才认。别的一律丢
+  var toyFlag = '', toyTier = '';
+  if (type === 'toy') {
+    var tparts = String(content || '').split('|').map(function (x) { return x.trim(); });
+    var tverb = tparts[0] || '', tb = toyEnsure(sb);
+    if (/^送/.test(tverb)) {
+      if (!toyCanOffer(sb, name)) return;
+      toyTier = /金/.test(tverb) ? 'gold' : 'std';
+      tb.gifts[name] = { tier: toyTier, status: 'offered', day: (sb.game && sb.game.day) || 1 };
+      toyFlag = 'gift'; content = '送了你一个遥控玩具：' + TOY_TIER_CN[toyTier] + '（遥控器在他手机里）';
+      try { if (typeof toastr !== 'undefined') toastr.info('🎁 ' + name + ' 送了你一个遥控玩具', 'SugarOS'); } catch (e) {}
+    } else if (/^(开|换|关|on|off)/i.test(tverb)) {
+      if (toyHolder(sb) !== name) return;
+      var tr = tb.run || (tb.run = {}), wasOn = !!tr.on;
+      if (/^(关|off)/i.test(tverb)) { if (!wasOn) return; tr.on = false; tr.lastEvent = name + ' 把遥控关了'; content = '关掉了遥控'; }
+      else {
+        var tmode = TOY_MODE_ID[tparts[1]] || tr.mode || 'wave', tpow = parseInt(tparts[2], 10) || tr.pow || 55;
+        tr.on = true; tr.mode = tmode; tr.pow = Math.max(1, Math.min(100, tpow)); if (!tr.freq) tr.freq = 40;
+        if (!wasOn) { tr.aro = 0; tr.stage = 1; tr.peak = 0; }
+        tr.lastEvent = name + (wasOn ? ' 把遥控换成 ' : ' 远程按开了遥控：') + TOY_MODE_CN[tmode] + ' · ' + tr.pow + '%';
+        content = (wasOn ? '换成了 ' : '打开了遥控 · ') + TOY_MODE_CN[tmode] + ' · ' + tr.pow + '%';
+      }
+      if (tb.wear) tb.wear.beg = tr.on ? (tb.wear.beg || 0) : 0;
+      toyFlag = 'ctl';
+      try { if (typeof toastr !== 'undefined') toastr.info('🎛 ' + name + ' ' + content, 'SugarOS'); } catch (e) {}
+    } else return;
+  }
   if (type === 'gift') {
     var gm = String(content).match(/^(.*?)(?:—+|--)\s*\$?([\d,.]+)\s*$/);
     var gName = (gm ? gm[1] : String(content)).trim().slice(0, 40);
@@ -601,6 +628,7 @@ function pushThem(sb, name, type, content, zh, delay, who) {
   }
   var rec = { sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '', gameDay: (sb.game && sb.game.day) || 1 };   // ts=真时间戳；gameDay=剧情第几天（UWU 日期标签/分割线靠它）
   if (who) rec.who = who;   // 👥 群消息的说话人（私信没有这个字段）
+  if (toyFlag) { rec.toy = toyFlag; if (toyTier) rec.tier = toyTier; }
   // ⏳ 不秒回（2026-09-16，钟用我们自己的 game.day+game.time）：模型按剧情/人设在内容前写 ⏳分钟数
   //    → 这条先「在路上」（pending），时间戳直接写成送达那一刻；phone_panel 的 revealDue 看剧情钟走到点（或真实 8 分钟兜底）才显示。
   //    只对聊天类消息生效，转账/礼物/付账/系统行照旧秒到（钱和账不能跟气泡错位）。未读/列表预览/last_contact 都等送达那刻再记，不然列表先漏底。
@@ -821,6 +849,7 @@ function describeState(sb) {
       known.push('- ' + n.name + (n.persistent ? '(固定)' : '(' + (n.archetype || '陌生') + ')') + '，关系度' + (n.relationship || 0));
       // 带简历的联系人（招聘版帖子原文/评论区来路/玩家新建时写的备注/旧识摘要）：TA是谁以此为准，回话贴着演。
       // 整段给——评论区来的人 bio 里先是帖子原文、结尾才是"语气接着往下演"的指令，旧版砍 300 字正好把指令砍掉
+      var toyL = toyNpcLine(sb, n.name); if (toyL) known.push(toyL);   // 🎛 遥控玩具
       if (n.bio) known.push('    （TA的已知背景，身份/条件/语气以此为准：' + String(n.bio) + '）');
       var h = n.dm_history || [];
       // 正在聊的前3人给整段历史（不截条数、不截字数）——防"只看到最后几条→已读乱回"；其余给最近8条（也不截字数）
@@ -913,10 +942,175 @@ function inSceneNames(plot, sb) {
 
 // ── 解析 generateRaw 输出：每行 名字|类型|内容 ──
 // 严格模式：只认 名字|合法类型|内容。挡掉预设(如Mortal)注入的 <horae> 标签 + npc:/time: 等字段行。
-var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker', 'block', 'unblock', 'skin'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单/sticker=表情包/block·unblock=TA拉黑·解除拉黑 User
+var VALID_TYPES = ['text', 'transfer', 'image', 'voice', 'song', 'tag', 'sched', 'recall', 'gift', 'paybill', 'sticker', 'block', 'unblock', 'skin', 'toy'];   // song=灵动岛歌/tag=标签/sched=行程/recall=撤回/gift=真买了入衣橱/paybill=真替付账单/sticker=表情包/block·unblock=TA拉黑·解除拉黑 User
 // ✨ 气泡皮肤（2026-10-09）：skin 行只认 S.（SugarElite™）发、只认这张表里的代号——提示词管不住的这里管
 var SKIN_KEYS = ['gold', 'moon', 'jade', 'bubbly', 'velvet', 'robin', 'lace', 'iron', 'neon', 'leopard', 'galaxy', 'holo', 'bling', 'unicorn'];
 var SKIN_CN = { gold: '古典金', moon: '月光银', jade: '翡翠', bubbly: '香槟', velvet: '红丝绒', robin: '知更鸟蓝', lace: '粉色蕾丝', iron: '哥特铁艺', neon: '霓虹', leopard: '豹纹', galaxy: '星河', holo: '全息', bling: '金光闪闪', unicorn: '独角兽' };
+
+
+// ── 🎛 遥控玩具（2026-10-11，玩法来自 fJForever 的 TOY·LINK「TA 拿着遥控器」那一档）──
+// 女性向是反过来的：金主送玩具给 User，遥控器在他手里，身体有反应的是 User。
+// 账归代码：sb.toys = { gifts:{名字:{tier,status:'offered'|'owned'|'returned',day}}, wear:{who,told,beg}, run:{on,mode,pow,freq,aro,stage,peak,lastEvent}, here:'with'|'away', body:'female'|'male', cutReq }
+// 两层闸：①名单闸 TOY_GIVERS（人设：谁会动这个念头）②时机闸（同时只有一份没回应的礼物；被退回过的人隔 3 天；聊得太少的不送）
+// 戴不戴、告不告诉他，全是 User 在手机上按的，模型碰不到；模型只能「送」和「拿着遥控器调」。
+var TOY_GIVERS = {
+ "T.": [
+  "控制欲加老钱：遥控器在他手里，像他开给你的又一道条件——送就送金的，让司机送到门口",
+  2
+ ],
+ "上夜班的人": [
+  "他不行。遥控器是他唯一能让你舒服的办法——玩起来克制、专业、偶尔漏出一点心酸",
+  1
+ ],
+ "Father Dan": [
+  "罪疚和饥渴：不碰你也能控制你，这让他觉得罪少一点；玩完必补一句 i'm sorry",
+  1
+ ],
+ "Marco Rossi": [
+  "什么都要显摆：买了个山寨货还邀功，玩起来乱按、狂发表情包，是吵的那种",
+  2
+ ]
+};
+var TOY_TIER_CN = { std: 'TOY·LINK 遥控套装', gold: 'TOY·LINK 24K 金定制款' };
+var TOY_MODE_CN = { pulse: '脉冲', wave: '潮汐', heart: '心跳', ramp: '渐强', chaos: '乱流', tease: '撩拨', storm: '暴雨', edge: '临界', rush: '冲刺' };
+var TOY_MODE_ID = {}; for (var _tmk in TOY_MODE_CN) TOY_MODE_ID[TOY_MODE_CN[_tmk]] = _tmk;
+var TOY_STAGE_CN = ['适应', '升温', '攀升', '濒临', '临界'];
+// TOY·LINK「TA 拿着遥控器」那一档的世界书原文（fJForever 写的，从他的 index.html 原样抽出）：{{char}}＝拿遥控器的他，{{user}}＝戴着的 User
+var TOY_WB = {
+  anchorUser: "【装置归属 · 最高优先级，覆盖前面所有相反的内容】\n装置戴在 {{user}} 身上。{{char}} 身上没有装置，遥控器在 {{char}} 手里。\n被震动、被刺激、出现身体反应的是 {{user}}；{{char}} 是操控的那一方。\n写 {{char}} 怎么调遥控器、怎么看、怎么说；{{user}} 身体上看得到的变化可以写。\n如果前面的楼层写反了，从这条回复开始纠正过来，不要在回复里解释这件事。",
+  view: "【视角转换，优先级最高】\n这一局里装置戴在 {{user}} 身上，遥控器在 {{char}} 手里——与下面各条默认写的方向相反。\n读到下面任何一条时，把\"被作用的那一方\"一律理解成 {{user}}：\n被震动、被刺激、出现身体反应的是 {{user}}，操控的一方是 {{char}}。\n正文以外在表现为主：写 {{char}} 怎么调、怎么看、怎么说，写 {{user}} 身体上看得见的变化。",
+  rulesUser: "【输出禁令（优先级最高）】\n· 不要出现这些词：系统、数据、变量、面板、界面、参数、状态同步。\n· 不要复述上面的数字，用身体去表现它们。\n· 被作用的是 {{user}}，不是你。写你的动作、手上的遥控器、你的表情和你说的台词；{{user}} 的外在反应可以写，但不要替他写内心想法。\n· 节奏上每次只往前走一小步：这一回合的失控程度只比上一回合深一点，不要一口气写到底。\n· 按 {{char}} 本来的性格来写，不要换成另一个人。\n· {{char}} 没在强撑，所以不必嘴硬——这一局里，硬撑的是 {{user}}。",
+  body: "【强度档位对应的身体反应】\n看 toy_intensity（此刻多用力）与 toy_stage（累积到哪一步）。两者都高时，按更高那一档写。\n\n轻 · 强度 1-35\n　身体：皮肤表面发麻，像有细小的电流在爬；小腹深处泛出一丝酸；大腿内侧不自觉收紧。\n　说话：句子还能说完，但末尾发飘；被问话时会慢半拍，要先\"啊？\"一声才回过神。\n　动作：坐姿悄悄换重心；手指在桌沿上无意识地敲；膝盖并拢又松开。\n　声音：呼吸比平时深；偶尔一声很轻的吸气；吞咽的声音变得明显；衣料摩挲声变多。\n\n中 · 强度 36-65\n　身体：热从下腹往上漫，耳根和脖子发烫；腰开始使不上力，坐不住也站不直；腿根发软。\n　说话：一句话要分两三次才说完；尾音发颤，说到一半会突然停住；开始用短句敷衍（\"没事\"\"等一下\"）。\n　动作：手去找支撑物，抓扶手、抓衣角、抓桌沿；上半身前倾或者整个塌下去；脚趾蜷起来。\n　声音：压着的鼻音；从齿缝里漏出的气音；偶尔一声没憋住的小声哼；布料的摩擦声。\n\n重 · 强度 66-85\n　身体：整条腿在抖，膝盖并不拢；小腹一阵阵抽紧；视线失焦，眼前发白；皮肤浮起一层薄汗。\n　说话：说不出完整的句子，只剩碎片和重复的音节；叫名字、讨饶，或者干脆失语；字与字之间全是喘。\n　动作：弓背、蜷缩、抓紧什么就不放手；额头抵在某处；想合腿却合不上；眼泪开始往外冒。\n　声音：连续的呜咽；气声和实音搅在一起；牙关打颤的细碎响声；呼吸变成短促的抽气。\n\n极限 · 强度 86-100\n　身体：意识被搅成一片白；肌肉不受控地痉挛；下腹缩成一团；什么都抓不住，也放不开。\n　说话：只剩气音和单字，叫不出完整的名字；或者反复念同一个音。\n　动作：身体弓成一张拉满的弦；四肢挣动；脚背绷直；指甲掐进掌心。\n　声音：破碎的呜咽；被咬碎的哭腔；呼吸几乎没有节律；偶尔一声拔高的尖叫又断在半路。\n\n同一档里也要有起伏，不要一路平推。写到最狠的那一处，停一下，再让 {{char}} 喘过一口气。\n\n【女性身体的特性】没有明确的不应期：一波刚落，下一波就能接上。累积值回落之后反而比之前更敏感，所以不要把顶点写成\"结束\"，它是下一轮更容易被推上去的起点，余韵还没过去就已经能重新累积。",
+  bodyMale: "【强度档位对应的身体反应（男性身体）】\n看 toy_intensity（此刻多用力）与 toy_stage（累积到哪一步）。两者都高时，按更高那一档写。\n\n轻 · 强度 1-35\n　身体：皮肤表面发麻，像有细小的电流在爬；小腹深处泛起一阵酸胀；下体开始有反应，但还压得住；会不自觉想并腿。\n　说话：句子还能说完，但末尾发飘；被问话时会慢半拍；会刻意把话头引到别的事情上。\n　动作：坐姿换重心；手指无意识地收紧又松开；手往腿边放了一下又收回去。\n　声音：呼吸比平时深；偶尔一声很轻的吸气；吞咽的声音变得明显。\n\n中 · 强度 36-65\n　身体：热往下沉，会阴一阵阵发紧；小腹连着后腰绷起来；坐不住也站不直；额角开始出汗。\n　说话：一句话要分两三次才说完；尾音发颤；开始用短句敷衍（\"嗯\"\"等一下\"）。\n　动作：手去找支撑物，抓桌沿、抓衣角；上半身前倾或者整个塌下去；膝盖分开又并上；下意识调整坐姿。\n　声音：压着的鼻音；从齿缝里漏出的气音；憋住的一两声闷哼；布料的摩擦声。\n\n重 · 强度 66-85\n　身体：整条腿在抖；会阴与后腰缩成一团；小腹紧得发酸；呼吸彻底乱了；指尖发凉。\n　说话：说不出完整的句子，只剩碎片和重复的音节；开始求人，或者干脆不说话了；字与字之间全是喘。\n　动作：弓背、蜷缩、抓紧什么就不放手；额头抵在某处；脚背绷直；腰往前顶又收回去。\n　声音：连续的闷哼；气声和实音搅在一起；牙关打颤的细碎响声；呼吸变成短促的抽气。\n\n极限 · 强度 86-100\n　身体：意识被搅成一片白；全身肌肉不受控地绷紧又松开；下腹和后腰缩成一块；顶点来得很快，几乎没有预兆。\n　说话：只剩气音和单字；叫不出完整的名字；或者反复念同一个音。\n　动作：身体弓成一张拉满的弦；四肢挣动；手死死攥住什么；指甲掐进掌心。\n　声音：破碎的气音；压在喉咙里的低哼；呼吸几乎没有节律。\n\n同一档里也要有起伏，不要一路平推。写到最狠的那一处，停一下，再让 {{char}} 喘过一口气。\n\n【男性身体的特性】有不应期，这一点必须写准：\n· 顶点是一次性的释放，不要写成连续高潮。到达之后会有几分钟到十几分钟的不应期，那段时间里身体是钝的，继续刺激只会变成酸胀和难受，而不是再来一次。\n· 顶点之后如果装置还在运转，写的应该是\"过载、想让它停下\"，不是\"还想再来\"。\n· 女性能一波接一波、累积值回落之后更敏感，男性不行——回落之后是疲惫和敏感过头，要写这段恢复期怎么把余韵拖长，而不是立刻爬第二波。\n· 冲刺模式在男性身上是\"一次干净利落到底\"，到顶停下之后要写出那口终于松下来的气。",
+  modes: "【九种模式各自是什么感觉（看 toy_mode_name）】\n脉冲：一下一下地点，每一下之间有空档。身体会本能地跟着节奏绷紧又松开，最怕的是那点空档——刚放松就被点名。\n潮汐：像水一层层漫上来，退下去的时候人会不自觉地去追，追不到比被推上去还难受。\n心跳：两下连着来，后一下比前一下更重。它是震，不是敲 —— 感受是那两下之间的空档被拉长，身体会自动跟着这个节奏起伏，久了连呼吸都被带跑。\n渐强：慢慢爬到顶，然后突然落下。每一次落下都比上一次更难熬，因为已经知道接下来要爬多高。\n乱流：没有规律，猜不到下一拍落在哪。身体一直没法放松，等的过程中比真的来的时候更折磨。\n撩拨：长时间空着，偶尔轻轻碰一下就走。累积得慢，但人会被吊得发慌，开始主动去要。\n暴雨：几乎不留空隙，密到没法思考。很快会失去说话的能力，只剩喘。\n临界：一直顶在很高的位置，然后整个撤走。那一下的落空比任何强度都磨人。\n冲刺：短时间直冲顶点。没有铺垫、没有台阶，上来就是最密的节奏，一路把人推到底；到顶之后装置会自己停下，要再来一次得重新按启动。这一档的写法是一次性的爆发，不是慢慢积累——从第一句就在往顶点压，最后给一个完整的顶点。\n\n模式只决定\"怎么给\"，强度决定\"给多重\"，阶段决定\"{{char}} 已经到了哪一步\"。三者配合着写，不要只写震动本身。",
+  stages: "【累积阶段（看 toy_stage / toy_arousal）】\n第 1 阶段·适应（0-21）：呼吸略乱，走神，腿不自觉并拢，还能把话说完整。\n第 2 阶段·升温（22-47）：语速忽快忽慢，耳根发烫，手指抓紧身边的东西，尾音发抖。\n第 3 阶段·攀升（48-73）：句子碎掉，腰塌下去，得扶着什么才稳，压不住的轻哼往外漏。\n第 4 阶段·濒临（74-92）：意识被节奏牵着走，眼角发潮，口齿不清，开始求人。\n第 5 阶段·临界（93 以上）：理智断线，只剩本能反应。\n\n强度很高但阶段还低，说明刚开始不久：{{char}} 想硬撑，但撑得很勉强，破绽全在细节里。",
+  peak: "【临界爆发】\ntoy_peak 增加、或状态里出现「临界爆发」时，说明 {{char}} 刚被推到顶点。\n写法：先是几秒的空白，然后是脱力的抽搐、止不住的眼泪和破碎的气音，四肢发软，来不及收拾自己。\n爆发之后累积值回落，装置仍在运转，余韵还没过去下一轮就已经开始爬升，此时 {{char}} 比之前更敏感、更没力气抵抗。\n\n【停机】\n装置停止后，写 {{char}} 悬在半空的空虚、身体残留的余颤，和 {{char}} 对 {{user}} 的反应：撒娇、埋怨，或者还没缓过来的沉默。",
+  chain: "【一次反应要写成一条链，不是几个点】\n一条完整的感受按这个顺序铺开。少了中间任何一层，读起来都会是「局部速写」而不是「身临其境」。\n\n一、起点 —— 震感落在哪儿\n　写清部位，也写清那是什么感觉。同一个部位，参数不同手感就不同：\n　低频是拖着磨、有推的余地；高频是细密的痒、躲不开；强度低时只有表面发麻，\n　强度上去之后才会一路酸到深处。不要只写「她被震动」，写震动在做什么。\n\n二、传导 —— 它往哪走\n　感受不会停在一个点上。写它怎么漫出去：从下腹往上一路烧到耳根，\n　从腰窝往下沉到尾椎，从腿根散到脚趾蜷起来。这一层决定现场感。\n\n三、对抗 —— 身体在做什么\n　不是被动挨着。写下意识的反应：并腿、绷紧、挪重心、抓身边的东西、\n　把到嘴边的话咽回去、假装若无其事。越是克制，破绽越值得写。\n\n四、失守 —— 控制在哪里断\n　按累积值（toy_arousal）和阶段（toy_stage）来，不要跳过台阶：\n　还能把话说完整 → 说话开始断句 → 只能出气音和单字 → 只剩本能反应。\n　每一条回复只比上一条深一点点，把后面的空间留给下一轮。\n\n五、外显 —— 别人看得见什么\n　呼吸的深浅、声音碎到什么程度、手抓着什么、眼神往哪里躲、\n　皮肤和衣料是湿是皱。外部表现比内心陈述可信得多，能写外面就不要写里面。\n\n【几条要守住的】\n· 不要一口气写到底。递进的价值在于还有下一步，写满了就没有下一步了。\n· 不要写结论句。不写「{{char}} 受不了了」，写抓住扶手的指节发白。\n· 液体、失控之类的表现，看这张卡的人物和这个场景是否涉及。不涉及就别硬加 ——\n  通用条目写的是「可以有」，不是「必须有」。\n· 模式名只描述手感，不要当成动作。比如「心跳」指的是两下连震的节奏，不是心脏在跳，更不是有人在敲。",
+};
+
+function toyBook(sb) {
+  var t = (sb && sb.toys) || {};
+  return { gifts: (t.gifts && typeof t.gifts === 'object') ? t.gifts : {}, wear: t.wear || {}, run: t.run || {}, here: t.here === 'with' ? 'with' : 'away', body: t.body === 'male' ? 'male' : 'female', cutReq: t.cutReq || null };
+}
+function toyEnsure(sb) { if (!sb.toys || typeof sb.toys !== 'object') sb.toys = {}; if (!sb.toys.gifts || typeof sb.toys.gifts !== 'object') sb.toys.gifts = {}; return sb.toys; }
+function toyHzOf(f) { return Math.round(0.6 * Math.pow(33.3, ((f || 40) - 1) / 99) * 10) / 10; }
+// 时机闸：他此刻可不可以送
+function toyCanOffer(sb, name) {
+  if (!TOY_GIVERS[name]) return false;
+  var b = toyBook(sb), day = (sb.game && sb.game.day) || 1;
+  for (var k in b.gifts) if (b.gifts[k] && b.gifts[k].status === 'offered') return false;   // 已经有一份在等她回应
+  var mine = b.gifts[name];
+  if (mine && mine.status !== 'returned') return false;                                         // 送过了
+  if (mine && mine.status === 'returned' && day - (mine.day || 0) < 3) return false;            // 刚被退回
+  var h = ((sb.npcs || {})[name] || {}).dm_history || [];
+  var fromUser = 0; for (var i = 0; i < h.length; i++) if (h[i].sender === 'USER') fromUser++;
+  return h.length >= 8 && fromUser >= 3;                                                         // 还不熟的不送
+}
+function toyHolder(sb) { var b = toyBook(sb); return (b.wear.who && b.wear.told && b.gifts[b.wear.who] && b.gifts[b.wear.who].status === 'owned') ? b.wear.who : ''; }
+function toyWb(k, giver) {
+  var t = String(TOY_WB[k] || '');
+  if (k === 'anchorUser' || k === 'view' || k === 'rulesUser') return t.replace(/\{\{char\}\}/g, giver).replace(/\{\{user\}\}/g, 'User');
+  return t.replace(/\{\{char\}\}/g, 'User').replace(/\{\{user\}\}/g, giver);   // 身体那几条：被作用的一方是 User
+}
+// 私信侧：名单里的人各一行（为什么会动这个念头 + 现在走到哪一步）
+function toyNpcLine(sb, name) {
+  var g0 = TOY_GIVERS[name]; if (!g0) return '';
+  var b = toyBook(sb), gf = b.gifts[name], r = b.run;
+  if (!gf) return toyCanOffer(sb, name) ? '    （遥控玩具·他可能动的念头：' + g0[0] + '。有由头才送，大部分时候根本不提）' : '';
+  if (gf.status === 'offered') return '    （遥控玩具：他送她的那个，她还没回应——收不收是她的事）';
+  if (gf.status === 'returned') return '    （遥控玩具：他送的，她退回去了' + (toyCanOffer(sb, name) ? '；过了几天了，要不要再试一次看他自己' : '') + '）';
+  if (toyHolder(sb) !== name) return '    （遥控玩具：她收下了他送的那个；她戴没戴，他不知道）';
+  var s = '    （遥控玩具：她戴着他送的那个，遥控器在他手里——' + g0[0] + '）';
+  if (r.on) s += '\n    （此刻开着：' + (TOY_MODE_CN[r.mode] || '潮汐') + ' · ' + (r.pow || 55) + '%。他看不到她的身体，只知道自己按了什么；她怎么样，只能从她的回复里猜）';
+  else s += '\n    （遥控器现在关着）';
+  return s;
+}
+// 格式块：只对名单里此刻够得着的人提，提一次
+function toyFormatLine(sb) {
+  var out = '', can = [];
+  for (var n in TOY_GIVERS) if (toyCanOffer(sb, n) && (sb.npcs || {})[n]) can.push(n);
+  if (can.length) out += '- 遥控玩具（只有 ' + can.join('、') + ' 可能动这个念头，各自为什么见他那一行）：有由头才送——见过面之后、关系走近了、或者他就是想换一种方式让她想着他；不是每轮都提，大部分时候根本不提。真送的那一刻单独写一行 名字|toy|送（送金的写 名字|toy|送金），配一条 text 说句话；收不收、戴不戴是她的事\n';
+  var h = toyHolder(sb);
+  if (h) out += '- 遥控器在 ' + h + ' 手里（只有他能写）：想开、换档、关，单独写一行 ' + h + '|toy|开|模式|强度（模式只能是 脉冲/潮汐/心跳/渐强/乱流/撩拨/暴雨/临界/冲刺，强度 1-100）或 ' + h + '|toy|关；开不开、开多大按他的性格和此刻的心情定，不是每轮都动\n';
+  return out;
+}
+// 实时状态 + 写作要求：照 TOY·LINK 的 stateText()「TA 拿着遥控器」那一支
+function toyStateText(r, giver, here, body) {
+  var L = ['【TOY·LINK 装置 · 实时状态】'];
+  L.push('归属：装置戴在【User】身上，遥控器在【' + giver + '】手里。被震动、出现身体反应的是 User，不是 ' + giver + '。');
+  if (r.on) {
+    L.push('运行状态：运行中（装置此刻正在工作）');
+    L.push('模式：' + (TOY_MODE_CN[r.mode] || '潮汐') + '｜频率：' + toyHzOf(r.freq).toFixed(1) + ' Hz｜强度：' + (r.pow || 55) + '%');
+    L.push('阶段：第 ' + (r.stage || 1) + ' 阶段·' + TOY_STAGE_CN[Math.max(0, Math.min(4, (r.stage || 1) - 1))] + '（累积 ' + Math.round(r.aro || 0) + '/100，累计临界 ' + (r.peak || 0) + ' 次）');
+  } else L.push('运行状态：没开——她戴着它，遥控器在 ' + giver + ' 手里，什么时候响由他定');
+  if (r.lastEvent) L.push('最近变化：' + r.lastEvent);
+  L.push('');
+  L.push('写作要求（优先级最高）：');
+  L.push(body === 'male'
+    ? '· 被作用者的身体是【男性】：顶点是一次性的释放，到达后有不应期，那段时间里继续刺激只会变成酸胀难受，不要再写连续高潮。回落之后写恢复期的疲惫与敏感过头，不要立刻爬第二波。'
+    : '· 被作用者的身体是【女性】：没有明确的不应期，一波刚落下一波就能接上，累积回落之后反而更敏感，所以顶点不是"结束"，而是下一轮更容易被推上去的起点。');
+  if (r.lastEvent && r.lastEvent.indexOf('冲到顶') !== -1) L.push('▲ User 刚被冲刺模式一路推到顶点。这一轮就写这一下：到达的那一刻、脱力、发愣、手抖，以及收拾自己——写看得见的，不写 User 的内心独白。');
+  L.push('· 被作用的是 User，不是 ' + giver + '。写 ' + giver + ' 的掌控动作、表情变化和说的话；User 身体上的外在反应可以写，但不要替 User 写内心想法和台词。');
+  if (r.on) L.push('· 装置此刻正在运行。不要描写它被关闭、被取下、被调低，也不要假设 ' + giver + ' 按了上面没提到的键。');
+  else L.push('· 装置此刻没开，不要描写新的震动。');
+  L.push('· 遥控器的档位只以这里为准。正文不编遥控界面（滑块、数字、按钮）。');
+  if (here === 'with') {
+    L.push('· ' + giver + ' 就在 User 身边，遥控器在他手里：写他怎么调、怎么看、怎么说；周围有别人时 User 得在人前装镇定——破绽全在细节里。');
+    L.push('· 这一轮里他要是真的动了遥控器（开、换档、关），正文写完之后另起一行附上装置读数，格式照这样：<TOY>开关=开|模式=潮汐|强度=70</TOY>。开关填「开」或「关」，模式只能是九种之一，强度 1-100 的整数。没动就不写这一行；这一行是给装置读的，正文里不要提它。');
+  } else {
+    L.push('· ' + giver + ' 不在 User 身边：他只通过手机出现（他发来的消息、他刚按下的档位）。正文镜头在 User 这边，写 User 身体看得见的变化，以及周围的人有没有察觉。');
+  }
+  L.push('· 不要替 User 行动、说话，也不要替 User 决定剧情走向。');
+  return L.join('\n');
+}
+// 正文焦点块（单独注入 depth 0，同 TOY·LINK 的 ⓪）：她戴着并告诉了他，且（开着 / 他就在身边 / 刚点了「写进正文」）
+function toyFocus(sb) {
+  var b = toyBook(sb), giver = toyHolder(sb); if (!giver) return '';
+  var cq = b.cutReq, cut = cq && Date.now() - (cq.at || 0) < 15 * 60000;
+  if (!b.run.on && b.here !== 'with' && !cut) return '';
+  var parts = [toyWb('anchorUser', giver), toyWb('view', giver), toyStateText(b.run, giver, b.here, b.body)];
+  if (b.run.on) parts.push(toyWb(b.body === 'male' ? 'bodyMale' : 'body', giver), toyWb('modes', giver), toyWb('stages', giver), toyWb('peak', giver));
+  parts.push(toyWb('chain', giver), toyWb('rulesUser', giver));
+  return parts.join('\n\n');
+}
+// 常驻摘要：谁送过、她戴没戴（偷偷戴着的也写给正文——那是正文的张力，不是秘密泄露）
+function toyDigest(sb) {
+  var b = toyBook(sb), names = Object.keys(b.gifts); if (!names.length) return '';
+  var own = names.filter(function (n) { return b.gifts[n].status === 'owned'; });
+  var out = '';
+  if (own.length) out += '【遥控玩具】User 收下过遥控玩具：' + own.map(function (n) { return n + ' 送的'; }).join('、') + '。';
+  if (b.wear.who && b.gifts[b.wear.who] && b.gifts[b.wear.who].status === 'owned') {
+    out += b.wear.told ? 'User 正戴着 ' + b.wear.who + ' 送的那个，遥控器在他手里；档位只以手机为准，正文不编遥控界面。'
+      : 'User 偷偷戴着 ' + b.wear.who + ' 送的那个——他不知道，别人也不知道；遥控器在他手里，但他还没理由去按。';
+  }
+  return out ? out + '\n' : '';
+}
+// 正文末尾的 <TOY> 读数（他当面拿着遥控器时）：认出来就落账、从正文里剥掉
+function toyParseTag(text) {
+  var m = String(text || '').match(/<TOY>([\s\S]*?)<\/TOY>/i); if (!m) return null;
+  var o = {}; m[1].split('|').forEach(function (kv) { var p = kv.split('='); if (p.length >= 2) o[p[0].trim()] = p.slice(1).join('=').trim(); });
+  return { raw: m[0], on: !/关/.test(o['开关'] || ''), mode: TOY_MODE_ID[o['模式']] || '', pow: parseInt(o['强度'], 10) || 0 };
+}
+async function toyApplyTag(message_id) {
+  try {
+    var ms = await getChatMessages(String(message_id)); var m = ms && ms[0]; if (!m || m.role !== 'assistant') return;
+    var vv = getVariables({ type: 'chat' }), sb0 = vv && vv.sb;
+    if (sb0 && sb0.toys && sb0.toys.cutReq) await updateVariablesWith(function (v) { if (v.sb && v.sb.toys) delete v.sb.toys.cutReq; return v; }, { type: 'chat' });
+    var tag = toyParseTag(m.message); if (!tag) return;
+    await setChatMessages([{ message_id: m.message_id, message: String(m.message).replace(tag.raw, '').replace(/\n{3,}/g, '\n\n').replace(/\s+$/, '') }], { refresh: 'affected' });
+    if (!sb0 || !toyHolder(sb0) || toyBook(sb0).here !== 'with') return;   // 只认她戴着、告诉了他、他就在身边
+    await updateVariablesWith(function (v) {
+      if (!v.sb) return v; var t = toyEnsure(v.sb), r = t.run || (t.run = {}), who = toyHolder(v.sb); if (!who) return v;
+      var was = !!r.on;
+      if (!tag.on) { r.on = false; r.lastEvent = who + ' 当面把遥控关了'; return v; }
+      r.on = true; if (tag.mode) r.mode = tag.mode; if (tag.pow) r.pow = Math.max(1, Math.min(100, tag.pow)); if (!r.freq) r.freq = 40;
+      if (!was) { r.aro = 0; r.stage = 1; r.peak = 0; }
+      r.lastEvent = who + ' 当面' + (was ? '把遥控换成' : '按开了遥控：') + (TOY_MODE_CN[r.mode] || '潮汐') + ' · ' + (r.pow || 55) + '%';
+      return v;
+    }, { type: 'chat' });
+    try { eventEmit('sb_updated'); } catch (e) {}
+  } catch (e) { console.warn('[SB toy] tag failed', e); }
+}
 
 // 👥 群行允许的类型：聊天类 + 群专属（leave=退群 / who=交代代号背后是谁 / dm=群里有人私下加你）。
 // 钱类（transfer/gift/paybill）和 tag/sched/song/block/unblock 在群行里一律丢弃——钱只走私信一个口子。
@@ -1396,6 +1590,7 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
     '- 真买下她转发的商品（**真买才写，口头答应不算**）：名字|gift|商品名——价格数字（照她链接里的原样），系统会把东西直接放进她衣橱。通常配一条 text 说句话\n' +
     (sb.sugarelite && sb.sugarelite.subscribed ? '- S. 专属（只有 SugarElite™ 能发，别人写了无效）：送 User 一套气泡皮肤 SugarElite™|skin|代号 —— 代号只能是 ' + SKIN_KEYS.map(function (k) { return k + '=' + SKIN_CN[k]; }).join('／') + '。只在有由头时送（会员礼遇、庆祝、赔罪、User 刚念叨过想换个样子），一次一套，配一条 text 说一句；User 已有：' + ((sb.skins && Array.isArray(sb.skins.owned) && sb.skins.owned.length) ? sb.skins.owned.map(function (k) { return SKIN_CN[k] || k; }).join('、') : '还没有') + '，已有的不再送\n' : '') +
+    toyFormatLine(sb) +
     '- 真替她交账单（只在她转发过账单、且这个人真愿意时）：名字|paybill|账单名（照她转发的名字写），系统会把这张账单标成已付进入下期；只想给钱让她自己交的就发 transfer\n' +
     '- 严禁输出任何叙事、旁白、环境描写、心理描写、解释、标题、空行以外的东西\n' +
     '- 严禁代替 User 说话或回复\n' +
@@ -2287,12 +2482,14 @@ function buildDigest(sb) {
     }
     blocks.push(lines.join('\n'));
   }
+  var toyD = toyDigest(sb);   // 🎛
   var closet = (sb.closet || []).slice(-10).map(function (c) { return c.name; });
-  if (!blocks.length && !closet.length) return '';
+  if (!blocks.length && !closet.length && !toyD) return '';
   var out = '【User 手机上的时间：' + nowTime() + '（正文的时刻感尽量与之呼应）】\n';
   if (blocks.length) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
   }
+  if (toyD) out += toyD;
   if (closet.length) {
     out += '【User 的衣橱（她真实拥有的，出场/赴约时会自然穿戴使用，别人看得见的是"东西在她身上"，不是价格和来路）】' + closet.join('、') + '\n';
   }
@@ -2338,7 +2535,9 @@ function syncInject() {
     var sb = vars && vars.sb;
     if (!sb) return;
     var digest = buildDigest(sb);
-    try { uninjectPrompts(['sbnyc-dm-digest']); } catch (e) {}
+    try { uninjectPrompts(['sbnyc-dm-digest', 'sbtoy-focus']); } catch (e) {}
+    var focus = toyFocus(sb);   // 🎛 她戴着、告诉了他，且开着/他在身边/刚点了「写进正文」
+    if (focus) { try { injectPrompts([{ id: 'sbtoy-focus', position: 'in_chat', depth: 0, role: 'system', content: focus, should_scan: false }]); } catch (e) {} }
     if (!digest) return;                                  // 记录被删空 → 只反注入，主线不再记得
     injectPrompts([{
       id: 'sbnyc-dm-digest', position: 'in_chat', depth: 1,
@@ -2514,6 +2713,7 @@ var _lastMainMsgId = null;
 var _lastMainEffects = { walletOps: [], closetAdds: [], days: 0 };
 
 async function onMainMessage(message_id) {
+  await toyApplyTag(message_id);   // 🎛 他当面拿着遥控器时正文末尾的读数
   try {
     var msgs = await getChatMessages(String(message_id));
     if (!msgs || !msgs.length) return;
