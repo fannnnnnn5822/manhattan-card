@@ -2937,7 +2937,7 @@
       last_contact: t, last_ts: Date.now(), unread: 0, last_message: '', dm_history: [sysLine], bio: bio, _fromAnon: gname,
     };
     function patch(np) {
-      if (!np.bio) np.bio = bio;
+      if (!np.persistent && !np.bio) np.bio = bio;
       if (!np._fromAnon) { np._fromAnon = gname; if (!Array.isArray(np.dm_history)) np.dm_history = []; np.dm_history.push(sysLine); }
     }
     SBupdate(function (v) {

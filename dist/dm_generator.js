@@ -335,17 +335,24 @@ function splitGroupSpeaker(content, names) {
 
 // 启动时清一次重复联系人（历史bug：SugarElite™ 曾以不同写法建成两个人；Marco/Marco Rossi 同理）
 function mergeDupeNpcs() {
-  var merged = [];
+  var merged = [], rosterFix = 0;
   var p = updateVariablesWith(function (v) {
     var npcs = v.sb && v.sb.npcs;
     if (!npcs) return v;
     for (var k in npcs) {
       if (!npcs.hasOwnProperty(k)) continue;
-      if (npcs[k] && npcs[k].isGroup) continue;             // 👥 群名是玩家起的，不归一、不合并
+      if (npcs[k] && npcs[k].isGroup) {                     // 👥 群名是玩家起的，不归一、不合并；花名册里的真名要归一
+        var ros = npcs[k].roster || {};
+        for (var hk in ros) { if (ros.hasOwnProperty(hk) && ros[hk] && ros[hk].real) { var rc = normalizeName(ros[hk].real); if (rc !== ros[hk].real) { ros[hk].real = rc; rosterFix++; } } }
+        continue;
+      }
       var canon = normalizeName(k);
       if (canon === k) continue;
       var b = npcs[k];
-      if (!npcs[canon]) { npcs[canon] = b; b.name = canon; }
+      if (!npcs[canon]) {
+        npcs[canon] = b; b.name = canon;
+        if (isPersistent(canon)) { b.persistent = true; b.archetype = ARCHETYPE_CN[canon] || b.archetype; delete b.bio; }   // 别名落到固定 NPC：TA 用自己的声音卡，别带着匿名群的身份
+      }
       else {
         var a = npcs[canon];
         // 拼接顺序按两边的活跃时间定：last_ts 小的（先聊完的）整块在前——消息本身没有真时间戳，这是最不乱序的拼法
@@ -364,6 +371,7 @@ function mergeDupeNpcs() {
     return v;
   }, { type: 'chat' });
   Promise.resolve(p).then(function () {
+    if (rosterFix && !merged.length) { try { eventEmit('sb_updated'); } catch (e) {} }
     if (merged.length) {
       console.log('[SB-NYC v4] merged dupe contacts: ' + merged.join(', '));
       try { if (typeof toastr !== 'undefined') toastr.info('🧹 合并了重复联系人：' + merged.join('，'), 'SugarOS'); } catch (e) {}
@@ -1847,10 +1855,11 @@ function openAnonDm(sb, gKey, handle, firstLine, zh) {
   var g = sb.npcs && sb.npcs[gKey];
   var r = g && g.roster && g.roster[handle];
   if (!r || !r.real) { console.warn('[SB-NYC v4] 这个代号还没露过底，dm 行丢弃：' + handle); return ''; }
-  var real = String(r.real).replace(/[|§\r\n]/g, '').trim().slice(0, 24);
+  var real = normalizeName(String(r.real).replace(/[|§\r\n]/g, '').trim().slice(0, 24));
   if (!real) return '';
+  r.real = real;
   var npc = ensureNpc(sb, real);
-  if (!npc.bio) npc.bio = anonDmBio(g, handle, r);
+  if (!npc.persistent && !npc.bio) npc.bio = anonDmBio(g, handle, r);
   if (!npc.archetype) npc.archetype = '匿名群·私下加的';
   if (!npc._fromAnon) {   // 线程首条灰行：玩家隔几天回来也看得出这人是从哪冒出来的
     npc._fromAnon = gKey;
@@ -1904,7 +1913,7 @@ function landGroupRows(sb, gKey, rows) {
       if (ex && ex.real) continue;                     // 定过一次就不再改（不然同一个代号下一轮换了个人）
       var bits = String(r.content || '').split(/[；;]/);
       g.roster[who] = {
-        real: String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24),
+        real: normalizeName(String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24)),
         secret: bits.slice(1).join('；').trim(),
         joined: (ex && ex.joined) || Date.now(), last: Date.now(), revealed: false,
       };
