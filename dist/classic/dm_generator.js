@@ -1007,7 +1007,7 @@ var TOY_WB = {
 
 function toyBook(sb) {
   var t = (sb && sb.toys) || {};
-  return { gifts: (t.gifts && typeof t.gifts === 'object') ? t.gifts : {}, wear: t.wear || {}, run: t.run || {}, here: t.here === 'with' ? 'with' : 'away', body: t.body === 'male' ? 'male' : 'female', cutReq: t.cutReq || null };
+  return { gifts: (t.gifts && typeof t.gifts === 'object') ? t.gifts : {}, wear: t.wear || {}, run: t.run || {}, here: t.here === 'with' ? 'with' : 'away', body: 'female' /* 女性向：User 就是女生，不给选（Fan 10-11） */, cutReq: t.cutReq || null };
 }
 function toyEnsure(sb) { if (!sb.toys || typeof sb.toys !== 'object') sb.toys = {}; if (!sb.toys.gifts || typeof sb.toys.gifts !== 'object') sb.toys.gifts = {}; return sb.toys; }
 function toyHzOf(f) { return Math.round(0.6 * Math.pow(33.3, ((f || 40) - 1) / 99) * 10) / 10; }

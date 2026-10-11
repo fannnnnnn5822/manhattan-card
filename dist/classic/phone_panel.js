@@ -813,7 +813,6 @@
         (st === 'offered' ? '<button class="sb-tk-buy" data-tk="accept" data-v="' + esc(nm) + '">收下</button><button class="sb-tk-buy" data-tk="return" data-v="' + esc(nm) + '">退回</button>'
           : (st === 'owned' && !worn ? '<button class="sb-tk-buy" data-tk="wear" data-v="' + esc(nm) + '">戴上</button>' : '')) + '</div>';
     }
-    h += '<div class="sb-tk-row sm"><span>身体</span>' + [['female', '女'], ['male', '男']].map(function (x) { return '<button class="sb-tk-pill sm' + (b.body === x[0] ? ' on' : '') + '" data-tk="body" data-v="' + x[0] + '">' + x[1] + '</button>'; }).join('') + '</div>';
     h += '<div class="sb-tk-credit"><div>遥控玩具 made by fJForever with love</div><span data-tk="credit">TOY·LINK ♡ 点击这里安装到其他角色卡 ›</span></div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
