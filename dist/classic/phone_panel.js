@@ -5822,8 +5822,9 @@
     if (!cfg) { toast('还没配语音 API——点手机顶栏的 🎙 图标去填', 'err'); openCfg(); return; }
     if (busy[k]) return;
     busy[k] = true;
-    var text = info.text;
-    var cap = Number(cfg.maxLen) || 240;                        // 对齐 CosyVoice adapter 默认 240
+    // 2026-10-11：语音条内容＝（声音/背景）+ 说出口的原话——括号里那句是给人看的描写，不念；全是括号就整句念
+    var text = String(info.text).replace(/[（(][^（）()]*[）)]/g, '').replace(/\s+/g, ' ').trim() || info.text;
+    var cap = Number(cfg.maxLen) || 240;                       // 对齐 CosyVoice adapter 默认 240
     if (text.length > cap) { toast('这段太长（' + text.length + '字），截到 ' + cap + ' 字念'); text = text.slice(0, cap); }
     btn.textContent = '⏳';
     toast('正在合成…');
