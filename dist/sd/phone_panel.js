@@ -881,7 +881,7 @@
       var it = TOY_SHOP[j];
       h += '<div class="sb-tk-shop"><div><b>' + esc(it[1]) + '</b><small>' + esc(it[3]) + '</small></div><button class="sb-tk-buy" data-tk="buy" data-v="' + it[0] + '">' + fmtCNY(it[2]) + '</button></div>';
     }
-    h += '<div class="sb-tk-credit">玩法移植自 <span data-tk="credit">TOY·LINK · by fJForever ›</span></div>';
+    h += '<div class="sb-tk-credit">这只遥控来自我们的好朋友 fJForever 的 <span data-tk="credit">TOY·LINK ♡ ›</span></div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
