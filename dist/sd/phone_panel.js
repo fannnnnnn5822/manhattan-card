@@ -1543,6 +1543,21 @@
     '#sbnyc-panel .sb-tk-shop b{font-family:var(--font-cn);font-size:13.5px;color:var(--ink);font-weight:600;}',
     '#sbnyc-panel .sb-tk-shop small{font-size:11px;color:var(--ink-sub);line-height:1.5;}',
     '#sbnyc-panel .sb-tk-buy{flex:none;padding:6px 12px;border-radius:999px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-family:var(--font-en);font-size:12px;cursor:pointer;}',
+    // 🎛 遥控卡片：TOY·LINK 那套梅紫·奶白·香槟金——他发来的是浅色件，你发出去的是深色件（和气泡皮肤「TA 浅你深」一个路数）
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc{align-self:flex-start;background:linear-gradient(160deg,#fbf6f0,#f1e7dc);color:#4a1650;border:1px solid rgba(142,47,143,.22);border-radius:14px;border-bottom-left-radius:4px;padding:10px 13px;max-width:215px;box-shadow:none;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc.me{align-self:flex-end;background:linear-gradient(160deg,#8e2f8f,#5e1868);color:#fbf3ea;border-color:transparent;border-radius:14px;border-bottom-right-radius:4px;font-weight:400;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc .tl{display:flex;align-items:center;gap:6px;font-family:var(--font-en);font-size:9.5px;letter-spacing:2px;text-transform:uppercase;color:#a98d6b;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc.me .tl{color:#e6d3b8;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc .tkic{width:16px;height:16px;flex:none;color:#8e2f8f;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc.me .tkic{color:#f1dcff;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc .ta{font-family:var(--font-cn);font-size:14.5px;font-weight:600;line-height:1.45;margin-top:5px;color:#6a1b70;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc.me .ta{color:#fff8f0;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc .ts{font-size:11px;color:#8d7a88;margin-top:2px;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc.me .ts{color:rgba(255,248,240,.72);}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc .mt{color:#b09aa8;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc.me .mt{color:rgba(255,248,240,.6);}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc .sb-tk-gbtn button{border-color:rgba(142,47,143,.45);color:#6a1b70;}',
+    '#sbnyc-panel .sb-msg.sb-tkc.sb-tkc .sb-tk-gbtn button:first-child{background:#8e2f8f;border-color:#8e2f8f;color:#fff8f0;}',
     '#sbnyc-panel .sb-tk-chip{display:inline-block;margin-left:8px;padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-family:var(--font-sans);font-size:9.5px;letter-spacing:.5px;text-transform:none;font-weight:400;color:var(--ink-sub);cursor:pointer;vertical-align:1px;}',
     '#sbnyc-panel .sb-tk-chip.on{border-color:var(--plum);color:var(--plum);}',
     '#sbnyc-panel .sb-tk-credit{text-align:center;font-size:10.5px;color:var(--ink-faint);padding:14px 0 4px;}',
@@ -4821,6 +4836,7 @@
     return null;
   }
 
+  var TOY_CARD_IC = '<svg class="tkic" viewBox="7 6 50 50" aria-hidden="true"><path d="M19.4 33 C13.6 35.6 9.6 41.6 12.6 47.4 C15.8 53.6 28 53.4 36.4 47.2 C40.4 44.2 43.2 40.8 44.6 37.6" fill="none" stroke="currentColor" stroke-width="8.8" stroke-linecap="round"/><g transform="translate(24 31) rotate(-24)"><path d="M0 -5 C6 -6.4 12 -8.6 19.5 -8.5 C27.5 -8.4 32 -4.6 32 0 C32 4.6 27.5 8.4 19.5 8.5 C12 8.6 6 6.4 0 5 Z" fill="currentColor"/><path d="M-5.6 -4.9 Q-6.5 0 -5.6 4.9 L0.7 5.3 Q1.7 0 0.7 -5.3 Z" fill="#cdb391"/></g></svg>';   // 遥控卡片左上角的小装置（和 TOY·LINK 顶栏图标同一只）
   function renderOneMsg(m, trName, trIdx, autoShow, canReroll, isLast, prevWho) {
     var isU = m.sender === 'USER'; var cls = isU ? 'me' : 'them'; var type = (m.type || 'text').toLowerCase();
     var c = m.content || ''; var t = formatMsgTime(m); var n = m.note || '';   // 时间戳带日期（UWU）："4/16 09:20"，AI 和玩家都不再犯日期糊涂
@@ -4867,8 +4883,8 @@
     if (type === 'transfer') return '<div class="sb-msg transfer' + (isU ? ' me' : '') + '"' + dataA + ' data-tp="transfer"><div class="tl">' + (isU ? 'You sent' : 'Received') + '</div><div class="ta">' + fmtCNY(c) + '</div>' + (n ? '<div class="tl">' + esc(n) + '</div>' : '') + tH + '</div>';
     if (type === 'skin') { var skd = SKIN_BY[c] || [c, c]; return '<div class="sb-msg transfer"' + dataA + ' data-tp="skin"><div class="tl">Gift · 气泡皮肤</div><div class="sb-msg me sk-' + esc(skd[0]) + '" style="max-width:100%;margin:6px 0 2px;font-size:12px;padding:5px 10px;">' + esc(skd[1]) + '</div><div class="tl">去 SugarElite™ 商城换上</div>' + tH + '</div>'; }
     if (type === 'toy') {   // 🎛 遥控玩具：你送的礼物卡 / 她戴上·摘下
-      if (isU) return '<div class="sb-msg transfer me"' + dataA + ' data-tp="toy"><div class="tl">Gift · TOY·LINK</div><div class="ta" style="font-size:15px;">' + esc(m.tier === 'gold' ? '24K 金定制款' : '遥控套装') + '</div><div class="tl">遥控器在你手机里</div>' + tH + '</div>';
-      return '<div class="sb-msg transfer"' + dataA + ' data-tp="toy"><div class="tl">TOY·LINK</div><div class="ta" style="font-size:15px;">' + (m.toy === 'off' ? '她摘下来了' : '她戴上了') + '</div>' + tH + '</div>';
+      if (isU) return '<div class="sb-msg sb-tkc me"' + dataA + ' data-tp="toy"><div class="tl">' + TOY_CARD_IC + 'Gift · TOY·LINK</div><div class="ta" style="font-size:15px;">' + esc(m.tier === 'gold' ? '24K 金定制款' : '遥控套装') + '</div><div class="ts">遥控器在你手机里</div>' + tH + '</div>';
+      return '<div class="sb-msg sb-tkc"' + dataA + ' data-tp="toy"><div class="tl">' + TOY_CARD_IC + 'TOY·LINK</div><div class="ta" style="font-size:15px;">' + (m.toy === 'off' ? '她摘下来了' : '她戴上了') + '</div>' + tH + '</div>';
     }
     if (type === 'gift') return '<div class="sb-msg transfer"' + dataA + ' data-tp="gift"><div class="tl">Gift · 已入衣橱</div><div class="ta" style="font-size:16px;">🎁 ' + esc(c) + '</div>' + tH + '</div>';
     if (type === 'image') {
