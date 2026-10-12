@@ -4106,8 +4106,8 @@ function callUserBlock(sb) {
   var cut = st.indexOf('【已认识的人');
   if (cut > 0) st = st.slice(0, cut);
   st = st.split('\n').filter(function (l) { return !/^【(钱包|SugarElite|SugarRank|衣橱)/.test(l); }).join('\n').trim();
-  var tp = tavernPersona();
-  if (tp.persona) st += '\n【User 人设】' + tp.persona;
+  var tp = userIdentity();   // 这张卡读人设的函数叫 userIdentity；describeState 里多半已带上，没带才补
+  if (tp.persona && st.indexOf(tp.persona) < 0) st +='\n【User 人设】' + tp.persona;
   return st;
 }
 function callDmLines(npc, n) {
