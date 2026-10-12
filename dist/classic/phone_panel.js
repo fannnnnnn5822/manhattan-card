@@ -2269,6 +2269,7 @@
   function debit(amount, what, channel) {
     var bal = (state && state.wallet && state.wallet.balance) || 0;
     if (amount > bal) { toast('warning', '💸 余额不够（' + fmtCNY(bal) + '）——先去挣'); return false; }
+    var atId = Date.now() + '-' + Math.random().toString(36).slice(2, 6);   // 总账 id 先定好，变量和镜像记同一个
     SBupdate(function (v) {
       if (!v.sb) return v;
       if (!v.sb.wallet) v.sb.wallet = { balance: 0, bills: [], transactions: [] };
@@ -2280,7 +2281,7 @@
       // 总账（UWU 流水页）：手机侧扣款也要进全量账本，不然流水页只有生成器那头的钱
       if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
       w.allTransactions.push({
-        id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        id: atId,
         direction: '-', amount: amount, counterparty: what, channel: channel || '', note: '',
         time: nowT(), gameDay: (v.sb.game && v.sb.game.day) || 1,
       });
@@ -2292,6 +2293,15 @@
       state.wallet.balance = (state.wallet.balance || 0) - amount;
       if (!state.wallet.transactions) state.wallet.transactions = [];
       state.wallet.transactions.push({ direction: '-', amount: amount, counterparty: what, channel: channel || '', note: '', time: nowT() });
+      if (state.wallet.transactions.length > 20) state.wallet.transactions = state.wallet.transactions.slice(-20);
+      // 2026-10-12 体检：镜像也记总账——以前只记变量，流水页在下次 sb_updated 之前看不到这笔
+      if (!Array.isArray(state.wallet.allTransactions)) state.wallet.allTransactions = [];
+      state.wallet.allTransactions.push({
+        id: atId,
+        direction: '-', amount: amount, counterparty: what, channel: channel || '', note: '',
+        time: nowT(), gameDay: (state.game && state.game.day) || 1,
+      });
+      if (state.wallet.allTransactions.length > 500) state.wallet.allTransactions = state.wallet.allTransactions.slice(-500);
     }
     // 消费也进「手机动态」楼层（开关关着时生成器那头会直接忽略）
     SBemit('sb_floor_log', { lines: ['💳〔' + nowT() + '〕-' + fmtCNY(amount) + ' · ' + what] });
@@ -2306,7 +2316,12 @@
       if (v.sb.closet.length > 60) v.sb.closet = v.sb.closet.slice(-60);
       return v;
     });
-    if (state) { if (!Array.isArray(state.closet)) state.closet = []; state.closet.push(item); }
+    if (state) {
+      if (!Array.isArray(state.closet)) state.closet = [];
+      state.closet.push(item);
+      // 2026-10-12 体检：镜像也截到 60 件，和变量侧保持同一个数组——resellItem 按下标删，两边长度一不一样就删错件
+      if (state.closet.length > 60) state.closet = state.closet.slice(-60);
+    }
   }
   // 体验类（晚餐/酒店/SPA/行程…）是消耗品，不进衣橱——不然衣橱里会出现"二手露台晚餐"
   var EXP_RE = /晚餐|午餐|早午餐|晚宴|下午茶|brunch|dinner|lunch|omakase|tasting|餐厅|酒店|套房|suite|民宿|机票|头等舱|航班|旅行|之旅|行程|度假|villa|retreat|spa|护理|按摩|理疗|医美|热玛吉|botox|水光|课程|私教|门票|演出|音乐会|秀场|前排|包厢|体验|预演|预展|派对|party|游艇|直升机|夜|芭蕾|ballet|歌剧|opera|骑马|马术|马球|polo|高尔夫|golf|网球|tennis|滑雪|ski|帆船|划船|出海|湖边|别墅|庄园|射击|击剑|动物园/i;
@@ -2854,7 +2869,8 @@
     });
     if (state) {
       if (!state.npcs) state.npcs = {};
-      if (!state.npcs[name]) state.npcs[name] = fresh;
+      // 2026-10-12 体检：镜像放深拷贝——和变量侧共用同一个对象的话，镜像这边 push 的消息会顺手混进还没落账的变量写入里，记两遍
+      if (!state.npcs[name]) state.npcs[name] = JSON.parse(JSON.stringify(fresh));
       else if (state.npcs[name].muted) state.npcs[name].muted = false;
     }
     openChat(name, state.npcs[name]);
@@ -2878,7 +2894,7 @@
           if (!v.sb.npcs[name]) v.sb.npcs[name] = fresh;
           return v;
         });
-        if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[name]) state.npcs[name] = fresh; }
+        if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[name]) state.npcs[name] = JSON.parse(JSON.stringify(fresh)); }   // 2026-10-12 体检：镜像深拷贝，别和变量侧共用对象
         openChat(name, state.npcs[name]);
       });
     });
@@ -2948,7 +2964,7 @@
     };
     function patch(np) {
       if (!np.persistent && !np.bio) np.bio = bio;
-      if (!np._fromAnon) { np._fromAnon = gname; if (!Array.isArray(np.dm_history)) np.dm_history = []; np.dm_history.push(sysLine); }
+      if (!np._fromAnon) { np._fromAnon = gname; if (!Array.isArray(np.dm_history)) np.dm_history = []; np.dm_history.push(JSON.parse(JSON.stringify(sysLine))); }   // 2026-10-12 体检：每边推自己的副本
     }
     SBupdate(function (v) {
       if (!v.sb) return v; if (!v.sb.npcs) v.sb.npcs = {};
@@ -2959,7 +2975,7 @@
     });
     if (state) {
       if (!state.npcs) state.npcs = {};
-      if (!state.npcs[real]) state.npcs[real] = fresh; else patch(state.npcs[real]);
+      if (!state.npcs[real]) state.npcs[real] = JSON.parse(JSON.stringify(fresh)); else patch(state.npcs[real]);   // 2026-10-12 体检：镜像深拷贝，别和变量侧共用对象
       if (g && g.roster && g.roster[handle]) g.roster[handle].revealed = true;
     }
     toast('success', '💌 加上了——TA 现在知道你是谁了，你也知道 TA 是谁');
@@ -3058,7 +3074,7 @@
       unmuteMembers(v.sb, members);   // 被冷处理过的人拉进群＝解冻，不然 groupSpeakers 里他永远闭嘴
       return v;
     });
-    if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[gname]) state.npcs[gname] = fresh; unmuteMembers(state, members); }
+    if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[gname]) state.npcs[gname] = JSON.parse(JSON.stringify(fresh)); unmuteMembers(state, members); }   // 2026-10-12 体检：镜像深拷贝，别和变量侧共用对象
     toast('success', '群建好了——说第一句，或者在 ➕ 里点「看看群里在聊什么」');
     openChat(gname, state.npcs[gname]);
   }
@@ -3084,7 +3100,7 @@
       if (!v.sb.npcs[ANON_GROUP_NAME]) v.sb.npcs[ANON_GROUP_NAME] = fresh;
       return v;
     });
-    if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[ANON_GROUP_NAME]) state.npcs[ANON_GROUP_NAME] = fresh; }
+    if (state) { if (!state.npcs) state.npcs = {}; if (!state.npcs[ANON_GROUP_NAME]) state.npcs[ANON_GROUP_NAME] = JSON.parse(JSON.stringify(fresh)); }   // 2026-10-12 体检：镜像深拷贝，别和变量侧共用对象
     delete _grpAutoFired[ANON_GROUP_NAME];
     openChat(ANON_GROUP_NAME, state.npcs[ANON_GROUP_NAME]);
   }
@@ -3316,7 +3332,7 @@
     });
     if (state) {
       if (!state.npcs) state.npcs = {};
-      if (!state.npcs[name]) state.npcs[name] = fresh;
+      if (!state.npcs[name]) state.npcs[name] = JSON.parse(JSON.stringify(fresh));   // 2026-10-12 体检：镜像深拷贝，别和变量侧共用对象
       else if (!state.npcs[name].bio) state.npcs[name].bio = bio;
     }
     toast('info', isSD ? '💬 去应聘——把你的条件甩给TA' : '💬 去搭话——同行也是人脉');
@@ -3358,7 +3374,7 @@
     });
     if (state) {
       if (!state.npcs) state.npcs = {};
-      if (!state.npcs[name]) state.npcs[name] = fresh;
+      if (!state.npcs[name]) state.npcs[name] = JSON.parse(JSON.stringify(fresh));   // 2026-10-12 体检：镜像深拷贝，别和变量侧共用对象
       else if (!state.npcs[name].bio) state.npcs[name].bio = bio;
     }
     openChat(name, state.npcs[name]);
@@ -3692,7 +3708,13 @@
     if (state) {
       state.sugarelite = { subscribed: true };
       if (!state.npcs) state.npcs = {};
-      if (!state.npcs['SugarElite™']) state.npcs['SugarElite™'] = { name: 'SugarElite™', archetype: '管家', persistent: true, engaged: true, unlocked: true, last_contact: nowT(), unread: 1, last_message: 'Welcome to SugarElite…', dm_history: [] };
+      // 2026-10-12 体检：镜像照变量侧一模一样走一遍——以前镜像只建个空壳、未读硬写 1、没有欢迎消息，
+      // 未读角标亮着点进去却是空的（直到下一次 sb_updated 才对上）；老联系人再订阅时变量侧 +1 镜像却不动
+      if (!state.npcs['SugarElite™']) state.npcs['SugarElite™'] = { name: 'SugarElite™', archetype: '管家', persistent: true, engaged: true, total_transfers: 0, relationship: 0, unlocked: true, last_contact: nowT(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [] };
+      var sn = state.npcs['SugarElite™'];
+      if (!Array.isArray(sn.dm_history)) sn.dm_history = [];
+      sn.dm_history.push({ sender: 'THEM', time: nowT(), ts: Date.now(), type: 'text', content: 'Welcome to SugarElite. — S.', note: '', zh: '欢迎加入 SugarElite。— S.', gameDay: (state.game && state.game.day) || 1 });
+      sn.unread = (sn.unread || 0) + 1; sn.last_message = 'Welcome to SugarElite…'; sn.last_contact = nowT(); sn.last_ts = Date.now();
     }
     toast('success', '✦ SugarElite™ 已开通');
     SBemit('sb_updated');
@@ -4204,7 +4226,7 @@
             var sb = imported.sb || imported;
             if (!sb || typeof sb !== 'object') throw new Error('格式不对——找不到 sb 数据');
             SBupdate(function (v) { if (!v) v = {}; v.sb = sb; return v; });
-            if (state) { state = sb; }
+            if (state) { state = JSON.parse(JSON.stringify(sb)); }   // 2026-10-12 体检：镜像深拷贝，别和变量侧共用同一棵对象
             toast('success', '📥 数据已导入——手机将刷新');
             SBemit('sb_updated');
             closeChat();
@@ -4295,11 +4317,21 @@
   }
 
   function openChat(name, npc) {
+    // 🖊 2026-10-12 体检：任何 sb_updated 都走 refreshView → 这里整页重写 innerHTML，输入框里打了一半的字、光标、焦点全被冲掉。
+    // 重开的是同一个联系人（聊天页本来就开着）→ 先记下草稿，重写后原样放回；换了人不带（草稿不串到别人的聊天里）
+    var _draft = null;
+    if (currentChatName === name && currentPage == null && chatEl.style.display !== 'none') {
+      var _oldIn = chatEl.querySelector('.sb-cbar textarea');
+      if (_oldIn) { try { _draft = { v: _oldIn.value, s: _oldIn.selectionStart, e: _oldIn.selectionEnd, f: _oldIn.ownerDocument.activeElement === _oldIn }; } catch (e) {} }
+    }
     currentChatName = name;
     currentPage = null;
     _msel = null;   // 重渲染会把选中态和底部条一起冲掉，模式标记也必须归零（不然点什么都变勾选）
-    npc.unread = 0;
-    SBupdate(function (v) { if (v.sb && v.sb.npcs && v.sb.npcs[name]) v.sb.npcs[name].unread = 0; return v; });
+    // 2026-10-12 体检：已经是 0 就不写——不然每个 sb_updated 重开聊天都白排一次变量写入
+    if (npc.unread) {
+      npc.unread = 0;
+      SBupdate(function (v) { if (v.sb && v.sb.npcs && v.sb.npcs[name]) v.sb.npcs[name].unread = 0; return v; });
+    }
     updateBadge();
     var isSE = name === 'SugarElite™';
     var isGrp = !!npc.isGroup;
@@ -4399,6 +4431,11 @@
     });
     var input = chatEl.querySelector('.sb-cbar textarea');
     var sendBtn = chatEl.querySelector('.sb-cbar .send');
+    // 🖊 2026-10-12 体检：把重写前记下的草稿/光标/焦点放回新输入框（见本函数开头）
+    if (_draft && input && (_draft.v || _draft.f)) {
+      input.value = _draft.v;
+      try { if (_draft.f) input.focus(); input.setSelectionRange(_draft.s, _draft.e); } catch (e) {}
+    }
 
     // 新交互：回车=攒消息（可连打几条），发送键=让 TA 回复（学两个用户的建议，统一简单）
     // queueMsg 只把消息记下+显示，不触发生成；replyOne(发送键)才让这个人一次性回应攒的全部
@@ -4408,7 +4445,13 @@
       // 玩家转了钱又说"拍张照"，发给 AI 的只剩"转账"，TA 永远不知道要拍照。
       // 所以先把输入框里那句当普通消息攒进去，再攒这条特殊消息，顺序和玩家打字的顺序一致。
       // pend === txt 说明调用方传的就是输入框里那句本身（sendReply 就是这么干的）→ 再排一遍会发两条重样的
-      if (txt) {
+      // 🧭 2026-10-12 体检：panelPrompt / 生图 Image.onload 这类异步回调回来时，页面可能已经重渲染过（这里的 input 是旧的、脱离文档的框），
+      // 甚至已经切到别人的聊天。onScreen = 这个人的聊天此刻还开着：开着就换成当前那个输入框；
+      // 没开着就只记变量和镜像、不碰 DOM——不然气泡会插进别人的 .sb-msgs，openChat 还会把画面硬拽回这个人
+      var onScreen = currentChatName === name && chatEl.style.display !== 'none';
+      if (onScreen) input = chatEl.querySelector('.sb-cbar textarea') || input;
+      npc = (state && state.npcs && state.npcs[name]) || npc;   // 期间 loadState 换过镜像 → 记到现在这份上，别记进旧对象里
+      if (txt && onScreen) {
         var pend = input.value.trim();
         if (pend && pend !== String(txt)) { input.value = ''; queueMsg(pend, 'text'); }
       }
@@ -4421,12 +4464,11 @@
         if (!npc.dm_history) npc.dm_history = [];
         npc.dm_history.push(uB, sB);
         SBupdate(function (v) { var n = v.sb && v.sb.npcs && v.sb.npcs[name]; if (!n) return v; if (!n.dm_history) n.dm_history = []; n.dm_history.push(uB, sB); if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400); n.last_message = lastPreview(uB); return v; });
-        input.value = '';
-        openChat(name, npc);
+        if (onScreen) { input.value = ''; openChat(name, npc); }
         toast('warning', name + ' 已经把你拉黑了');
         return;
       }
-      var revealed = chatEl.querySelector('.sb-read') ? 1 : 0;   // 👁 「已读」在场 → 整页重画（有话在路上就挪到你新这句下面，没有就消失）；在路上的话等你点「发送」才落地
+      var revealed = onScreen && chatEl.querySelector('.sb-read') ? 1 : 0;   // 👁 「已读」在场 → 整页重画（有话在路上就挪到你新这句下面，没有就消失）；在路上的话等你点「发送」才落地
       var t = nowT(); var ty = mtype || 'text';
       var gDay = (state && state.game && state.game.day) || 1;
       npc.engaged = true;
@@ -4455,6 +4497,7 @@
       else if (ty === 'voice') obLine = '（发了一段语音，TA能听到：' + text + '）';
       else if (ty === 'transfer') obLine = '（转账 ￥' + text + ' 给TA）';
       queueOutbox(name, obLine);
+      if (!onScreen) return;   // 🧭 不在这个人的聊天页：账已记好，DOM 留给下次打开时整页画
       input.value = '';
       if (revealed) { openChat(name, npc); return; }   // ⏳ 有刚落地的消息 → 整页重画（顺序和分割线才对），不做局部插入
       var box = chatEl.querySelector('.sb-msgs');
@@ -5150,7 +5193,8 @@
       }
     }
     // 引用回复：开头的 回"原句"： 拆成气泡内的引用小卡（长按菜单"引用回复"和NPC的引用格式都走这里）
-    var qm = String(c).match(/^回\s*[""]([\s\S]{1,80}?)[""]\s*[:：]\s*([\s\S]+)$/);
+    // 2026-10-12 体检：引号类以前写成 [""]（两个都是 ASCII），中文弯引号 “” 的引用回复拆不出小卡——两种都认
+    var qm = String(c).match(/^回\s*["“”]([\s\S]{1,80}?)["“”]\s*[:：]\s*([\s\S]+)$/);
     if (qm) {
       return '<div class="sb-msg ' + cls + skinClass(isU, gWho || trName) + '"' + dataA + '>' + gsp +
         '<div class="sb-qt">' + esc(qm[1]) + '</div>' +

@@ -381,7 +381,7 @@ function mergeDupeNpcs() {
       try { if (typeof toastr !== 'undefined') toastr.info('🧹 合并了重复联系人：' + merged.join('，'), 'SugarOS'); } catch (e) {}
       try { eventEmit('sb_updated'); } catch (e) {}
     }
-  });
+  }).catch(function (e) { console.warn('[SB-S v4] merge dupe contacts failed', e); });   // 2026-10-12 体检：别留未捕获的 Promise
 }
 function isPersistent(name) { return PERSISTENT_CANONICAL.indexOf(normalizeName(name)) !== -1; }
 // 匿名群定身份用：通讯录里自带的人（随机版只有 Akuma）
@@ -397,7 +397,7 @@ function borrowsFixed(name) {
 // 老存档补档：私享版的 🥂 闺蜜群 以前是"一个名字特殊的联系人"，现在统一当群处理（成员=S.+Akuma）。
 // 老消息的说话人还写在内容开头（"S.：…"），渲染端会兜底拆一次，不用改历史数据。
 function migrateGroups() {
-  updateVariablesWith(function (v) {
+  return updateVariablesWith(function (v) {   // 2026-10-12 体检：把 Promise 交出去，调用处才接得住报错
     var npcs = v.sb && v.sb.npcs;
     if (!npcs) return v;
     if (npcs[GROUP_NAME] && !npcs[GROUP_NAME].isGroup) {
@@ -899,6 +899,8 @@ function describeState(sb) {
       for (var gj = 0; gj < gh.length; gj++) {
         var gm2 = gh[gj];
         if (gm2.type === 'dossier') continue;
+        // 2026-10-12 体检：撤回的只说"撤回了一条"，原文不给——群里谁都看不到（同誊楼层的写法）
+        if (gm2.type === 'recall') { known.push('    ' + (gm2.sender === 'USER' ? 'User' : (gm2.who || '群成员')) + '（撤回了一条消息）'); continue; }
         known.push('    ' + (gm2.sender === 'USER' ? 'User' : (gm2.who || '群成员')) + (gm2.type === 'sticker' ? '[表情包]' : ((gm2.type && gm2.type !== 'text') ? '[' + gm2.type + ']' : '')) + ': ' + String(gm2.content || ''));
       }
       continue;
@@ -951,6 +953,12 @@ function cleanProse(s) {
     .replace(/\[WALLET:[^\]]*\]/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+// 只剥思维/草稿容器（和 cleanProse 同一套 THINK_TAGS），别的标签原样留着。
+// 2026-10-12 体检：parseDMs / parseMag / handleTranslate 以前只剥 <think>，模型吐 <thinking>/<reasoning> 时
+// 解析器在行首 '<' 处直接 break → 整轮私信落空、翻译把草稿一起塞进去。
+function stripThink(s) {
+  return String(s || '').replace(RE_THINK, '');
 }
 async function recentPlot() {
   try {
@@ -1226,8 +1234,7 @@ function parseDMs(raw, groupCtx) {
     return null;
   }
   // 预清洗：剥 <think> 思维块和 markdown 围栏行（有的模型会把输出包进 ``` 里），围栏内的行照常解析
-  var text = String(raw || '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+  var text = stripThink(raw)   // 2026-10-12 体检：整套思维标签（thinking/reasoning/draft…），不只 <think>
     .replace(/^```[a-z]*\s*$/gim, '');
   var lines = text.split('\n');
   for (var i = 0; i < lines.length; i++) {
@@ -1236,7 +1243,9 @@ function parseDMs(raw, groupCtx) {
     var lineDelay = 0;   // ⏳ 写在整行最前面（模型把标记放到名字前）也认
     var lmk = line.match(DELAY_MARK);
     if (lmk) { lineDelay = parseInt(lmk[1], 10) || 0; line = line.slice(lmk[0].length).trim(); if (!line) continue; }
-    if (line.charAt(0) === '<') break;                 // 遇到 <horae>/<horaeevent> 等标签 → 停止（污染在末尾）
+    // 遇到 <horae>/<horaeevent> 等标签 → 停止（污染在末尾）。
+    // 2026-10-12 体检：还没解析出任何行时只跳过这一行——开头的 <content> 外壳 / 没闭合的思维开标签不许把整轮截没
+    if (line.charAt(0) === '<') { if (rows.length) break; continue; }
     var parts = line.split('|');
     var name = parts[0].trim().replace(/^[-*•\d.\s]+/, '');
     var t = parts.length >= 2 ? parts[1].trim().toLowerCase() : '';
@@ -1395,6 +1404,7 @@ function groupLogText(g, limit) {
     if (m.type === 'dossier') continue;
     if (m.type === 'system') { out.push('（' + String(m.content || '') + '）'); continue; }
     var who = m.sender === 'USER' ? me : (m.who || '群成员');
+    if (m.type === 'recall') { out.push(who + '（撤回了一条消息）'); continue; }   // 2026-10-12 体检：撤回原文不喂给群里任何人
     var tag = m.type === 'sticker' ? '[表情包]' : ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '');
     out.push(who + tag + '：' + String(m.content || ''));
   }
@@ -1442,6 +1452,8 @@ async function groupMemberCard(sb, g, order, i) {
       for (var pj = 0; pj < ph.length; pj++) {
         var pm = ph[pj];
         if (!pm || pm.type === 'dossier' || pm.type === 'system') continue;
+        // 2026-10-12 体检：User 撤回的私信 TA 也看不到内容（同私信路径的写法）
+        if (pm.type === 'recall' && pm.sender === 'USER') { pl.push('User：（发了一条又撤回——看不到内容，只知道撤回过）'); continue; }
         pl.push((pm.sender === 'USER' ? 'User' : name) + '：' + String(pm.content || ''));
       }
       if (pl.length) body += '\n【以下只有你和 User 知道，群里别人没看过——你和 User 的私信最近 ' + pl.length + ' 条】\n' + pl.join('\n');
@@ -2119,7 +2131,7 @@ async function runOnce(req) {
       if (!dup && stxt) v.sb.schedule.push({ txt: stxt, ts: Date.now(), gameDay: schedTextGameDay(v.sb, stxt) });   // gameDay=事件发生那天（认文本里的日期/星期，修串时间）
     }
     if (v.sb.schedule.length > 20) v.sb.schedule = v.sb.schedule.slice(-20);
-    pruneContacts(v.sb);   // 超15人 → 自动清（置顶的免疫；固定NPC没被回话也一样挤出去）
+    pruneContacts(v.sb);   // 超 MAX_CONTACTS（30）人 → 自动清（置顶的免疫；固定NPC没被回话也一样挤出去）
     return v;
   }, { type: 'chat' });
 
@@ -2516,8 +2528,14 @@ async function handleRequest(payload) {
         for (var bi = 0; bi < batch.length; bi++) {
           if (batch[bi] && batch[bi].group) gReqs.push(batch[bi]); else soloReqs.push(batch[bi]);
         }
-        for (var gi = 0; gi < gReqs.length; gi++) await runOnce(gReqs[gi]);
-        if (soloReqs.length) await runOnce(mergeRequests(soloReqs));
+        // 2026-10-12 体检：每次 runOnce 单独兜住——以前一条抛错就跳出整个循环，本批剩下的请求全丢，
+        // 处理期间新排进来的也只能干等下一个请求来踢。现在失败的那条照旧报错，其余的接着跑，队列跑空才放锁
+        for (var gi = 0; gi < gReqs.length; gi++) {
+          try { await runOnce(gReqs[gi]); } catch (e1) { notifyFail('私信生成出错: ' + ((e1 && e1.message) || e1)); console.error('[SB-S v4] dm generation error', e1); }
+        }
+        if (soloReqs.length) {
+          try { await runOnce(mergeRequests(soloReqs)); } catch (e2) { notifyFail('私信生成出错: ' + ((e2 && e2.message) || e2)); console.error('[SB-S v4] dm generation error', e2); }
+        }
       }
       // 会刊自动补货已拔除（发卡日玩家实锤：任何私信生成完都会偷偷烤整刊，API账单上一堆没发起过的大请求）
       // 现在只有两个入口烤刊，全部玩家主动：论坛/Elite 页点 🔄，或首次打开时内容为空（sb_request_mag）
@@ -2801,8 +2819,26 @@ async function maybeAutoStranger() {
 }
 
 // ── 正文 swipe 回退：同一 message_id 第二次触发 = 玩家重roll了，先撤销上一版的钱包/衣橱变动再处理新标记 ──
-var _lastMainMsgId = null;
-var _lastMainEffects = { walletOps: [], closetAdds: [], days: 0 };
+// 2026-10-12 体检：以前是两个内存全局（_lastMainMsgId/_lastMainEffects）——两楼正文在 await 处交错会互相覆盖，
+// 刷新页面后全清空，重roll 回退直接失效。现在按 message_id 存（只留最近 5 楼），同时落进聊天变量 sb.last_effects，
+// 刷新后同一楼重roll 照样能找到上一版的影响。内存这份还记"这楼处理过但没有标记"（空影响），用来判重roll。
+var MAIN_EFFECTS_KEEP = 5;
+var _mainEffects = {};
+function trimMainEffects(obj) {
+  var ks = Object.keys(obj || {}).sort(function (a, b) { return Number(b) - Number(a); });
+  for (var i = MAIN_EFFECTS_KEEP; i < ks.length; i++) delete obj[ks[i]];
+  return obj;
+}
+function lastMainEffectsOf(msgIdStr) {
+  if (_mainEffects.hasOwnProperty(msgIdStr)) return _mainEffects[msgIdStr];
+  try {
+    var v0 = getVariables({ type: 'chat' });
+    var le = v0 && v0.sb && v0.sb.last_effects;
+    var e0 = le && le[msgIdStr];
+    if (e0) return { walletOps: Array.isArray(e0.walletOps) ? e0.walletOps : [], closetAdds: Array.isArray(e0.closetAdds) ? e0.closetAdds : [], days: e0.days || 0 };
+  } catch (e) {}
+  return null;
+}
 
 async function onMainMessage(message_id) {
   await toyApplyTag(message_id);   // 🎛 他当面拿着遥控器时正文末尾的读数
@@ -2812,18 +2848,21 @@ async function onMainMessage(message_id) {
     var m = msgs[0];
     if (m.role !== 'assistant') return;
     var msgIdStr = String(message_id);
-    var isSwipe = (_lastMainMsgId === msgIdStr);
+    var lastEff = lastMainEffectsOf(msgIdStr);   // 这一楼上一版留下的影响（没有 = 第一次处理这楼）
+    var isSwipe = !!lastEff;
     if (!isSwipe) {
       try { await maybeUnlockAnonGroup(); } catch (e) { console.warn('[SB-S v4] anon group unlock check failed', e); }   // 🎭 聊满 50 楼 → 管家拉你进匿名大厅（只炸一次）
       try { await maybeAutoStranger(); } catch (e) { console.warn('[SB-S v4] auto-stranger check failed', e); }
     }
     // ── swipe 检测：同一 message_id 第二次进来 = 玩家重新生成了，先回退上一版的财务影响 ──
-    if (isSwipe && (_lastMainEffects.walletOps.length || _lastMainEffects.closetAdds.length || _lastMainEffects.days)) {
+    if (isSwipe && (lastEff.walletOps.length || lastEff.closetAdds.length || lastEff.days)) {
+      _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 };   // 先清内存这份：回退只许发生一次
       await updateVariablesWith(function (v) {
         if (!v.sb) return v;
+        if (v.sb.last_effects) delete v.sb.last_effects[msgIdStr];   // 存档里那份同一笔写里一起清，刷新后不会再退一遍
         var w = v.sb.wallet;
-        for (var ri = 0; ri < _lastMainEffects.walletOps.length; ri++) {
-          var eff = _lastMainEffects.walletOps[ri];
+        for (var ri = 0; ri < lastEff.walletOps.length; ri++) {
+          var eff = lastEff.walletOps[ri];
           if (w) {
             w.balance = (w.balance || 0) + (eff.dir === '+' ? -eff.amount : eff.amount);
             if (!w.transactions) w.transactions = [];
@@ -2838,17 +2877,17 @@ async function onMainMessage(message_id) {
             w._dedup = w._dedup.filter(function (d) { return d.k !== dk; });
           }
         }
-        for (var rj = 0; rj < _lastMainEffects.closetAdds.length; rj++) {
-          closetRemove(v.sb, _lastMainEffects.closetAdds[rj].name);
+        for (var rj = 0; rj < lastEff.closetAdds.length; rj++) {
+          closetRemove(v.sb, lastEff.closetAdds[rj].name);
           if (Array.isArray(v.sb._closetDedup)) {
-            var ck = String(_lastMainEffects.closetAdds[rj].name).toLowerCase().trim().slice(0, 30);
+            var ck = String(lastEff.closetAdds[rj].name).toLowerCase().trim().slice(0, 30);
             v.sb._closetDedup = v.sb._closetDedup.filter(function (d) { return d.k !== ck; });
           }
         }
         // 回退过天（玩家报的 bug）：上一版正文推过的天数重roll 后必须退回去——
         // 否则反复重roll 一楼，房租倒计时会一次次往前跑，advanceDays 本身是可逆的
-        if (_lastMainEffects.days > 0 && v.sb.game) {
-          var dBack = _lastMainEffects.days;
+        if (lastEff.days > 0 && v.sb.game) {
+          var dBack = lastEff.days;
           v.sb.game.day = Math.max(1, (v.sb.game.day || 1) - dBack);
           var rbills = (v.sb.wallet && v.sb.wallet.bills) || [];
           for (var rk = 0; rk < rbills.length; rk++) {
@@ -2859,7 +2898,7 @@ async function onMainMessage(message_id) {
         return v;
       }, { type: 'chat' });
       try { if (typeof toastr !== 'undefined') toastr.info('↩️ 检测到正文重新生成，已回退上一版的钱包/衣橱/过天', 'SugarOS'); } catch (e) {}
-      console.log('[SB-S v4] swipe rollback: wallet×' + _lastMainEffects.walletOps.length + ' closet×' + _lastMainEffects.closetAdds.length + ' days×' + _lastMainEffects.days);
+      console.log('[SB-S v4] swipe rollback: wallet×' + lastEff.walletOps.length + ' closet×' + lastEff.closetAdds.length + ' days×' + lastEff.days);
     }
     var text = m.message || '';
     // ── 论坛发帖检测（独立于标记处理）：正文描述 User 发帖 → 自动触发一批匹配 XP 的陌生人私信 ──
@@ -2918,7 +2957,7 @@ async function onMainMessage(message_id) {
     var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // [TIME:14:30|4/16] 或 [TIME:14:30]
     var newTime = timeM ? timeM[1] : null;
     var newDate = (timeM && timeM[2]) ? timeM[2].trim() : null;
-    if (!found.length && !items.length && !newTime) { _lastMainMsgId = msgIdStr; _lastMainEffects = { walletOps: [], closetAdds: [], days: 0 }; return; }
+    if (!found.length && !items.length && !newTime) { _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 }; trimMainEffects(_mainEffects); return; }
     var _daysThisPass = 0;   // 本轮真正推过的天数（重roll 时要原数退回去）
     var credited = [];   // 只有真入账的才进成功toast——被去重闸拦下的那笔有自己的⛔警告，别再报"已入账"
     var addedCloset = [];
@@ -2995,14 +3034,22 @@ async function onMainMessage(message_id) {
         g.time = newTime;
         if (newDate) g.date = newDate;
       }
+      // 记住本轮的财务影响，下次同 message_id 进来时回退这些——和入账在同一笔写里落存档（刷新后也找得到）
+      if (!v.sb.last_effects || typeof v.sb.last_effects !== 'object') v.sb.last_effects = {};
+      v.sb.last_effects[msgIdStr] = {
+        walletOps: credited.map(function (f) { return { dir: f.dir, amount: f.amount }; }),
+        closetAdds: addedCloset.map(function (x) { return { name: x.name }; }),
+        days: _daysThisPass
+      };
+      trimMainEffects(v.sb.last_effects);
       return v;
     }, { type: 'chat' });
-    _lastMainMsgId = msgIdStr;
-    _lastMainEffects = {
+    _mainEffects[msgIdStr] = {
       walletOps: credited.map(function (f) { return { dir: f.dir, amount: f.amount }; }),
       closetAdds: addedCloset.map(function (x) { return { name: x.name }; }),
       days: _daysThisPass
     };
+    trimMainEffects(_mainEffects);
     var stripped = text.replace(new RegExp(WALLET_RE_SRC, 'g'), '').replace(new RegExp(CLOSET_RE_SRC, 'g'), '').replace(/\[TIME:[^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '');
     await setChatMessages([{ message_id: m.message_id, message: stripped }], { refresh: 'affected' });
     try { eventEmit('sb_updated'); } catch (e) {}
@@ -3069,12 +3116,13 @@ function parseNum(s) { return parseInt(String(s || '').replace(/[^0-9]/g, ''), 1
 
 function parseMag(raw, minTotal) {
   var mag = { ts: Date.now(), sbRank: [], sdRank: [], gossip: [], abyss: [], trend: [], guide: [], tea: [], catalog: [], invites: [], intel: [], recruit: [] };
-  var lines = String(raw || '').split('\n');
+  var lines = stripThink(raw).split('\n');   // 2026-10-12 体检：先剥整套思维标签，不然开头的 <thinking> 一来就 break
   var total = 0;
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i].trim();
     if (!line) continue;
-    if (line.charAt(0) === '<') break;                 // 预设注入的 <horae> 等垃圾在末尾 → 停
+    // 预设注入的 <horae> 等垃圾在末尾 → 停；还一条没解析出来时只跳过这行（开头的外壳标签不许截掉整本杂志）
+    if (line.charAt(0) === '<') { if (total) break; continue; }
     var parts = line.split('|');
     if (parts.length < 2) continue;
     var key = MAG_PREFIX[parts[0].trim().replace(/^[-*•\d.\s]+/, '').toUpperCase()];
@@ -3280,7 +3328,7 @@ async function handleTranslate(p) {
       await waitForSlot();
       raw = await generateRaw({ user_input: m.content, should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'system', content: sys }] });
     }
-    var zh = String(typeof raw === 'string' ? raw : (raw && raw.content) || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim().slice(0, 2000);
+    var zh = stripThink(typeof raw === 'string' ? raw : (raw && raw.content) || '').trim().slice(0, 2000);   // 2026-10-12 体检：整套思维标签都剥
     if (!zh) { notifyFail('翻译失败，稍后再点一次'); return; }
     await updateVariablesWith(function (v) {
       var n2 = v.sb && v.sb.npcs && v.sb.npcs[p.name];
@@ -3344,8 +3392,14 @@ async function handleAdComments(p) {
     }
     var cmts = parseCmts(typeof raw === 'string' ? raw : (raw && raw.content) || '');
     if (cmts.length < 2) {                                    // 输出被污染 → 重试一次（玩家看不到）
-      await waitForSlot();
-      raw = await generateRaw({ user_input: '【再次强调：只输出 昵称|评论 格式的行，绝不写任何别的】\n' + instr, should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'system', content: sys }] });
+      // 2026-10-12 体检：重试也走主调用同一条路（先独立 API，失败再回退 generateRaw）——以前重试直接打主 API，绕过了独立 API
+      var instr2 = '【再次强调：只输出 昵称|评论 格式的行，绝不写任何别的】\n' + instr;
+      raw = null;
+      if (cfg) { try { raw = await callIndependent(cfg, [{ role: 'system', content: sys }], instr2); } catch (e) { raw = null; } }
+      if (raw == null) {
+        await waitForSlot();
+        raw = await generateRaw({ user_input: instr2, should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'system', content: sys }] });
+      }
       cmts = parseCmts(typeof raw === 'string' ? raw : (raw && raw.content) || '');
     }
     if (cmts.length < 2) { notifyFail('评论区生成失败——点帖子下面的💬再试一次'); return; }
@@ -3445,7 +3499,7 @@ function seedDMs() {
     try { eventEmit('sb_updated'); } catch (e) {}
     try { if (typeof toastr !== 'undefined') toastr.success('📱 新私信 +' + SEED_THREADS.length, 'SugarOS'); } catch (e) {}
     console.log('[SB-S v4] seeded ' + SEED_THREADS.length + ' opening threads (0 API calls)');
-  });
+  }).catch(function (e) { console.warn('[SB-S v4] seed DMs failed', e); });   // 2026-10-12 体检：别留未捕获的 Promise
 }
 // ── 📚 个人日程生成（UWU 的功能：日历页手动触发）──
 // 原版改成通用日程：不预设 User 是学生，按上下文里她已知的生活排（医美/健身/工作/账单…）
@@ -3775,7 +3829,7 @@ async function handleImport(p) {
         ex.archetype = ex.archetype || tag;
         ex.imported = true; ex.pinned = true;
         ex.bio = fresh.bio; ex.dossier = fresh.dossier; ex.voice = fresh.voice; ex.dm_style = fresh.dm_style;
-        ex.origin_wb = wbName; ex.imp_identity = identity; ex.imp_relation = relation; ex.imp_v = 1;
+        ex.origin_wb = wbName; ex.imp_identity = identity; ex.imp_relation = relation; ex.imp_v = fresh.imp_v;   // 2026-10-12 体检：以前写死 1，和新建的 2 对不上——同一版提示词产的档案版本号得一样
         if (ex.muted) ex.muted = false;
       }
       return v;
@@ -4073,7 +4127,8 @@ eventOn('sb_seed_dm', seedDMs);
 // 留着会让主线一直"记得"手机里的对话，玩家关了脚本却发现 AI 还知道，很出戏。
 try {
   window.addEventListener('pagehide', function () {
-    try { uninjectPrompts(['sbnyc-dm-digest']); } catch (e) {}
+    // 2026-10-12 体检：玩具的 depth-0 强指令也一起撤——以前只撤摘要，关了脚本正文还在被"她戴着玩具"牵着走
+    try { uninjectPrompts(['sbnyc-dm-digest', 'sbtoy-focus']); } catch (e) {}
     try { clearTimeout(_bubSyncTimer); } catch (e) {}      // 攒着没跑的反向同步别在脚本关掉后才动手
   });
 } catch (e) {}
@@ -4315,11 +4370,12 @@ try { eventOn(tavern_events.MESSAGE_DELETED, scheduleBubbleSync); } catch (e) {}
 try { eventOn(tavern_events.MESSAGE_SWIPED, scheduleBubbleSync); } catch (e) {}
 syncInject();
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
-try { migrateGroups(); } catch (e) {}                       // 👥 老存档里的群补上 isGroup/members
+try { Promise.resolve(migrateGroups()).catch(function (e) { console.warn('[SB-S v4] migrate groups failed', e); }); } catch (e) {}   // 👥 老存档里的群补上 isGroup/members（顶层不是 async，用 .catch 兜）
 
-// ── 🔭 跨卡足迹彩蛋（祈星专属，100楼+200楼各触发一次，共两次）──
+// ── 🔭 跨卡足迹彩蛋（祈星专属，满100楼触发一次，之后封存）──
 // 启动时一次读完 characters 数组的 date_last_chat，列出最近有活动的别的角色——即时版，不用攒。
-// 门槛：聊天楼层 ≥100 且有 ≥2 张别的卡最近聊过。100楼第一次、200楼第二次，之后封存。
+// 门槛：聊天楼层 ≥100 且有 ≥2 张别的卡最近聊过。只触发一次（_xcard_fired），之后封存。
+// （2026-10-12 体检：旧注释写"100楼+200楼两次"，代码一直只有一次——改注释对齐代码）
 // 拿不到 date_last_chat（旧版酒馆）= 整个功能静默不存在，彩蛋没有报错的权利。
 async function xcardScan() {
   try {
