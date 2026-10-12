@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════════
 // 纸醉金迷 · 原版（Sugar Baby Simulator：S市）© 2026 fannnnnnn（作者）
 // 含 UWU 老师授权贡献（震动/壁纸/日历/流水税务/日期系统）。
+// 语音/视频通话：《霖州往事》作者好大鱼老师授权移植自她的《霖州》数字世界引擎，配套通话破限原文照录。
 // 可读可学。学了、用了这里的做法或代码，并且公开发布时，两件事：
 //   ① 署名 fannnnnnn（用到 UWU 老师那几块的，同署 UWU）；
 //   ② 发帖时附上原帖地址：https://discord.com/channels/1291925535324110879/1497545159087489085
@@ -200,6 +201,7 @@
   function lastPreview(m) {
     if (!m) return '';
     if (m.type === 'recall') return (m.sender === 'USER' ? '你：' : '') + '撤回了一条消息';
+    if (m.type === 'calllog') return '[' + (m.mode === 'video' ? '视频通话' : '语音通话') + '] ' + String(m.content || '');
     if (m.type === 'toy') return (m.sender === 'USER' ? '你：' : '') + '[遥控] ' + String(m.content || '').substring(0, 30);
     if (m.type === 'sticker') return (m.sender === 'USER' ? '你：' : '') + '[表情包] ' + String(m.content || '').substring(0, 20);
     // system 行不加 [system] 标签（和 dm_generator.pushThem 同一条理由：那句话本来就是写给玩家看的）
@@ -1463,6 +1465,57 @@
     '#sbnyc-panel .sb-tk-chip.on{border-color:var(--plum);color:var(--plum);}',
     '#sbnyc-panel .sb-tk-credit{text-align:center;font-size:10.5px;color:var(--ink-faint);padding:14px 0 4px;}',
     '#sbnyc-panel .sb-tk-credit span{display:inline-block;margin-top:4px;color:var(--gold);cursor:pointer;font-size:11.5px;}',
+    // ── 📞 通话屏（好大鱼老师授权，照她《霖州》的通话屏：暗底、玻璃字幕、圆键；按 SB 换成金色）──
+    '#sbnyc-panel .sb-screen.sb-incall .sb-island,#sbnyc-panel .sb-screen.sb-incall .sb-bar{position:relative;z-index:41;}',
+    '#sbnyc-panel .sb-screen.sb-incall .sb-bar{color:#e6edf3;}',
+    '#sbnyc-panel .sb-call{position:absolute;top:0;left:0;right:0;bottom:0;z-index:40;border-radius:38px;overflow:hidden;background:radial-gradient(120% 70% at 50% 16%,#26303b 0%,#151a20 55%,#0e1115 100%);color:#fff;display:flex;flex-direction:column;padding:56px 0 26px;}',
+    '#sbnyc-panel .sb-call.video{background:linear-gradient(180deg,#2b2620 0%,#17181c 58%,#0f1013 100%);}',
+    '#sbnyc-panel .sb-callbody{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;gap:10px;padding:0 16px;position:relative;}',
+    '#sbnyc-panel .sb-calltop{display:flex;flex-direction:column;align-items:center;gap:7px;margin-top:22px;}',
+    '#sbnyc-panel .sb-calltop.sm{margin-top:6px;}',
+    '#sbnyc-panel .sb-call.talking .sb-calltop{margin-top:4px;gap:5px;}',
+    '#sbnyc-panel .sb-call.talking .sb-callava{width:56px;height:56px;font-size:22px;}',
+    '#sbnyc-panel .sb-call.video .sb-calltop{margin-top:4px;}',
+    '#sbnyc-panel .sb-call.video .sb-callava{display:none;}',
+    '#sbnyc-panel .sb-callava{width:88px;height:88px;border-radius:50%;background:#232a33;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:600;color:#e6edf3;box-shadow:0 4px 18px rgba(0,0,0,.4);}',
+    '#sbnyc-panel .sb-callname{font-size:19px;font-weight:600;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5);}',
+    '#sbnyc-panel .sb-callstatus{font-size:13px;color:#c9d1d9;min-height:18px;font-variant-numeric:tabular-nums;}',
+    '#sbnyc-panel .sb-callsubs{flex:1;min-height:0;width:100%;overflow-y:auto;display:flex;flex-direction:column;gap:7px;padding:6px 4px;scrollbar-width:none;}',
+    '#sbnyc-panel .sb-callsubs::-webkit-scrollbar{display:none;}',
+    '#sbnyc-panel .sb-callsubs:before{content:"";flex:1;min-height:0;}',
+    '#sbnyc-panel .sb-sub{max-width:85%;align-self:flex-start;text-align:left;font-size:13.5px;line-height:1.5;color:#f2f5f8;padding:7px 12px;border-radius:14px;background:rgba(17,21,26,.58);border:1px solid rgba(255,255,255,.13);box-shadow:inset 0 1px 0 rgba(255,255,255,.07);word-break:break-word;}',
+    '#sbnyc-panel .sb-sub.me{align-self:flex-end;background:rgba(122,96,52,.62);border-color:rgba(214,180,120,.34);box-shadow:inset 0 1px 0 rgba(255,255,255,.09);}',
+    '#sbnyc-panel .sb-sub .zh{font-size:11.5px;color:rgba(255,255,255,.58);margin-top:3px;line-height:1.45;}',
+    '#sbnyc-panel .sb-callscene{align-self:flex-start;margin:2px 0 2px 4px;max-width:86%;font-size:12px;line-height:1.55;color:rgba(255,255,255,.66);text-align:left;text-shadow:0 1px 4px rgba(0,0,0,.65);padding:2px 0;}',
+    '#sbnyc-panel .sb-subwait{display:flex;gap:4px;padding:11px 13px;}',
+    '#sbnyc-panel .sb-subwait i{width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.65);animation:sbCallDot 1.2s infinite ease-in-out;}',
+    '#sbnyc-panel .sb-subwait i:nth-child(2){animation-delay:.18s;}',
+    '#sbnyc-panel .sb-subwait i:nth-child(3){animation-delay:.36s;}',
+    '@keyframes sbCallDot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}',
+    '#sbnyc-panel .sb-cwait{color:#c9d1d9;font-size:13px;}',
+    '#sbnyc-panel .sb-callmid{display:flex;justify-content:space-between;align-items:center;width:100%;padding:4px 42px 0;box-sizing:border-box;}',
+    '#sbnyc-panel .sb-callmid.one{justify-content:center;}',
+    '#sbnyc-panel .sb-callbtn{display:flex;flex-direction:column;align-items:center;gap:5px;background:none;border:none;color:#e6edf3;font-size:10.5px;cursor:pointer;padding:0;font-family:inherit;}',
+    '#sbnyc-panel .sb-callbtn i{width:54px;height:54px;border-radius:50%;background:rgba(244,246,249,.95);box-shadow:0 2px 8px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;font-style:normal;}',
+    '#sbnyc-panel .sb-callbtn.hang i{background:#e5484d;}',
+    '#sbnyc-panel .sb-callbtn[disabled]{opacity:.45;cursor:default;}',
+    '#sbnyc-panel .sb-callroll{position:absolute;top:0;right:14px;z-index:5;color:#fff;opacity:.85;cursor:pointer;padding:4px;line-height:0;}',
+    '#sbnyc-panel .sb-callx{position:absolute;top:0;right:16px;z-index:5;color:#fff;opacity:.8;cursor:pointer;font-size:16px;padding:4px;line-height:1;}',
+    '#sbnyc-panel .sb-callpip{position:absolute;top:34px;right:12px;width:62px;height:84px;border-radius:12px;background:rgba(16,20,24,.8);border:1px solid rgba(255,255,255,.18);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:600;color:#aeb8c2;z-index:4;box-shadow:0 3px 12px rgba(0,0,0,.35);}',
+    '#sbnyc-panel .sb-callscrim{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.38);display:flex;align-items:center;justify-content:center;z-index:50;}',
+    '#sbnyc-panel .sb-callpop{width:266px;max-width:calc(100% - 40px);border-radius:14px;background:rgba(28,32,38,.96);color:#e6edf3;padding:14px 14px 12px;box-shadow:0 10px 34px rgba(0,0,0,.5);}',
+    '#sbnyc-panel .sb-callpop textarea{width:100%;box-sizing:border-box;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:10px;color:#fff;caret-color:#fff;padding:9px 11px;font-size:13.5px;line-height:1.55;resize:none;outline:none !important;box-shadow:none !important;font-family:inherit;}',
+    '#sbnyc-panel .sb-callpop textarea::placeholder{color:rgba(255,255,255,.55) !important;}',
+    '#sbnyc-panel .sb-callpop textarea:focus{border-color:rgba(255,255,255,.3);}',
+    '#sbnyc-panel .sb-callpbtn{display:flex;gap:8px;margin-top:10px;}',
+    '#sbnyc-panel .sb-callpbtn button{flex:1;border:none;border-radius:8px;padding:6px 0;font-size:14px;cursor:pointer;background:rgba(255,255,255,.12);color:#e6edf3;font-family:inherit;}',
+    '#sbnyc-panel .sb-callpbtn button.yes{background:#c9a566;color:#1a1d21;}',
+    // 私信里的通话灰泡：跟普通气泡走，只多一个听筒朝下的小图标；点一下回看那通电话
+    '#sbnyc-panel .sb-msg.sb-calllog{cursor:pointer;}',
+    '#sbnyc-panel .sb-calllog .cl{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;}',
+    '#sbnyc-panel .sb-calllog .cl i{display:inline-flex;transform:rotate(135deg);flex:none;opacity:.8;font-style:normal;}',
+    '#sbnyc-panel .sb-calllog .cl i.vc{transform:none;}',
+    '#sbnyc-panel .sb-calllog .cl i svg{width:15px;height:15px;}',
     '#sbnyc-fab.toy-on{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 calc(3px + var(--tk,0) * 12px) rgba(196,110,214,calc(.25 + var(--tk,0) * .6)));}',
   ].join('\n');
 
@@ -3941,7 +3994,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">' + sbIcon('refresh', 14) + ' 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 · 💬正文聊天气泡 · 🎼公共歌库音乐 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 · 💬正文聊天气泡 · 🎼公共歌库音乐 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -4288,6 +4341,8 @@
     h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
 
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    chatEl.querySelectorAll('[data-cid]').forEach(function (b) { b.addEventListener('click', function (e) { if (_msel) return; e.stopPropagation(); reviewCall(name, b.getAttribute('data-cid')); }); });   // 📞 点通话灰泡回看
+    if (!isGrp) sweepOrphanCalls(name);
     var tkChip = chatEl.querySelector('[data-tkchip]'); if (tkChip) tkChip.addEventListener('click', function (e) { e.stopPropagation(); openRemote(); });
     chatEl.querySelectorAll('[data-tkg]').forEach(function (b) { b.addEventListener('click', function (e) { e.stopPropagation(); if (b.getAttribute('data-tkg') === 'accept') toyAccept(name); else toyReturn(name); openChat(name, (state && state.npcs && state.npcs[name]) || npc); }); });
     var me = chatEl.querySelector('.sb-msgs'); if (me) me.scrollTop = me.scrollHeight;
@@ -4534,6 +4589,8 @@
           '<button data-pa="link">🔗 发链接（科普帖/账单/商品）</button>';
       } else {
         mh += '<button data-pa="meet">☕ 约见面（开正文剧情）</button>' +
+        '<button data-pa="acall">📞 语音通话</button>' +
+        '<button data-pa="vcall">📹 视频通话</button>' +
           '<button data-pa="broke">🥺 哭穷（一键）</button>' +
           '<button data-pa="selfie">🤳 快捷自拍（一键）</button>' +
           '<button data-pa="photo">📷 发照片（自己描述）</button>' +
@@ -4559,6 +4616,7 @@
           fillMainInput('我和 ' + name + ' 约好了见面。');
           panel.classList.remove('open');
         }
+        else if (act === 'acall' || act === 'vcall') startCall(name, act === 'vcall' ? 'video' : 'audio');
         else if (act === 'broke') { queueMsg(pickFrom(QUICK_POOLS.broke), 'text'); replyOne(name); }
         else if (act === 'selfie') { queueMsg(pickFrom(QUICK_POOLS.selfie), 'image'); replyOne(name); }
         else if (act.charAt(0) === 'q') { queueMsg(SE_Q[parseInt(act.slice(1), 10)], 'text'); replyOne(name); }
@@ -4647,7 +4705,309 @@
     });
   }
 
-  function closeChat() { currentChatName = null; currentPage = null; _msel = null; chatEl.style.display = 'none'; root.style.display = ''; render(); }
+  function closeChat() { if (!_call) closeCallScreen(); currentChatName = null; currentPage = null; _msel = null; chatEl.style.display = 'none'; root.style.display = ''; render(); }
+
+  // ══ 📞 语音 / 视频通话（2026-10-12）══
+  // 好大鱼老师授权移植自她的《霖州》数字世界引擎：通话屏的样子、拨号后对方决定接不接、
+  // 视频的 [画面] 行与台词交织、重说、挂断留灰泡、挂断后写通话纪要。
+  // 存档：npc.calls = [{id, mode, time, gameDay, startTs, dur, status:'active'|'ended'|'interrupted', lines:[{w:'me'|'them', k:'line'|'scene', t, zh}], summary}]（每人留最近 10 通）
+  //       私信里由 User 留一条 calllog 灰泡（callId 指回那通），生成器靠它把通话写进私信上下文和主线记忆。
+  // 函数声明会提升：渲染气泡时（可能早于这里执行到）也拿得到图标
+  function CALL_ICO(k) {
+    var I = {
+    call: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l1.5 4-2.2 1.6a13 13 0 0 0 6.1 6.1L16 13.5l4 1.5v4a1.6 1.6 0 0 1-1.8 1.6C10.4 19.9 4.1 13.6 3.4 5.8A1.6 1.6 0 0 1 5 4z"/></svg>',
+    vcall: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="12.5" height="12" rx="2.5"/><path d="M15.5 10.5l5-3v9l-5-3"/></svg>',
+    mic: '<svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="#1a1d21" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="2.5" width="6" height="11.5" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3.5M8.5 21.5h7"/></svg>',
+    hang: '<svg width="26" height="26" viewBox="0 0 24 24"><path fill="#fff" d="M6.6 3.2c.5-.2 1.1 0 1.4.5l1.8 2.7c.3.5.2 1.1-.2 1.5L8 9.3a12.8 12.8 0 0 0 6.7 6.7l1.4-1.6c.4-.4 1-.5 1.5-.2l2.7 1.8c.5.3.7.9.5 1.4l-.7 2.1c-.2.6-.8 1-1.4.9C9.6 18.9 5.1 14.4 4.6 5.8c0-.6.4-1.2 1-1.4l1-.2z" transform="rotate(135 12 12)"/></svg>',
+    reroll: '<svg width="16" height="16" viewBox="0 0 1024 1024"><path fill="currentColor" d="M512 85.333333c102.869333 0 199.509333 36.693333 275.029333 100.437334l93.866667-94.037334a21.333333 21.333333 0 0 1 36.437333 15.061334V384a21.333333 21.333333 0 0 1-21.333333 21.333333h-276.693333a21.333333 21.333333 0 0 1-15.104-36.394666l122.325333-122.496a341.333333 341.333333 0 1 0 118.314667 341.632 42.666667 42.666667 0 1 1 83.2 18.901333A426.794667 426.794667 0 0 1 512 938.666667C276.352 938.666667 85.333333 747.648 85.333333 512S276.352 85.333333 512 85.333333z"/></svg>'
+    };
+    return I[k] || '';
+  }
+  var _call = null, _callEl = null, _callTick = null, _callPop = false;
+  function callCn(mode) { return mode === 'video' ? '视频通话' : '语音通话'; }
+  function callDur(sec) {
+    sec = Math.max(0, Math.round(sec));
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    var mm = (m < 10 ? '0' : '') + m, ss = (s < 10 ? '0' : '') + s;
+    return h ? (h + ':' + mm + ':' + ss) : (mm + ':' + ss);
+  }
+  function callInitial(name) {
+    var s = String(name || '').replace(/[^0-9A-Za-z一-鿿]/g, '');
+    return (s.charAt(0) || '?').toUpperCase();
+  }
+  function callRec(c, status, dur) {
+    return { id: c.id, mode: c.mode, time: c.time, gameDay: c.gameDay, startTs: c.startAt, dur: dur || '', status: status,
+      lines: c.lines.map(function (l) { var o = { w: l.w, k: l.k, t: l.t }; if (l.zh) o.zh = l.zh; return o; }) };
+  }
+  // 一通电话落档：state 镜像和聊天变量各写一份（同 id 覆盖，保留 summary）
+  function callSave(name, rec) {
+    function put(n) {
+      if (!n) return;
+      if (!Array.isArray(n.calls)) n.calls = [];
+      var cp = JSON.parse(JSON.stringify(rec));
+      for (var i = n.calls.length - 1; i >= 0; i--) {
+        if (n.calls[i] && n.calls[i].id === cp.id) { if (n.calls[i].summary && !cp.summary) cp.summary = n.calls[i].summary; n.calls[i] = cp; return; }
+      }
+      n.calls.push(cp);
+      if (n.calls.length > 10) n.calls = n.calls.slice(-10);
+    }
+    put(npcOf(name));
+    return SBupdate(function (v) { put(v.sb && v.sb.npcs && v.sb.npcs[name]); return v; });
+  }
+  // 私信里留痕：通话灰泡（拒接时前面再加一句对方的理由）
+  function callPushDm(name, msgs) {
+    var t = nowT(), gd = (state && state.game && state.game.day) || 1, now = Date.now();
+    var objs = msgs.map(function (m) {
+      var o = { sender: m.sender || 'USER', time: t, ts: now, type: m.type, content: m.content, note: '', gameDay: gd };
+      if (m.zh) o.zh = m.zh;
+      if (m.mode) o.mode = m.mode;
+      if (m.callId) o.callId = m.callId;
+      return o;
+    });
+    function put(n) {
+      if (!n) return;
+      if (!n.dm_history) n.dm_history = [];
+      objs.forEach(function (o) { n.dm_history.push(JSON.parse(JSON.stringify(o))); });
+      if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400);
+      n.last_ts = now; n.engaged = true; n.muted = false;
+      n.last_message = lastPreview(objs[objs.length - 1]);
+    }
+    put(npcOf(name));
+    SBupdate(function (v) { put(v.sb && v.sb.npcs && v.sb.npcs[name]); return v; });
+    SBemit('sb_updated');   // 聊天页重画 + 主线注入跟着刷新
+  }
+  // 刷新页面时还挂着的那通：内存里的通话没了，存档里留个有头无尾的残卷 → 体面收尾成「通话中断」
+  function sweepOrphanCalls(name) {
+    var n = npcOf(name);
+    var cs = (n && n.calls) || [];
+    for (var i = 0; i < cs.length; i++) {
+      var r = cs[i];
+      if (!r || r.status !== 'active' || (_call && _call.id === r.id)) continue;
+      r.status = 'interrupted';
+      callSave(name, r);
+      callPushDm(name, [{ type: 'calllog', mode: r.mode, content: '通话中断', callId: r.id }]);
+    }
+  }
+  function callScreen() {
+    if (_callEl && _callEl.parentNode) return _callEl;
+    _callEl = DOC.createElement('div');
+    _callEl.className = 'sb-call';
+    _callEl.addEventListener('click', onCallClick);
+    screenEl.appendChild(_callEl);
+    screenEl.classList.add('sb-incall');
+    return _callEl;
+  }
+  function closeCallScreen() {
+    if (_callTick) { clearInterval(_callTick); _callTick = null; }
+    if (_callEl && _callEl.parentNode) _callEl.parentNode.removeChild(_callEl);
+    _callEl = null; _callPop = false;
+    screenEl.classList.remove('sb-incall');
+  }
+  function callSubsHtml(lines) {
+    return lines.map(function (l) {
+      if (l.k === 'scene') return '<div class="sb-callscene">' + esc(l.t).replace(/\n/g, '<br>') + '</div>';
+      return '<div class="sb-sub' + (l.w === 'me' ? ' me' : '') + '">' + esc(l.t) + (l.zh ? '<div class="zh">' + esc(l.zh) + '</div>' : '') + '</div>';
+    }).join('');
+  }
+  function callStatusText(c) {
+    if (c.phase === 'ringing') return '正在呼叫…';
+    if (c.busy) return '对方说话中…';
+    return callDur((Date.now() - c.startAt) / 1000);
+  }
+  function drawCall() {
+    var c = _call; if (!c) return;
+    var el = callScreen();
+    el.classList.toggle('video', c.mode === 'video' && c.phase === 'active');
+    el.classList.toggle('talking', c.lines.length > 0);   // 开口以后头像收小，给字幕腾地方（矮屏手机）
+    var subs = callSubsHtml(c.lines);
+    if (c.busy && c.phase === 'active') subs += '<div class="sb-sub sb-subwait"><i></i><i></i><i></i></div>';
+    var lastThem = c.lines.length && c.lines[c.lines.length - 1].w === 'them';
+    var roll = (c.phase === 'active' && !c.busy && lastThem) ? '<span class="sb-callroll" data-ca="reroll" title="重说对方上一段">' + CALL_ICO('reroll') + '</span>' : '';
+    var pip = (c.mode === 'video' && c.phase === 'active') ? '<div class="sb-callpip">我</div>' : '';
+    var btns = c.phase === 'ringing'
+      ? '<div class="sb-callmid one"><button class="sb-callbtn hang" data-ca="hang"><i>' + CALL_ICO('hang') + '</i><span>取消</span></button></div>'
+      : '<div class="sb-callmid"><button class="sb-callbtn" data-ca="mic"' + (c.busy ? ' disabled' : '') + '><i>' + CALL_ICO('mic') + '</i><span>说话</span></button>' +
+        '<button class="sb-callbtn hang" data-ca="hang"><i>' + CALL_ICO('hang') + '</i><span>挂断</span></button></div>';
+    var pop = _callPop
+      ? '<div class="sb-callscrim"><div class="sb-callpop"><textarea rows="4" maxlength="500" placeholder="想说什么…（可换行）"></textarea>' +
+        '<div class="sb-callpbtn"><button data-ca="popno">取消</button><button class="yes" data-ca="popok">发送</button></div></div></div>'
+      : '';
+    el.innerHTML = '<div class="sb-callbody">' + roll + pip +
+      '<div class="sb-calltop"><div class="sb-callava">' + esc(callInitial(c.name)) + '</div>' +
+      '<div class="sb-callname">' + esc(c.name) + '</div>' +
+      '<div class="sb-callstatus">' + esc(callStatusText(c)) + '</div></div>' +
+      '<div class="sb-callsubs">' + subs + '</div>' +
+      (c.phase === 'ringing' ? '<div class="sb-cwait">等待对方接听…</div>' : '') +
+      btns + '</div>' + pop;
+    var box = el.querySelector('.sb-callsubs'); if (box) box.scrollTop = box.scrollHeight;
+    if (_callPop) { var ta = el.querySelector('textarea'); if (ta) setTimeout(function () { try { ta.focus(); } catch (e) {} }, 30); }
+    if (c.phase === 'active' && !_callTick) {
+      _callTick = setInterval(function () {
+        if (!_call || !_callEl) { clearInterval(_callTick); _callTick = null; return; }
+        var s = _callEl.querySelector('.sb-callstatus'); if (s) s.textContent = callStatusText(_call);
+      }, 1000);
+    }
+  }
+  function onCallClick(e) {
+    var b = e.target && e.target.closest && e.target.closest('[data-ca]');
+    if (!b) return;
+    e.stopPropagation();
+    var a = b.getAttribute('data-ca');
+    if (a === 'hang') hangupCall();
+    else if (a === 'mic') { if (_call && !_call.busy) { _callPop = true; drawCall(); } }
+    else if (a === 'popno') { _callPop = false; drawCall(); }
+    else if (a === 'popok') { var ta = _callEl && _callEl.querySelector('textarea'); var txt = ta ? ta.value : ''; _callPop = false; callSay(txt); }
+    else if (a === 'reroll') callReroll();
+    else if (a === 'close') closeCallScreen();
+  }
+  function startCall(name, mode) {
+    if (_call) { toast('warning', '还在和 ' + _call.name + ' 通话'); drawCall(); return; }
+    var n = npcOf(name);
+    if (!n || n.isGroup) return;
+    if (n.blocked) { toast('warning', name + ' 已经把你拉黑了，打不通'); return; }
+    _call = { id: 'c' + Date.now().toString(36), name: name, mode: mode === 'video' ? 'video' : 'audio', phase: 'ringing', busy: true,
+      startAt: Date.now(), time: nowT(), gameDay: (state && state.game && state.game.day) || 1, lines: [] };
+    drawCall();
+    callAsk('invite', '');
+  }
+  function callAsk(op, says) {
+    var c = _call; if (!c) return;
+    var payload = { id: c.id, op: op, name: c.name, mode: c.mode, says: says || '',
+      lines: c.lines.map(function (l) { return { w: l.w, k: l.k, t: l.t }; }) };
+    clearTimeout(c._to);
+    c._to = setTimeout(function () { if (_call === c && c.busy) onCallResult({ id: c.id, op: op, ok: false, err: '等太久了' }); }, 300000);
+    SBupdate(function (v) { return v; }).then(function () { SBemit('sb_request_call', payload); });
+  }
+  // 模型的原文 → 条目：[画面] 行是画面（只有视频要），其余是台词；外语台词 § 后面是中文
+  function parseCallText(text, mode, name) {
+    var out = [], buf = null;
+    var nm = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var spk = new RegExp('^(?:' + nm + '|User)\\s*[：:]\\s*');
+    function flush() { if (buf) out.push({ w: 'them', k: 'scene', t: buf }); buf = null; }
+    String(text || '').split('\n').forEach(function (raw) {
+      var ln = raw.trim();
+      if (!ln) return;
+      if (/^-{3,}\s*$/.test(ln)) { flush(); return; }
+      var sm = ln.match(/^[\[【]\s*画面\s*[\]】]\s*[：:]?\s*(.*)$/);
+      if (sm) {
+        flush();
+        if (mode !== 'video') return;
+        if (sm[1]) out.push({ w: 'them', k: 'scene', t: sm[1] }); else buf = '';
+        return;
+      }
+      if (buf != null) { buf = buf ? buf + '\n' + ln : ln; return; }
+      ln = ln.replace(/^[\[【]\s*(接听|拒绝)\s*[\]】]\s*/, '').replace(spk, '');
+      var zh = '', si = ln.indexOf('§');
+      if (si >= 0) { zh = ln.slice(si + 1).trim(); ln = ln.slice(0, si).trim(); }
+      ln = ln.replace(/^["“「]+|["”」]+$/g, '').trim();
+      if (ln) out.push({ w: 'them', k: 'line', t: ln, zh: zh });
+    });
+    flush();
+    var cap = mode === 'video' ? 40 : 30;
+    if (out.length > cap) { console.warn('[SugarOS 通话] 单轮输出 ' + out.length + ' 条，超上限截为 ' + cap + ' 条'); out = out.slice(0, cap); }
+    return out;
+  }
+  function onCallResult(r) {
+    r = r || {};
+    if (r.op === 'summary') {
+      if (!r.ok || !r.text) return;
+      var put = function (n) {
+        var cs = (n && n.calls) || [];
+        for (var i = cs.length - 1; i >= 0; i--) { if (cs[i] && cs[i].id === r.id) { cs[i].summary = String(r.text).slice(0, 1200); return; } }
+      };
+      put(npcOf(r.name));
+      SBupdate(function (v) { put(v.sb && v.sb.npcs && v.sb.npcs[r.name]); return v; });
+      return;
+    }
+    var c = _call;
+    if (!c || c.id !== r.id) return;   // 挂断以后才回来的结果：丢掉
+    clearTimeout(c._to);
+    c.busy = false;
+    if (!r.ok) {
+      if (c.phase === 'ringing') { _call = null; closeCallScreen(); toast('error', '拨打失败：' + (r.err || '对方没有响应') + '，稍后再拨'); return; }
+      toast('error', '对方信号不好，再试一次');
+      drawCall();
+      return;
+    }
+    var text = String(r.text || '').trim();
+    if (c.phase === 'ringing') {
+      if (/^[\[【]\s*拒绝\s*[\]】]/.test(text) || /^拒绝\s*[：:]/.test(text)) {
+        var why = text.replace(/^[\[【]\s*拒绝\s*[\]】]\s*|^拒绝\s*[：:]\s*/, '').split('\n')[0].trim();
+        var msgs = [];
+        if (why) { var wp = why.split('§'); msgs.push({ sender: 'THEM', type: 'text', content: wp[0].replace(/^["“「]+|["”」]+$/g, '').trim(), zh: (wp[1] || '').trim() }); }
+        msgs.push({ type: 'calllog', mode: c.mode, content: '对方已拒绝', callId: c.id });
+        _call = null;
+        closeCallScreen();
+        callPushDm(c.name, msgs);
+        toast('info', c.name + ' 没接');
+        return;
+      }
+      c.phase = 'active';
+      c.startAt = Date.now();
+      c.lines = c.lines.concat(parseCallText(text, c.mode, c.name));
+      callSave(c.name, callRec(c, 'active'));
+      drawCall();
+      return;
+    }
+    c.lines = c.lines.concat(parseCallText(text, c.mode, c.name));
+    callSave(c.name, callRec(c, 'active'));
+    drawCall();
+  }
+  function callSay(text) {
+    var c = _call;
+    if (!c || c.phase !== 'active' || c.busy) { drawCall(); return; }
+    var ls = String(text || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean).slice(0, 10);
+    if (!ls.length) { drawCall(); return; }
+    ls.forEach(function (l) { c.lines.push({ w: 'me', k: 'line', t: l }); });
+    c.busy = true;
+    drawCall();
+    callSave(c.name, callRec(c, 'active'));
+    callAsk('turn', ls.join('\n'));
+  }
+  // 重说：弹掉对方最近一段，带着 User 最后那句的语境原地重来
+  function callReroll() {
+    var c = _call;
+    if (!c || c.phase !== 'active' || c.busy) return;
+    var n = 0;
+    while (c.lines.length && c.lines[c.lines.length - 1].w === 'them') { c.lines.pop(); n++; }
+    if (!n) return;
+    c.busy = true;
+    drawCall();
+    callAsk('turn', '');
+  }
+  function hangupCall() {
+    var c = _call; if (!c) return;
+    _call = null;
+    clearTimeout(c._to);
+    closeCallScreen();
+    if (c.phase === 'active') {
+      var dur = callDur((Date.now() - c.startAt) / 1000);
+      callSave(c.name, callRec(c, 'ended', dur));
+      callPushDm(c.name, [{ type: 'calllog', mode: c.mode, content: '通话时长 ' + dur, callId: c.id }]);
+      if (c.lines.length) {
+        var lines = c.lines.map(function (l) { return { w: l.w, k: l.k, t: l.t }; });
+        SBupdate(function (v) { return v; }).then(function () {
+          SBemit('sb_request_call', { id: c.id, op: 'summary', name: c.name, mode: c.mode, lines: lines });
+        });
+      }
+    } else {
+      callPushDm(c.name, [{ type: 'calllog', mode: c.mode, content: '已取消', callId: c.id }]);
+    }
+  }
+  // 点私信里的通话灰泡：回看那通电话（只读）
+  function reviewCall(name, id) {
+    if (_call) { drawCall(); return; }
+    var n = npcOf(name), rec = null, cs = (n && n.calls) || [];
+    for (var i = cs.length - 1; i >= 0; i--) { if (cs[i] && cs[i].id === id) { rec = cs[i]; break; } }
+    if (!rec || !(rec.lines || []).length) { toast('info', '这通电话没有留下通话内容'); return; }
+    var el = callScreen();
+    el.classList.remove('video');
+    el.innerHTML = '<div class="sb-callbody"><span class="sb-callx" data-ca="close" title="关闭">✕</span>' +
+      '<div class="sb-calltop sm"><div class="sb-callname">' + esc(name) + '</div>' +
+      '<div class="sb-callstatus">' + esc(callCn(rec.mode) + (rec.dur ? ' · ' + rec.dur : '') + (rec.status === 'interrupted' ? ' · 中断' : '') + (rec.time ? ' · ' + rec.time : '')) + '</div></div>' +
+      '<div class="sb-callsubs">' + callSubsHtml(rec.lines) + '</div></div>';
+    var box = el.querySelector('.sb-callsubs'); if (box) box.scrollTop = box.scrollHeight;
+  }
 
   // ── 🎨 AI生图画风预设（UWU · 2026-07-17）──
   // '0'=不开 '1'=厚涂油画 '2'=平涂插画；提示词不含人物描述——适合场景/氛围/静物/光影
@@ -4696,7 +5056,7 @@
     var dataA = '';
     if (trName != null && trIdx != null) {
       dataA = ' data-owner="' + (isU ? 'me' : 'them') + '" data-nm="' + esc(trName) + '" data-mi="' + trIdx + '"';
-      if (type !== 'transfer' && type !== 'recall' && type !== 'system' && type !== 'gift' && type !== 'dossier' && type !== 'toy') {   // 档案卡不给重roll/编辑（它不是一条消息，卡上自带「再查一次」）
+      if (type !== 'transfer' && type !== 'recall' && type !== 'system' && type !== 'gift' && type !== 'dossier' && type !== 'toy' && type !== 'calllog') {   // 档案卡不给重roll/编辑（它不是一条消息，卡上自带「再查一次」）
         if (canReroll && !isU) dataA += ' data-rr="1"';
         if (isU && (type === 'text' || type === 'image' || type === 'voice' || type === 'sticker')) {
           if (type !== 'sticker') dataA += ' data-ed="1"';   // 表情包没有"编辑"这回事，只能撤
@@ -4773,7 +5133,8 @@
         head += '<div class="da"><button class="sb-dsr-btn" data-dsr="re" data-n="' + esc(dName) + '">' + sbIcon('refresh', 14) + ' 重新查一份</button></div>';
       }
       return head + tH + '</div>';
-    }    if (type === 'recall') return '<div class="sb-msg system"' + dataA + ' data-tp="recall">「' + (isU ? '你' : (gWho || '对方')) + '撤回了一条消息」' + tH + '</div>';   // 内容不显示——说了什么只有发的人自己记得
+    }    if (type === 'calllog') return '<div class="sb-msg ' + cls + ' sb-calllog"' + dataA + ' data-tp="calllog" data-cid="' + esc(m.callId || '') + '"><span class="cl">' + esc(c) + '<i' + (m.mode === 'video' ? ' class="vc"' : '') + '>' + CALL_ICO(m.mode === 'video' ? 'vcall' : 'call') + '</i></span>' + tH + '</div>';   // 📞
+    if (type === 'recall') return '<div class="sb-msg system"' + dataA + ' data-tp="recall">「' + (isU ? '你' : (gWho || '对方')) + '撤回了一条消息」' + tH + '</div>';   // 内容不显示——说了什么只有发的人自己记得
     if (type === 'system') return '<div class="sb-msg system"' + dataA + ' data-tp="system">' + esc(c) + '</div>';
     // 转发的账单/商品/帖子 → 小票收据卡（User 许愿的仪式感；内容还是同一行文字，只是穿了件衣服）
     if (isU && type === 'text') {
@@ -5724,6 +6085,7 @@
     loadState();
     if (_onTaxReady) { var cb = _onTaxReady; _onTaxReady = null; cb(); }
   });
+  SBon('sb_call_result', onCallResult);   // 📞
   SBon('sb_dm_failed', function (msg) {
     setStatus('⚠️ ' + (msg || '私信生成失败'));
     // 生成失败 → 摘掉"正在输入…"气泡（成功时 sb_updated 重渲染会自然带走它）
