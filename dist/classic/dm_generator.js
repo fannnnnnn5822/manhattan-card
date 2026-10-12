@@ -4286,7 +4286,8 @@ async function handleCall(p) {
       catch (e) { notifyFail('独立API失败(' + ((e && e.message) || e) + ')，回退主API'); raw = null; }
     }
     if (raw == null) {
-      await waitForSlot();
+      // 通话不走手机的每分钟限速（Fan 10-12：人在电话那头干等不行）——拨号、每一轮说话都直接发；只有挂断后的纪要在后台排队
+      if (op === 'summary') await waitForSlot();
       raw = await generateRaw({ user_input: instr, should_silence: true, max_chat_history: 0, ordered_prompts: ordered });
     }
     var text = cleanProse(typeof raw === 'string' ? raw : (raw && raw.content) || '');
