@@ -6253,7 +6253,7 @@ var SBLAB_CARD = "classic";
     'L.':              { local: '', openai: 'onyx',    gemini: 'Schedar',   minimax: 'presenter_male' },    // 58岁仪式化stalker：慢、平、从不提高音量（他不发语音，备着）
     '上夜班的人':        { local: '', openai: 'onyx',    gemini: 'Alnilam',   minimax: 'male-qn-jingying' },  // 谢书砚：专业冷静、短句、中文是卸妆水——MiniMax中文音色对他最重要
     'Akuma':           { local: '', fish: 'faccba1a8ac54016bcfc02761285e67f', openai: 'nova', gemini: 'Leda', minimax: 'female-tianmei' },    // 闺蜜：甜、亮、茶里茶气上扬尾音；fish 那个是 Fan 10-13 选的（三张卡里都是她）
-    'S.':              { local: '', fish: '59cb5986671546eaa6ca8ae6f29f6d22', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' },  // 管家服务：礼貌、匀速、没有情绪；fish「央视配音」是 Fan 10-13 选的（查过存在）
+    'S.':              { local: '', fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' },  // 管家服务：礼貌、匀速、没有情绪；fish「JARVIS」英式冷静——Fan 10-13 听样音定（S1 太好听了）
     // ── 纸醉金迷原版（S市）的固定NPC ──
     // 一个脚本同时伺候三张卡：表按名字取，多几个键不占运行开销，玩家一次也只开一张卡。
     //「上夜班的人」「Akuma」「S.」两个世界本来就是同一个人，用上面那几行即可。
