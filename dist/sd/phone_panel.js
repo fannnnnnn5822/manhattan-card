@@ -602,6 +602,8 @@
   function skinClass(isU, who) {
     var s = skinsOf();
     if (isU) return s.active ? ' sk-' + s.active : '';
+    var gn = npcOf(who) || npcOf(NPC_SKIN_ALIAS[who] || '');   // 🎁 User 送她的款（Fan 10-13：送对方气泡、对方换上）
+    if (gn && gn.skin && SKIN_BY[gn.skin]) return ' sk-' + gn.skin;
     if (!s.owned.length) return '';   // 没拥有过皮肤 → 全世界原版
     var k = NPC_SKIN[who] || NPC_SKIN[NPC_SKIN_ALIAS[who] || ''];
     return k ? ' sk-' + k : '';
@@ -615,18 +617,42 @@
   function skinShopHtml() {
     var s = skinsOf();
     var h = '<div class="sb-sec">Signature Bubbles · 气泡皮肤</div>';
-    h += '<div class="sb-empty" style="padding:2px 16px 6px;">换你自己气泡的样子。有了第一套之后，几位有自己风格的人也会露出他们的款。</div>';
+    h += '<div class="sb-empty" style="padding:2px 16px 6px;">换你自己气泡的样子，或者「送」一套给她——她那边的气泡立刻换上。有了第一套之后，几位有自己风格的人也会露出他们的款。</div>';
     h += '<div class="sb-skgrid">';
     h += '<div class="sb-skcard"><div class="sb-skprev"><div class="sb-msg them">原版</div><div class="sb-msg me">原版</div></div><div class="sk-n"><span>原版</span><button class="sb-skbtn' + (s.active ? '' : ' on') + '" data-sk="">' + (s.active ? '换上' : '使用中') + '</button></div></div>';
     for (var i = 0; i < SKINS.length; i++) {
       var k = SKINS[i][0], cn = SKINS[i][1], p = SKINS[i][2], own = s.owned.indexOf(k) !== -1;
       h += '<div class="sb-skcard"><div class="sb-skprev"><div class="sb-msg them sk-' + k + '">' + cn + '</div><div class="sb-msg me sk-' + k + '">' + cn + '</div></div><div class="sk-n"><span>' + cn + (own ? '' : ' <span class="sk-p">' + fmtCNY(p) + '</span>') + '</span>' +
-        '<button class="sb-skbtn' + (own ? (s.active === k ? ' on' : '') : ' off') + '" data-sk="' + k + '">' + (own ? (s.active === k ? '使用中' : '换上') : '买') + '</button></div></div>';
+        '<button class="sb-skbtn' + (own ? (s.active === k ? ' on' : '') : ' off') + '" data-sk="' + k + '">' + (own ? (s.active === k ? '使用中' : '换上') : '买') + '</button>' +
+        '<button class="sb-skbtn sb-skgift off" data-skg="' + k + '" title="买一套送给她，她那边的气泡立刻换上">送</button></div></div>';
     }
     return h + '</div>';
   }
+  function giftSkin(k) {
+    var sk = SKIN_BY[k]; if (!sk || !state) return;
+    var okc = true;
+    try { okc = (DOC.defaultView || window).confirm('花 ' + fmtCNY(sk[2]) + ' 买一套「' + sk[1] + '」气泡皮肤送人？\n（下一步选送给谁；她那边的气泡会立刻换上）'); } catch (e) {}
+    if (!okc) return;
+    pickContact(function (who) {
+      if (!who) return;
+      if (!debit(sk[2], '气泡皮肤 · ' + sk[1] + ' → ' + who, 'SugarElite')) return;
+      var n0 = npcOf(who); if (n0) n0.skin = k;
+      SBupdate(function (v) { var n1 = v.sb && v.sb.npcs && v.sb.npcs[who]; if (n1) n1.skin = k; return v; });
+      callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] 气泡皮肤「' + sk[1] + '」 —— ' + fmtCNY(sk[2]) + '（SugarElite 商城 · 已经替你换上了）' }]);
+      SBemit('sb_request_dm', { reason: '🎁 送礼：User 刚买了一套「' + sk[1] + '」气泡皮肤（' + fmtCNY(sk[2]) + '）送给 ' + who + '，她的聊天气泡已经换成这款。只让 ' + who + ' 本人回应：按人设收礼——可以得意、可以嫌弃颜色、可以反问他是不是也给别人送了；一两句即可', n: '1-2', to: [who] });
+      toast('success', '✨ 「' + sk[1] + '」已送给 ' + who + '，她换上了');
+      openElite();
+    }, {
+      title: '这套「' + sk[1] + '」送给谁？',
+      limit: 20,
+      filter: function (np) { return np && np.unlocked !== false && !np.isGroup && np.name !== 'SugarElite™'; },
+      empty: '通讯录里还没人',
+    });
+  }
   function bindSkinShop(scope) {
-    var bs = scope.querySelectorAll('.sb-skbtn');
+    var gs = scope.querySelectorAll('.sb-skgift');
+    for (var gi = 0; gi < gs.length; gi++) { (function (b) { b.addEventListener('click', function (e) { e.stopPropagation(); giftSkin(b.getAttribute('data-skg') || ''); }); })(gs[gi]); }
+    var bs = scope.querySelectorAll('.sb-skbtn:not(.sb-skgift)');
     for (var i = 0; i < bs.length; i++) {
       (function (b) {
         b.addEventListener('click', function () {
@@ -6155,20 +6181,20 @@ var SBLAB_CARD = "sd";
     'T.':              { local: '', openai: 'onyx',    gemini: 'Charon',    minimax: 'male-qn-badao' },     // 41岁巨鲸：低沉、权威、不解释
     'Marco Rossi':     { local: '', fish: 'f6f293aabfe24e46aff0fc309c233d31', openai: 'echo', gemini: 'Fenrir', minimax: 'male-qn-daxuesheng' },// 假富话痨：亢奋、油、自来熟；fish「曹操」（陈建斌）是 Fan 10-13 选的搞笑款——T. 不许搞笑，就给他
     'David Pemberton': { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律师：气声、压低、像在门口耳语
-    'Hudson Park':     { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 男公关战友：松弛、干燥幽默
+    'Hudson Park':     { local: '', fish: 'd8a1340984ee4b63ad1ffae27a6a4339', openai: 'alloy', gemini: 'Puck', minimax: 'male-qn-jingying' },  // 男公关战友：松弛、干燥幽默；fish「ELITE」年轻干脆阳光——Fan 10-13 听样音点的
     'Cole Marlowe':    { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 破碎乐手：慢、飘、凌晨三点的嗓子
     'Father Dan':      { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 神父：清晰、克制、忏悔室音量
     'L.':              { local: '', openai: 'onyx',    gemini: 'Schedar',   minimax: 'presenter_male' },    // 58岁仪式化stalker：慢、平、从不提高音量（他不发语音，备着）
     '上夜班的人':        { local: '', openai: 'onyx',    gemini: 'Alnilam',   minimax: 'male-qn-jingying' },  // 谢书砚：专业冷静、短句、中文是卸妆水——MiniMax中文音色对他最重要
     'Akuma':           { local: '', fish: 'faccba1a8ac54016bcfc02761285e67f', openai: 'nova', gemini: 'Leda', minimax: 'female-tianmei' },    // 闺蜜：甜、亮、茶里茶气上扬尾音；fish 那个是 Fan 10-13 选的（三张卡里都是她）
-    'S.':              { local: '', fish: '59cb5986671546eaa6ca8ae6f29f6d22', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' },  // 管家服务：礼貌、匀速、没有情绪；fish「央视配音」是 Fan 10-13 选的（查过存在）
+    'S.':              { local: '', fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' },  // 管家服务：礼貌、匀速、没有情绪；fish「JARVIS」英式冷静——Fan 10-13 听样音定（S1 太好听了）
     // ── 纸醉金迷原版（S市）的固定NPC ──
     // 一个脚本同时伺候三张卡：表按名字取，多几个键不占运行开销，玩家一次也只开一张卡。
     //「上夜班的人」「Akuma」「S.」两个世界本来就是同一个人，用上面那几行即可。
     // 音色按原型对齐 NYC 的同类角色（隔壁已婚律师、男公关战友、破碎乐手、禁忌神职），省得重新试音。
     '纪司柏':           { local: '', openai: 'onyx',    gemini: 'Algieba',   minimax: 'male-qn-qingse' },    // 28岁高段位假富：好听、不急不慢、从不用感叹号
     '顾维':             { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律所合伙人：压低、体面、把命令说成建议
-    '楚何河':           { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默
+    '楚何河':           { local: '', fish: 'd8a1340984ee4b63ad1ffae27a6a4339', openai: 'alloy', gemini: 'Puck', minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默；fish 同 Hudson Park（ELITE）
     '祈星':             { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 22岁破碎乐手：慢、飘、凌晨三点的嗓子
     '释空':             { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 高僧：清晰、克制、讲经的音量
     // ── 一掷千金（S市金主版）的固定NPC：只配了 Fish（Fan 10-13 挑的），别的后端走默认 ──
@@ -6216,7 +6242,7 @@ var SBLAB_CARD = "sd";
   // 卡自带的 Fish 默认音色：玩家「默认音色」留空就用它（构建脚本在本文件前面注入 SBLAB_CARD 说明这是哪张卡）
   // sd：Fan 10-13 选定 870eb86b…（一掷千金全是男金主）；鎏金/原版：Sarah（10-13 实测通的女声）
   var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
-  var FISH_CARD_VOICE = { sd: '870eb86b5c5f4dd1bc9ff4f1cc5338f1', nyc: 'e4642e5edccd4d9ab61a69e82d4f8a14', classic: 'e4642e5edccd4d9ab61a69e82d4f8a14' };   // SB 默认 e4642e5e… 是 Fan 10-13 选的（年轻男声，查过存在）
+  var FISH_CARD_VOICE = { sd: '870eb86b5c5f4dd1bc9ff4f1cc5338f1', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: 'bf322df2096a46f18c579d0baa36f41d' };   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
   var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
