@@ -7325,3 +7325,57 @@ var SBLAB_CARD = "nyc";
     }
   } catch (e) {}
 })();
+
+;
+// ═══════════════════════════════════════════════════════════════════
+// 世界书跟卡走（2026-10-13，三卡共用，随手机脚本热更）
+// 玩家点「更新角色卡」后，酒馆只有在「导入内嵌世界书」弹窗没被关掉时才会把卡里的新世界书写成文件；
+// 关了弹窗的玩家：卡是新的、世界书永远是旧的（10-11 发版后真有人中招，我们只好把世界书单发）。
+// 这里每次开卡检查一次：卡里内嵌的世界书名 ≠ 角色绑定的主世界书 → 从卡里写出来并绑上。
+// 只处理「同一本的新版」（名字去掉版本号后相同）或角色根本没绑主世界书的情况；玩家自己换绑的别的书不碰。
+// ═══════════════════════════════════════════════════════════════════
+(function () {
+  'use strict';
+  function stem(n) { return String(n || '').replace(/\s+\d[\d.]*(\s*·.*)?$/, '').trim(); }
+  // 卡里的 character_book（v2 格式）→ 酒馆助手 createOrReplaceWorldbook 要的条目格式
+  var POS = ['before_character_definition', 'after_character_definition', 'before_author_note', 'after_author_note', 'at_depth', 'before_example_messages', 'after_example_messages'];
+  var ROLE = ['system', 'user', 'assistant'], LOGIC = ['and_any', 'not_all', 'not_any', 'and_all'];
+  function bookFromCard(cb) {
+    return (cb.entries || []).map(function (e) {
+      var x = e.extensions || {};
+      return {
+        name: e.comment || '', enabled: e.enabled !== false, content: e.content || '',
+        strategy: { type: e.constant ? 'constant' : (x.vectorized ? 'vectorized' : 'selective'), keys: e.keys || [],
+          keys_secondary: { logic: LOGIC[x.selectiveLogic || 0] || 'and_any', keys: e.secondary_keys || [] },
+          scan_depth: (x.scan_depth == null ? 'same_as_global' : x.scan_depth) },
+        position: { type: POS[x.position] || 'before_character_definition', role: ROLE[x.role || 0] || 'system',
+          depth: (x.depth == null ? 4 : x.depth), order: (e.insertion_order == null ? 100 : e.insertion_order) },
+        probability: (x.probability == null ? 100 : x.probability),
+        recursion: { prevent_incoming: !!x.exclude_recursion, prevent_outgoing: !!x.prevent_recursion,
+          delay_until: (x.delay_until_recursion ? (Number(x.delay_until_recursion) || null) : null) },
+        effect: { sticky: x.sticky || null, cooldown: x.cooldown || null, delay: x.delay || null },
+      };
+    });
+  }
+  async function run() {
+    try {
+      if (typeof getCharData !== 'function' || typeof getCharWorldbookNames !== 'function' || typeof rebindCharWorldbooks !== 'function') return;
+      var cd = await getCharData('current');
+      var cb = (cd && cd.data && cd.data.character_book) || (cd && cd.character_book) || null;
+      var want = cb && cb.name;
+      if (!want || !Array.isArray(cb.entries) || !cb.entries.length) return;
+      var cw = getCharWorldbookNames('current') || { primary: null, additional: [] };
+      if (cw.primary === want) return;
+      if (cw.primary && stem(cw.primary) !== stem(want)) return;   // 玩家自己绑了别的书：不碰
+      var names = (typeof getWorldbookNames === 'function') ? (getWorldbookNames() || []) : [];
+      if (names.indexOf(want) < 0) {
+        if (typeof createOrReplaceWorldbook !== 'function') return;
+        await createOrReplaceWorldbook(want, bookFromCard(cb));
+      }
+      await rebindCharWorldbooks('current', { primary: want, additional: (cw.additional || []).filter(function (n) { return n !== want; }) });
+      try { toastr.info('世界书已换成卡里的新版「' + want + '」' + (cw.primary ? '；旧的「' + cw.primary + '」还留着，可自行删除' : ''), 'SugarOS'); } catch (e) {}
+      console.log('[SB wb_sync] rebound', cw.primary, '->', want);
+    } catch (e) { console.warn('[SB wb_sync]', e); }
+  }
+  setTimeout(run, 1500);
+})();
