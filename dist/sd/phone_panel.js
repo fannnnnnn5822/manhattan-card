@@ -6185,7 +6185,7 @@ var SBLAB_CARD = "sd";
   //            这列才是灵魂：给每个 NPC 找 3-10 秒参考音频 → 真正独一无二的声音。空 = 用服务默认音色。
   // 云列是罐头音色里挑最贴的：OpenAI 男声只有 3 个可选，撞车难免，能用就行。
   var NPC_VOICE = {
-    'T.':              { local: '', openai: 'onyx',    gemini: 'Charon',    minimax: 'male-qn-badao' },     // 41岁巨鲸：低沉、权威、不解释
+    'T.':              { local: '', fish: '5e79e8f5d2b345f98baa8c83c947532d', openai: 'onyx', gemini: 'Charon', minimax: 'male-qn-badao' },     // 41岁巨鲸：低沉、权威、不解释；fish Paddington 英式低沉温暖（Fan 10-14 听喘息三段说不错；T. 不许搞笑，这款正经）
     'Marco Rossi':     { local: '', fish: 'f6f293aabfe24e46aff0fc309c233d31', openai: 'echo', gemini: 'Fenrir', minimax: 'male-qn-daxuesheng' },// 假富话痨：亢奋、油、自来熟；fish「曹操」（陈建斌）是 Fan 10-13 选的搞笑款——T. 不许搞笑，就给他
     'David Pemberton': { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律师：气声、压低、像在门口耳语
     'Hudson Park':     { local: '', fish: 'd8a1340984ee4b63ad1ffae27a6a4339', openai: 'alloy', gemini: 'Puck', minimax: 'male-qn-jingying' },  // 男公关战友：松弛、干燥幽默；fish「ELITE」年轻干脆阳光——Fan 10-13 听样音点的
@@ -6201,7 +6201,7 @@ var SBLAB_CARD = "sd";
     // 音色按原型对齐 NYC 的同类角色（隔壁已婚律师、男公关战友、破碎乐手、禁忌神职），省得重新试音。
     '纪司柏':           { local: '', openai: 'onyx',    gemini: 'Algieba',   minimax: 'male-qn-qingse' },    // 28岁高段位假富：好听、不急不慢、从不用感叹号
     '顾维':             { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律所合伙人：压低、体面、把命令说成建议
-    '楚何河':           { local: '', fish: 'd8a1340984ee4b63ad1ffae27a6a4339', openai: 'alloy', gemini: 'Puck', minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默；fish 同 Hudson Park（ELITE）
+    '楚何河':           { local: '', fish: 'd99547e2dad64ce0aa085319a3c9cc56', openai: 'alloy', gemini: 'Puck', minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默；fish「温柔男声·讲故事」（10-14 Fan zm4 还可以；原版是中文卡，之前错放了英文 ELITE）
     '祈星':             { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 22岁破碎乐手：慢、飘、凌晨三点的嗓子
     '释空':             { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 高僧：清晰、克制、讲经的音量
     // ── 一掷千金（S市金主版）的固定NPC：只配了 Fish（Fan 10-13 挑的），别的后端走默认 ──
@@ -6251,8 +6251,9 @@ var SBLAB_CARD = "sd";
   // sd：10-14 换成 ccd9a20a…「魅惑女声」（Fan 嫌 13 号那个「娇媚女声」尖；一掷千金的联系人几乎全是女孩，默认必须是女声）；鎏金/原版见下面 FISH_CARD_VOICE 的注释
   var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
   // 管家的联系人名在卡里是 SugarElite™（显示 S.）：一掷千金用中文女声「温柔」（Fan 10-13 听了论坛播报说「很好听，写进卡」），鎏金/原版沿用 S. 的英式 JARVIS
-  NPC_VOICE['SugarElite™'] = CARD === 'sd' ? { fish: 'ae4f2bad30d54aeda048b0a06224ad3e' }   /* 10-14 换成「情感女声旁白」气声款（用户嫌「温柔」像客服，Fan 三选一定 v5） */ : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
-  var FISH_CARD_VOICE = { sd: 'ccd9a20abb214f0486b65950d9006f89', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: 'bf322df2096a46f18c579d0baa36f41d' };   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
+  if (CARD === 'classic') NPC_VOICE['S.'] = { local: '', fish: 'ae4f2bad30d54aeda048b0a06224ad3e', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };   // 原版是中文卡，S. 用气声旁白女声（10-14）
+  NPC_VOICE['SugarElite™'] = CARD !== 'nyc' ? { fish: 'ae4f2bad30d54aeda048b0a06224ad3e' }   /* 10-14 换成「情感女声旁白」气声款（用户嫌「温柔」像客服，Fan 三选一定 v5） */ : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
+  var FISH_CARD_VOICE = { sd: 'ccd9a20abb214f0486b65950d9006f89', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: '9927a47b9bd0490abaa81dd3b45dc0dc' };   // 原版是中文卡：默认「慵懒轻熟男音」（Fan 10-14 zm2 一百分）；鎏金 Adrian   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
   var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
