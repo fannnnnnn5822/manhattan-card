@@ -6213,6 +6213,8 @@ var SBLAB_CARD = "sd";
   var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
   var FISH_CARD_VOICE = { sd: '870eb86b5c5f4dd1bc9ff4f1cc5338f1', nyc: 'e4642e5edccd4d9ab61a69e82d4f8a14', classic: 'e4642e5edccd4d9ab61a69e82d4f8a14' };   // SB 默认 e4642e5e… 是 Fan 10-13 选的（年轻男声，查过存在）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
+  // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
+  var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
 
   // 每人音色：存 localStorage sbnyc_npc_voice（{名字:{后端:音色}}），配置面板里按行编辑
   // 固定 NPC 名单：从聊天变量里拿 persistent 的联系人（群和 SugarElite 不算），鎏金/原版再并上预填表里的名字
@@ -7012,8 +7014,8 @@ var SBLAB_CARD = "sd";
     // 每个格子标上「哪些后端用得着」，选了 Fish 就只露 Fish 的那几格——别让玩家对着 GroupId、参考音频发呆
     function fld(forList, html) { return '<label data-for="' + forList + '" style="display:block;margin-bottom:10px;">' + html + '</label>'; }
     var HINT = {   // 同一格在不同后端下的提示语
-      url:   { fish: '公益站：填它给你的地址；用 fish.audio 自己的 Key 就留空', local: '默认 http://127.0.0.1:9880', openai: '中转站填中转地址；留空走官方', gemini: '留空走官方', minimax: '留空走官方' },
-      key:   { fish: '公益站给的 sk- 令牌，或 fish.audio 后台的 Key', openai: 'API Key', gemini: 'API Key', minimax: 'API Key' },
+      url:   { fish: '已填好公益站地址，不用动；用 fish.audio 自己的 Key 就清空这格走官方', local: '默认 http://127.0.0.1:9880', openai: '中转站填中转地址；留空走官方', gemini: '留空走官方', minimax: '留空走官方' },
+      key:   { fish: '公益站登录后「我的 API 令牌」那串 sk-；用官方就填 fish.audio 后台的 Key', openai: 'API Key', gemini: 'API Key', minimax: 'API Key' },
       model: { local: '模型/说话人名（留空走默认）', openai: '留空走 tts-1', gemini: '留空走 gemini-2.5-flash-preview-tts', minimax: '留空走 speech-02-turbo' },
       voice: { fish: '没单独配的人都用它' + (fishDefaultVoice() ? '；留空就用卡自带的那个' : '') + '。想换：去 <a href="https://fish.audio/zh-CN/discovery" target="_blank" rel="noopener" style="color:#b89968;">fish.audio 音色库</a> 点一个音色，网址末尾那串就是', openai: 'alloy / echo / nova 等', gemini: 'Kore / Puck 等', minimax: '音色 ID' },
     };
@@ -7026,7 +7028,7 @@ var SBLAB_CARD = "sd";
         opt('gemini', 'Gemini（免费额度）') +
         opt('minimax', 'MiniMax（中文音色最好）') +
       '</select></label>' +
-      fld('fish local openai gemini minimax', 'URL <small id="lt-h-url" style="opacity:.65;"></small><br><input id="lt-url" ' + INP + ' value="' + (c.url || '') + '">') +
+      fld('fish local openai gemini minimax', 'URL <small id="lt-h-url" style="opacity:.65;"></small><br><input id="lt-url" ' + INP + ' value="' + (c.url || ((c.backend || 'fish') === 'fish' && !c.key ? FISH_RELAY : '')) + '">') +
       fld('fish openai gemini minimax', 'Key <small id="lt-h-key" style="opacity:.65;"></small><br><input id="lt-key" ' + KEYATTRS + ' value="' + (c.key || '') + '">') +
       fld('local openai gemini minimax', '模型 <small id="lt-h-model" style="opacity:.65;"></small><br><input id="lt-model" ' + INP + ' value="' + (c.model || '') + '">') +
       fld('fish openai gemini minimax', '默认音色 <small id="lt-h-voice" style="opacity:.65;"></small><br><input id="lt-voice" ' + INP + ' value="' + (c.voice || '') + '">') +
@@ -7068,7 +7070,12 @@ var SBLAB_CARD = "sd";
       Object.keys(HINT).forEach(function (k) { var h = ov.querySelector('#lt-h-' + k); if (h) h.innerHTML = HINT[k][b] || ''; });
     }
     showFor(c.backend || 'fish');
-    ov.querySelector('#lt-backend').onchange = function () { ov.querySelector('#lt-npcv').value = npcVoiceText(this.value); showFor(this.value); };
+    ov.querySelector('#lt-backend').onchange = function () {
+      ov.querySelector('#lt-npcv').value = npcVoiceText(this.value); showFor(this.value);
+      var u = ov.querySelector('#lt-url');
+      if (this.value === 'fish' && !u.value.trim()) u.value = FISH_RELAY;            // 切到 Fish：空着就填公益站
+      else if (this.value !== 'fish' && u.value.trim() === FISH_RELAY) u.value = '';   // 切走：别把公益站地址带去别家
+    };
     // ➕ 把正在聊天的那个人加进名单（Fan 10-13）：读聊天页标题里的名字，已有就只把光标放过去
     ov.querySelector('#lt-addcur').onclick = function (ev) {
       ev.preventDefault(); ev.stopPropagation();
