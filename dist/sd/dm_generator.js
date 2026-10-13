@@ -861,7 +861,7 @@ function describeState(sb) {
   var se = sb.sugarelite || {};
   lines.push('【SugarElite】' + (se.subscribed ? '已订阅（全额会员）' : '未订阅'));
   var cl = sb.closet || [];
-  if (cl.length) lines.push('【衣橱·她拥有并会穿戴使用的】' + cl.slice(-8).map(function (c) { return c.name; }).join('、'));
+  if (cl.length) lines.push('【User 送出去的礼物（名称→收礼人；收礼的人戴着/用着它出现，还没定给谁的先放着）】' + cl.slice(-8).map(function (c) { return c.name + (c.to ? '→' + c.to : ''); }).join('、'));
 
   var sch = (sb.schedule || []).filter(function (s) { return !s.done; });   // 打过勾的=办完了，不再占上下文
   if (sch.length) lines.push('【已排行程（别重复生成）】' + sch.slice(-10).map(function (s) {
@@ -2528,7 +2528,7 @@ function buildDigest(sb) {
     }
     blocks.push(lines.join('\n'));
   }
-  var closet = (sb.closet || []).slice(-10).map(function (c) { return c.name; });
+  var closet = (sb.closet || []).slice(-10).map(function (c) { return c.name + (c.to ? '→' + c.to : ''); });
   var toyD = toyDigest(sb);   // 🎛 遥控玩具（谁戴着 / 开着时按在不在身边分写法）
   if (!blocks.length && !closet.length && !toyD) return '';
   var out = '【User 手机上的时间：' + nowTime() + '（正文的时刻感尽量与之呼应）】\n';
@@ -2536,7 +2536,7 @@ function buildDigest(sb) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
   }
   if (closet.length) {
-    out += '【User 送出去的礼物（他买给她们的，收礼的人会戴着/用着出现，别人看得见的是"东西在她身上"，不是价格和来路）】' + closet.join('、') + '\n';
+    out += '【User 送出去的礼物（他买给她们的，收礼的人会戴着/用着出现，别人看得见的是"东西在她身上"，不是价格和来路；箭头后面是收礼人）】' + closet.join('、') + '\n';
   }
   if (toyD) out += toyD;
   var schD = (sb.schedule || []).filter(function (s) { return !s.done; }).slice(-8).map(function (s) {

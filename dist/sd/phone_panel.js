@@ -2485,6 +2485,11 @@
       pickContact(function (who) {
         addCloset({ name: name, price: price, to: who || '', from: channel, img: img || '', time: nowT(), gameDay: (state && state.game && state.game.day) || 1 });
         toast('success', '🎁 ' + name + (who ? ' → 送给 ' + who : '（还没定给谁）') + (price > 0 ? '（-' + fmtCNY(price) + '）' : ''));
+        // 送出去要看得见（用户 10-13：「怎么送东西，怎么只有下单」）：礼物进她的私信，并让她本人回一句
+        if (who) {
+          callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] ' + name + (price > 0 ? ' —— ' + fmtCNY(price) : '') + '（SugarElite 商城，已下单直接寄给你）' }]);
+          SBemit('sb_request_dm', { reason: '🎁 送礼：User 刚买了「' + name + '」' + (price > 0 ? '（' + fmtCNY(price) + '）' : '') + '送给 ' + who + '，礼物已经到她手上。只让 ' + who + ' 本人回应：按她的人设和两人现在的关系收礼——真心的道谢、职业型的分寸、撒娇型的加码、拜金型的理所当然、杀猪盘的趁热打铁；可以只有一句，也可以发语音', n: '1-2', to: [who] });
+        }
         SBemit('sb_updated');
       }, {
         title: '这件送给谁？（点「✕ 算了」＝先买着，回头再定）',
@@ -3731,7 +3736,7 @@
             (g.image_url ? '<img src="' + esc(g.image_url) + '" loading="lazy" onerror="this.style.display=\'none\'">' : '') +
             '<div class="lb"><div class="li"><span class="lbrand">' + esc(g.brand || 'curated') + '</span><b>' + esc(g.name || '') + '</b><small>' + esc(g.blurb || '') + '</small></div>' +
             '<span class="lp">' + fmtCNY(g.price || 0) + '</span>' +
-            '<button class="sb-fwd" data-n="' + esc(luxName) + '" data-p="' + (g.price || 0) + '" title="转发给联系人——圈内都懂的暗示">🔗</button><button class="sb-buy" data-kind="lux" data-n="' + esc(luxName) + '" data-p="' + (g.price || 0) + '" data-img="' + esc(g.image_url || '') + '">下单</button></div></div>';
+            '<button class="sb-fwd" data-n="' + esc(luxName) + '" data-p="' + (g.price || 0) + '" title="转发给联系人——圈内都懂的暗示">🔗</button><button class="sb-buy" data-kind="lux" data-n="' + esc(luxName) + '" data-p="' + (g.price || 0) + '" data-img="' + esc(g.image_url || '') + '">买给她</button></div></div>';
         }
         markLuxSeen(treats.map(function (x) { return x.id; }));
       }
@@ -3758,7 +3763,7 @@
       var ca = mag.catalog || [];
       for (i = 0; i < ca.length; i++) {
         g = ca[i];
-        h += '<div class="sb-rank"><div class="rb"><b>' + esc(g.name) + '</b><small>' + esc(g.cat || '') + ' · ' + esc(g.blurb || '') + '</small></div><span class="ra">' + fmtCNY(g.price) + '</span><button class="sb-fwd" data-n="' + esc(g.name) + '" data-p="' + g.price + '" title="转发给联系人——圈内都懂的暗示">🔗</button><button class="sb-buy" data-kind="cat" data-n="' + esc(g.name) + '" data-p="' + g.price + '">下单</button></div>';
+        h += '<div class="sb-rank"><div class="rb"><b>' + esc(g.name) + '</b><small>' + esc(g.cat || '') + ' · ' + esc(g.blurb || '') + '</small></div><span class="ra">' + fmtCNY(g.price) + '</span><button class="sb-fwd" data-n="' + esc(g.name) + '" data-p="' + g.price + '" title="转发给联系人——圈内都懂的暗示">🔗</button><button class="sb-buy" data-kind="cat" data-n="' + esc(g.name) + '" data-p="' + g.price + '">买给她</button></div>';
       }
       h += '<div class="sb-sec">Concierge · 可代订</div>';
       var iv = mag.invites || [];
@@ -4696,7 +4701,7 @@
         if (d) queueMsg(d.slice(0, 120), 'image');
       });
     }
-    // 🔗 发链接子菜单：科普帖（TA问蠢问题时）/ 我的账单（哭穷）/ 商城商品（发链接=买给我）
+    // 🔗 发链接子菜单：科普帖（TA问蠢问题时）/ 我的账单（金主哭穷=试探）/ 商城商品（发链接=看上了、考虑买给她）
     function openLinkMenu() {
       var mag = magOf() || {};
       var prods = [];
@@ -4719,7 +4724,7 @@
         }
       }
       if (prods.length) {
-        mh += '<div style="padding:6px 13px 2px;font-size:10px;color:var(--ink-faint);">— 商城 · 发链接=买给我，TA懂的 —</div>';
+        mh += '<div style="padding:6px 13px 2px;font-size:10px;color:var(--ink-faint);">— 商城 · 发链接=看上了、考虑买给她，她懂的 —</div>';
         for (var pi = 0; pi < prods.length && pi < 12; pi++) mh += '<button data-lk="p' + pi + '">🛍️ ' + esc(prods[pi].n) + (prods[pi].p > 0 ? ' — ' + fmtCNY(prods[pi].p) : '') + '</button>';
       } else {
         mh += '<div style="padding:6px 13px;font-size:10px;color:var(--ink-faint);">商城还没上货——去论坛/Elite 点右上角的刷新烤一期就有了</div>';
@@ -4747,7 +4752,7 @@
           var it = prods[parseInt(v.slice(1), 10)];
           if (it) {
             queueMsg('🔗 [转发商品] ' + it.n + (it.p > 0 ? ' —— ' + fmtCNY(it.p) : '') + '（SugarElite 商城）', 'text');
-            toast('success', '🔗 链接已进待发——点发送，看TA上不上道');
+            toast('success', '🔗 链接已进待发——点发送，看她接不接这个话');
           }
         }
       });
