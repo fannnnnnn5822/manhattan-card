@@ -2193,7 +2193,14 @@
         ofcImgs = jm ? ['https://testingcf.jsdelivr.net' + jm[1], 'https://fastly.jsdelivr.net' + jm[1], 'https://cdn.jsdelivr.net' + jm[1]] : [String(ofc.img)];
       }
       var imgH = ofcImgs.length ? '<img src="' + esc(ofcImgs[0]) + '" data-alts="' + esc(ofcImgs.slice(1).join('|')) + '" alt="" referrerpolicy="no-referrer" style="display:block;width:100%;max-height:400px;object-fit:cover;border-radius:10px;margin-top:8px;background:var(--paper-3);min-height:120px;" onload="this.style.minHeight=\'0\'" onerror="var a=(this.getAttribute(\'data-alts\')||\'\').split(\'|\').filter(Boolean);if(a.length){this.setAttribute(\'data-alts\',a.slice(1).join(\'|\'));this.src=a[0];}else{this.style.display=\'none\';}">' : '';
-      h += '<div class="sb-post"><b>' + (ofc ? '👑' : '🌍') + ' @' + esc(p.handle || '???') + (ofc ? ' <span style="color:var(--gold);">✔ 官方认证</span>' : '') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div>' + imgH + '<div class="pm">' + (ofc ? '本人 · 认证帖' : '全服真人') + ' · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
+      // 🔊 官方帖带语音（10-13：S. 用自己的嗓子播报更新）：audio 字段是 mp3 地址，jsDelivr 的换成国内能连的镜像
+      var audH = '';
+      if (ofc && ofc.audio) {
+        var ja = String(ofc.audio).match(/^https?:\/\/[^/]*jsdelivr\.net(\/gh\/.+)$/);
+        var aSrc = ja ? 'https://testingcf.jsdelivr.net' + ja[1] : String(ofc.audio);
+        audH = '<audio controls preload="none" src="' + esc(aSrc) + '" style="display:block;width:100%;margin-top:8px;height:34px;"></audio>';
+      }
+      h += '<div class="sb-post"><b>' + (ofc ? '👑' : '🌍') + ' @' + esc(p.handle || '???') + (ofc ? ' <span style="color:var(--gold);">✔ 官方认证</span>' : '') + (p.token === meTok ? ' ✦你' : '') + '</b><div class="pb">' + esc(p.content || '') + '</div>' + imgH + audH + '<div class="pm">' + (ofc ? '本人 · 认证帖' : '全服真人') + ' · ' + (reps.length ? reps.length + ' 条回帖' : '还没人回') + '</div>' + rH + '</div>';
     }
     return h;
   }
