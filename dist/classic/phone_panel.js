@@ -6308,7 +6308,7 @@ var SBLAB_CARD = "classic";
   // 卡自带的 Fish 默认音色：玩家「默认音色」留空就用它（构建脚本在本文件前面注入 SBLAB_CARD 说明这是哪张卡）
   // sd：Fan 10-13 选定 870eb86b…（一掷千金全是男金主）；鎏金/原版：Sarah（10-13 实测通的女声）
   var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
-  var FISH_CARD_VOICE = { sd: '870eb86b5c5f4dd1bc9ff4f1cc5338f1', nyc: 'e4642e5edccd4d9ab61a69e82d4f8a14', classic: 'e4642e5edccd4d9ab61a69e82d4f8a14' };   // SB 默认 e4642e5e… 是 Fan 10-13 选的（年轻男声，查过存在）
+  var FISH_CARD_VOICE = { sd: '870eb86b5c5f4dd1bc9ff4f1cc5338f1', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: 'bf322df2096a46f18c579d0baa36f41d' };   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
   var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
