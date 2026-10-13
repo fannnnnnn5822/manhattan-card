@@ -4016,7 +4016,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">' + sbIcon('refresh', 14) + ' 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 · 💬正文聊天气泡 · 🎼公共歌库音乐 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 · 💬正文聊天气泡 · 🎼公共歌库音乐 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师<br>🎙 真人语音通话 —— 流式播放、逐句朗读、酒馆代理等参考并移植自常夜灯老师的《镜译》（MirrorTranslate）与 Yoren 老师的《通用通讯终端 V4》，感谢两位老师授权</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -4768,6 +4768,15 @@
   }
   var _call = null, _callEl = null, _callTick = null, _callPop = false;
   function callCn(mode) { return mode === 'video' ? '视频通话' : '语音通话'; }
+  // 🎙 通话语音钩子（2026-10-13）：对方的新台词 / User 开口 / 重说 / 挂断 → 在父文档上广播，
+  // lab_tts（随本脚本下发的语音外挂）听到就把台词念出来；没配语音时没人听，零副作用。
+  function callEmit(ev, c, lines) {
+    try {
+      var W = DOC.defaultView || window;
+      DOC.dispatchEvent(new W.CustomEvent('sbnyc-call', { detail: { ev: ev, id: (c && c.id) || '', name: (c && c.name) || '', mode: (c && c.mode) || 'audio', phase: (c && c.phase) || '',
+        lines: (lines || []).map(function (l) { return { w: l.w, k: l.k, t: l.t, zh: l.zh || '' }; }) } }));
+    } catch (e) {}
+  }
   function callDur(sec) {
     sec = Math.max(0, Math.round(sec));
     var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -4797,7 +4806,7 @@
     put(npcOf(name));
     return SBupdate(function (v) { put(v.sb && v.sb.npcs && v.sb.npcs[name]); return v; });
   }
-  // 私信里留痕：通话灰泡（拒接时前面再加一句对方的理由）
+  // 私信里留痕：通话灰泡（拒接时后面再补一句对方的理由）
   function callPushDm(name, msgs) {
     var t = nowT(), gd = (state && state.game && state.game.day) || 1, now = Date.now();
     var objs = msgs.map(function (m) {
@@ -4840,7 +4849,8 @@
     screenEl.classList.add('sb-incall');
     return _callEl;
   }
-  function closeCallScreen() {
+  function closeCallScreen(c) {   // 调用方把那通电话传进来：挂断/拒接时 _call 已经清空，外挂还要知道它是响铃中还是通着
+    callEmit('end', c || _call);
     if (_callTick) { clearInterval(_callTick); _callTick = null; }
     if (_callEl && _callEl.parentNode) _callEl.parentNode.removeChild(_callEl);
     _callEl = null; _callPop = false;
@@ -4911,6 +4921,7 @@
     _call = { id: 'c' + Date.now().toString(36), name: name, mode: mode === 'video' ? 'video' : 'audio', phase: 'ringing', busy: true,
       startAt: Date.now(), time: nowT(), gameDay: (state && state.game && state.game.day) || 1, lines: [] };
     drawCall();
+    callEmit('ring', _call);   // 🎙 外挂听到这个就放回铃音（Fan 10-13 要的嘟嘟声）
     callAsk('invite', '');
   }
   function callAsk(op, says) {
@@ -4967,7 +4978,7 @@
     clearTimeout(c._to);
     c.busy = false;
     if (!r.ok) {
-      if (c.phase === 'ringing') { _call = null; closeCallScreen(); toast('error', '拨打失败：' + (r.err || '对方没有响应') + '，稍后再拨'); return; }
+      if (c.phase === 'ringing') { _call = null; closeCallScreen(c); toast('error', '拨打失败：' + (r.err || '对方没有响应') + '，稍后再拨'); return; }
       toast('error', '对方信号不好，再试一次');
       drawCall();
       return;
@@ -4976,25 +4987,28 @@
     if (c.phase === 'ringing') {
       if (/^[\[【]\s*拒绝\s*[\]】]/.test(text) || /^拒绝\s*[：:]/.test(text)) {
         var why = text.replace(/^[\[【]\s*拒绝\s*[\]】]\s*|^拒绝\s*[：:]\s*/, '').split('\n')[0].trim();
-        var msgs = [];
+        var msgs = [{ type: 'calllog', mode: c.mode, content: '对方已拒绝', callId: c.id }];   // 灰泡在前、理由在后：先拒接才发消息（Fan 10-13）
         if (why) { var wp = why.split('§'); msgs.push({ sender: 'THEM', type: 'text', content: wp[0].replace(/^["“「]+|["”」]+$/g, '').trim(), zh: (wp[1] || '').trim() }); }
-        msgs.push({ type: 'calllog', mode: c.mode, content: '对方已拒绝', callId: c.id });
         _call = null;
-        closeCallScreen();
+        closeCallScreen(c);
         callPushDm(c.name, msgs);
         toast('info', c.name + ' 没接');
         return;
       }
       c.phase = 'active';
       c.startAt = Date.now();
-      c.lines = c.lines.concat(parseCallText(text, c.mode, c.name));
+      var nl = parseCallText(text, c.mode, c.name);
+      c.lines = c.lines.concat(nl);
       callSave(c.name, callRec(c, 'active'));
       drawCall();
+      callEmit('lines', c, nl);
       return;
     }
-    c.lines = c.lines.concat(parseCallText(text, c.mode, c.name));
+    nl = parseCallText(text, c.mode, c.name);
+    c.lines = c.lines.concat(nl);
     callSave(c.name, callRec(c, 'active'));
     drawCall();
+    callEmit('lines', c, nl);
   }
   function callSay(text) {
     var c = _call;
@@ -5003,6 +5017,7 @@
     if (!ls.length) { drawCall(); return; }
     ls.forEach(function (l) { c.lines.push({ w: 'me', k: 'line', t: l }); });
     c.busy = true;
+    callEmit('interrupt', c);
     drawCall();
     callSave(c.name, callRec(c, 'active'));
     callAsk('turn', ls.join('\n'));
@@ -5011,6 +5026,7 @@
   function callReroll() {
     var c = _call;
     if (!c || c.phase !== 'active' || c.busy) return;
+    callEmit('reroll', c);
     var n = 0;
     while (c.lines.length && c.lines[c.lines.length - 1].w === 'them') { c.lines.pop(); n++; }
     if (!n) return;
@@ -5022,7 +5038,7 @@
     var c = _call; if (!c) return;
     _call = null;
     clearTimeout(c._to);
-    closeCallScreen();
+    closeCallScreen(c);
     if (c.phase === 'active') {
       var dur = callDur((Date.now() - c.startAt) / 1000);
       callSave(c.name, callRec(c, 'ended', dur));
@@ -6191,8 +6207,17 @@
 })();
 
 ;
+var SBLAB_CARD = "classic";
 // ═══════════════════════════════════════════════════════════════════
-// SB实验室 · 语音 (lab_tts.js)  v0.2  2026-10-06（+Fish Audio，随手机脚本下发）
+// SB实验室 · 语音 (lab_tts.js)  v0.3  2026-10-13（+通话自动出声；随手机脚本下发，三卡共用）
+//
+// 🎙 通话语音（v0.3，2026-10-13）：流式播放、逐句排队预取、酒馆代理直连、耳机保护——
+//   参考并移植自常夜灯老师的《镜译》（MirrorTranslate）与 Yoren 老师的《通用通讯终端 V4》，两位老师均已授权。
+//   · 面板在通话屏有新台词时往父文档派发 'sbnyc-call' 事件；这边听着，把对方的台词逐句念出来
+//   · Fish 走原生 /v1/tts 要裸 PCM，Web Audio 边收边放：第一块到了就响，不等整句合成完
+//   · 第 i 句在响的时候第 i+1 句已经在下载，句与句之间不干等
+//   · 中转站不开跨域？配置里勾「经酒馆代理」，请求绕道酒馆后端发出去
+//   · 耳机拔了/蓝牙断了 → 立刻停，绝不自动切外放（手机上玩这卡，这条是救命的）
 //
 // 让 NPC 的语音条真的出声。【独立实验脚本】：
 //   · 不改 phone_panel.js / dm_generator.js 一行——纯外挂装饰器
@@ -6220,17 +6245,17 @@
   // 云列是罐头音色里挑最贴的：OpenAI 男声只有 3 个可选，撞车难免，能用就行。
   var NPC_VOICE = {
     'T.':              { local: '', openai: 'onyx',    gemini: 'Charon',    minimax: 'male-qn-badao' },     // 41岁巨鲸：低沉、权威、不解释
-    'Marco Rossi':     { local: '', openai: 'echo',    gemini: 'Fenrir',    minimax: 'male-qn-daxuesheng' },// 假富话痨：亢奋、油、自来熟
+    'Marco Rossi':     { local: '', fish: 'f6f293aabfe24e46aff0fc309c233d31', openai: 'echo', gemini: 'Fenrir', minimax: 'male-qn-daxuesheng' },// 假富话痨：亢奋、油、自来熟；fish「曹操」（陈建斌）是 Fan 10-13 选的搞笑款——T. 不许搞笑，就给他
     'David Pemberton': { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律师：气声、压低、像在门口耳语
     'Hudson Park':     { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 男公关战友：松弛、干燥幽默
     'Cole Marlowe':    { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 破碎乐手：慢、飘、凌晨三点的嗓子
     'Father Dan':      { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 神父：清晰、克制、忏悔室音量
     'L.':              { local: '', openai: 'onyx',    gemini: 'Schedar',   minimax: 'presenter_male' },    // 58岁仪式化stalker：慢、平、从不提高音量（他不发语音，备着）
     '上夜班的人':        { local: '', openai: 'onyx',    gemini: 'Alnilam',   minimax: 'male-qn-jingying' },  // 谢书砚：专业冷静、短句、中文是卸妆水——MiniMax中文音色对他最重要
-    'Akuma':           { local: '', openai: 'nova',    gemini: 'Leda',      minimax: 'female-tianmei' },    // 闺蜜：甜、亮、茶里茶气上扬尾音
-    'S.':              { local: '', openai: 'shimmer', gemini: 'Kore',      minimax: 'presenter_female' },  // 管家服务：礼貌、匀速、没有情绪
+    'Akuma':           { local: '', fish: 'faccba1a8ac54016bcfc02761285e67f', openai: 'nova', gemini: 'Leda', minimax: 'female-tianmei' },    // 闺蜜：甜、亮、茶里茶气上扬尾音；fish 那个是 Fan 10-13 选的（三张卡里都是她）
+    'S.':              { local: '', fish: '59cb5986671546eaa6ca8ae6f29f6d22', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' },  // 管家服务：礼貌、匀速、没有情绪；fish「央视配音」是 Fan 10-13 选的（查过存在）
     // ── 纸醉金迷原版（S市）的固定NPC ──
-    // 一个脚本同时伺候两张卡：表按名字取，多几个键不占运行开销，玩家一次也只开一张卡。
+    // 一个脚本同时伺候三张卡：表按名字取，多几个键不占运行开销，玩家一次也只开一张卡。
     //「上夜班的人」「Akuma」「S.」两个世界本来就是同一个人，用上面那几行即可。
     // 音色按原型对齐 NYC 的同类角色（隔壁已婚律师、男公关战友、破碎乐手、禁忌神职），省得重新试音。
     '纪司柏':           { local: '', openai: 'onyx',    gemini: 'Algieba',   minimax: 'male-qn-qingse' },    // 28岁高段位假富：好听、不急不慢、从不用感叹号
@@ -6238,6 +6263,10 @@
     '楚何河':           { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默
     '祈星':             { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 22岁破碎乐手：慢、飘、凌晨三点的嗓子
     '释空':             { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 高僧：清晰、克制、讲经的音量
+    // ── 一掷千金（S市金主版）的固定NPC：只配了 Fish（Fan 10-13 挑的），别的后端走默认 ──
+    // 苏念：Fan 10-13 给的 fish 7f7c4c0c… 在 Fish 上查无此音色（Reference not found），等她确认再烤
+    '纪思瑶':           { fish: '6ce7ea8ada884bf3889fa7c7fb206691' },   // 杀猪盘前端、甜腻撒娇🥺：Fan 10-13 选的「御女茉莉」（软、气声、甜；查过存在）
+    '叶知秋':           { fish: 'fbe02f8306fc4d3d915e9871722a39d5' },   // 邻居幼儿园老师、朴素真实：Fan 10-13 给「普通女生」→ 她；「嘉岚3.0」（软、日常口吻；查过存在）
   };
 
   var CFG_KEY = 'sbnyc_tts_cfg';
@@ -6257,14 +6286,55 @@
     var over = {};
     try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
     var v = (over[name]) || NPC_VOICE[name] || {};
-    return v[backend] != null ? v[backend] : ({ local: '', fish: '', openai: 'nova', gemini: 'Kore', minimax: 'female-shaonv' })[backend];
+    if (v[backend] != null && v[backend] !== '') return v[backend];
+    // 陌生人没有名字可配：按人设标签/简介里的关键词自动配（Fan 10-13：「SB卡里有没有土大款」——随机金主里有暴发户这一型）
+    var byArch = archeVoice(name, backend);
+    if (byArch) return byArch;
+    return ({ local: '', fish: '', openai: 'nova', gemini: 'Kore', minimax: 'female-shaonv' })[backend];
   }
+  var ARCHE_VOICE = [
+    { re: /暴发户|土豪|土大款|煤老板|大款|暴富/, fish: '57582c19a8b24de08adb22d2544b3be4' },   // 「魔女+战士」：中年、洪亮、霸道——Fan 10-13 选的土大款嗓子
+  ];
+  function archeVoice(name, backend) {
+    try {
+      var vars = (typeof getVariables === 'function') ? getVariables() : null;
+      var n = vars && vars.sb && vars.sb.npcs && vars.sb.npcs[name];
+      if (!n || n.persistent || n.isGroup) return '';
+      var text = String(n.archetype || '') + ' ' + String(n.bio || '');
+      for (var i = 0; i < ARCHE_VOICE.length; i++) { if (ARCHE_VOICE[i].re.test(text) && ARCHE_VOICE[i][backend]) return ARCHE_VOICE[i][backend]; }
+    } catch (e) {}
+    return '';
+  }
+  // 卡自带的 Fish 默认音色：玩家「默认音色」留空就用它（构建脚本在本文件前面注入 SBLAB_CARD 说明这是哪张卡）
+  // sd：Fan 10-13 选定 870eb86b…（一掷千金全是男金主）；鎏金/原版：Sarah（10-13 实测通的女声）
+  var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
+  var FISH_CARD_VOICE = { sd: '870eb86b5c5f4dd1bc9ff4f1cc5338f1', nyc: 'e4642e5edccd4d9ab61a69e82d4f8a14', classic: 'e4642e5edccd4d9ab61a69e82d4f8a14' };   // SB 默认 e4642e5e… 是 Fan 10-13 选的（年轻男声，查过存在）
+  function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
 
   // 每人音色：存 localStorage sbnyc_npc_voice（{名字:{后端:音色}}），配置面板里按行编辑
+  // 固定 NPC 名单：从聊天变量里拿 persistent 的联系人（群和 SugarElite 不算），鎏金/原版再并上预填表里的名字
+  function fixedNpcNames() {
+    var names = [];
+    try {
+      var v = (typeof getVariables === 'function') ? getVariables() : null;
+      var npcs = (v && v.sb && v.sb.npcs) || {};
+      Object.keys(npcs).forEach(function (n) {
+        var x = npcs[n]; if (!x || x.isGroup || n === 'SugarElite™') return;
+        if (x.persistent || x.archetype === '固定') names.push(n);
+      });
+    } catch (e) {}
+    // 还没来过消息的固定角色在变量里没有条目，所以再并上各卡自带的名单（一掷千金的照 dm_generator 的 ARCHETYPE_CN 抄）
+    var baked = CARD === 'sd' ? ['苏念', '沈冰月', '纪思瑶', '叶知秋', '林也', '方屿', 'Akuma'] : Object.keys(NPC_VOICE);
+    baked.forEach(function (n) { if (names.indexOf(n) < 0) names.push(n); });
+    return names;
+  }
+  // 文本框内容：固定 NPC 全列出来、等号后面留空等人贴（Fan 10-13：别人只用复制粘贴音色 ID），配过的其他名字排后面
   function npcVoiceText(backend) {
     var over = {}; try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
-    return Object.keys(over).filter(function (n) { return over[n] && over[n][backend]; })
-      .map(function (n) { return n + '=' + over[n][backend]; }).join('\n');
+    var fixed = fixedNpcNames(), lines = [];
+    fixed.forEach(function (n) { lines.push(n + '=' + ((over[n] && over[n][backend]) || (NPC_VOICE[n] && NPC_VOICE[n][backend]) || '')); });   // 卡里烤好的（如 Akuma）也显示出来，让人知道她有专属嗓子
+    Object.keys(over).forEach(function (n) { if (fixed.indexOf(n) < 0 && over[n] && over[n][backend]) lines.push(n + '=' + over[n][backend]); });
+    return lines.join('\n');
   }
   function saveNpcVoice(backend, txt) {
     var over = {}; try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
@@ -6339,6 +6409,7 @@
     if (r.status === 401 || r.status === 403) return who + ' 的 key 不对';
     if (r.status === 402) return who + ' 额度用完了';
     if (r.status === 429) return who + ' 限流了，等一会儿再试';
+    if (r.status === 400 && /reference_id/i.test(detail)) return who + ' 要先填「默认音色」（🎙 面板里，格子下面有音色库链接）';
     if (r.status === 400) return who + ' 念不了这段（多半是内容策略——换本地后端）：' + detail;
     return who + ' 出声失败 HTTP ' + r.status;
   }
@@ -6395,7 +6466,7 @@
     if (cfg.backend === 'fish') {
       var fbase = url || 'https://api.fish.audio';
       var fm = cfg.model || 's2.1-pro-free';
-      var fv = voice || cfg.voice || '';
+      var fv = voice || cfg.voice || fishDefaultVoice();
       var fh = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key };
       var spd = Number(cfg.speed) || 1.0;
       var routes = [
@@ -6512,6 +6583,7 @@
 
   var busy = {};
   async function onSpeak(el, btn) {
+    callStop();                                                  // 同一时间只有一个声音：点语音条就先让通话那边闭嘴
     var info = bubbleInfo(el);
     if (!info.text) { toast('这条语音没有文字内容', 'err'); return; }
     var k = keyOf(info.name, info.text);
@@ -6537,6 +6609,467 @@
     } finally { delete busy[k]; }
   }
 
+  // ═════════════════════════════════════════════════════════════════
+  // 📞 通话语音（v0.3）
+  // ═════════════════════════════════════════════════════════════════
+
+  // ── 流式播放器：Web Audio 时间线，边收边放 ──
+  // 为什么不用 new Audio()：Audio 要拿到整段文件才能放；Web Audio 可以一块 PCM 一块 PCM 地往时间线上排，
+  // 第一块到了就响。原理来自《镜译》的 PCM 播放器：每块排在上一块的结尾时间点，拼起来无缝。
+  var PCM_RATE = 24000;          // Fish 原生端点我们要的就是 24kHz/16bit/单声道
+  var MIN_CHUNK = 2400;          // 攒够约 50ms 再建 buffer：块太碎了排起来会有咔哒声
+  var LEAD_SEC = 0.04;           // 排时间线时至少留 40ms 余量，不然 start() 的时刻已经过去了会被吞头
+  var LEAD_FIRST = 0.18;         // 时间线闲着时的第一块多留一点：输出通道刚醒（蓝牙耳机尤其）头 100 多毫秒是哑的，Fan 10-13 反馈每句第一个词被吞
+  var GAP_SEC = 0.25;            // 句与句之间喘口气
+  var pl = { nextTime: 0, sources: [], takes: [], keep: null };
+
+  // 通话期间持续放一条无声循环：让 AudioContext 和蓝牙/外放通道一直醒着，不然每句开头都要重新唤醒、第一个词被吃掉
+  function keepAlive(on) {
+    try {
+      var c = audioCtx(); if (!c) return;
+      if (on && !pl.keep) {
+        var b = c.createBuffer(1, c.sampleRate, c.sampleRate);   // 1 秒全零
+        var s = c.createBufferSource(); s.buffer = b; s.loop = true;
+        var g = c.createGain(); g.gain.value = 0.0001;             // 不是纯 0：有的设备把纯零当「没在放」照样休眠
+        s.connect(g); g.connect(c.destination); s.start();
+        pl.keep = s;
+      } else if (!on && pl.keep) { try { pl.keep.stop(); } catch (e) {} pl.keep = null; }
+    } catch (e) {}
+  }
+
+  // ── 电话音效（Fan 10-13：「为什么我打电话没有嘟嘟声」）：全部用振荡器现合成，不带音频文件 ──
+  // 回铃音：拨出后对方没接之前，450Hz 响 1 秒停 2 秒循环；对方接了（第一批台词到）或挂了就停。
+  // 忙音：响铃中被拒/取消 → 三声短促「嘟嘟嘟」；通着的时候挂断 → 一声低而短的「嘟」。
+  var tone = { osc: null, gain: null, timer: null };
+  function beep(freq, at, dur, vol) {
+    var c = audioCtx(); if (!c) return;
+    var o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(vol, at + 0.02); g.gain.setValueAtTime(vol, at + dur - 0.03); g.gain.linearRampToValueAtTime(0, at + dur);
+    o.connect(g); g.connect(c.destination); o.start(at); o.stop(at + dur + 0.02);
+    return o;
+  }
+  function toneMark(t) { try { DOC._sbttsTone = (DOC._sbttsTone || '') + t + ','; } catch (e) {} }   // 给自动化测试看的脚印
+  function ringStart() {
+    ringStop();
+    var c = ctxWake(); if (!c) return;
+    toneMark('ring');
+    var t0 = c.currentTime + 0.05;
+    tone.live = [];
+    function cycle(at) {
+      var o = beep(450, at, 1.0, 0.12); if (o) tone.live.push(o);
+      tone.timer = setTimeout(function () { cycle(at + 3.0); }, 2900);
+    }
+    cycle(t0);
+  }
+  function ringStop() {   // 对方接了/挂了：停循环，正在响的那一声也当场掐掉
+    if (tone.timer) { clearTimeout(tone.timer); tone.timer = null; }
+    (tone.live || []).forEach(function (o) { try { o.stop(); } catch (e) {} });
+    tone.live = [];
+  }
+  function busyTone() { var c = ctxWake(); if (!c) return; toneMark('busy'); var t = c.currentTime + 0.05; for (var i = 0; i < 3; i++) beep(450, t + i * 0.5, 0.25, 0.12); }
+  function endBeep() { var c = ctxWake(); if (!c) return; toneMark('end'); beep(350, c.currentTime + 0.05, 0.22, 0.1); }
+
+  // AudioContext 用父窗口的构造器建：iOS 只认「同一个文档里的用户手势」解锁声音，
+  // 手势发生在父文档（手机面板在那儿），用脚本 iframe 自己的 context 永远解不开。
+  // 挂在 DOC 上全局只建一个：脚本被酒馆重载时不会越建越多（浏览器对 context 数量有上限）。
+  function audioCtx() {
+    try {
+      var c = DOC._sbttsCtx;
+      if (c && c.state !== 'closed') return c;
+      var W = DOC.defaultView || window;
+      var C = W.AudioContext || W.webkitAudioContext;
+      if (!C) return null;
+      c = new C();
+      DOC._sbttsCtx = c;
+      return c;
+    } catch (e) { return null; }
+  }
+  function ctxWake() {
+    var c = audioCtx();
+    if (c && c.state !== 'running') { try { var p = c.resume(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+    return c;
+  }
+
+  // 一句话 = 一个 take：记着这句排了几个 buffer、还有几个没放完；最后一个放完时 take.done 落地。
+  // 队列靠 take.done 判断「上一句念完没」，从而只往前多下载一句（不把整段全买下来，打断了也不白花钱）。
+  function newTake() {
+    var t = { pending: 0, samples: 0, ended: false, started: false, carry: null, buf: [], bufLen: 0, settled: false, sawHead: false };
+    var res = null;
+    t.done = new Promise(function (r) { res = r; });
+    t.settle = function (why) { if (t.settled) return; t.settled = true; pl.takes = pl.takes.filter(function (x) { return x !== t; }); res(why); };
+    t.check = function () { if (t.ended && t.pending === 0) t.settle(t.samples ? 'ended' : 'empty'); };
+    pl.takes.push(t);
+    return t;
+  }
+  // 把一个 AudioBuffer 排上时间线（PCM 和 mp3/wav 解码出来的都走这里）
+  function plSchedule(buffer, take) {
+    var c = audioCtx();
+    if (!c || take.settled) return;
+    var src = c.createBufferSource();
+    src.buffer = buffer;
+    src.connect(c.destination);
+    var base = pl.nextTime;
+    var first = !take.started;
+    if (first) { take.started = true; if (base) base += GAP_SEC; }   // 新一句的第一块：和上一句隔开
+    var idle = !pl.nextTime || pl.nextTime < c.currentTime;    // 时间线上没有在排队的声音：这块是「冷启动」
+    var at = Math.max(base, c.currentTime + (idle && first ? LEAD_FIRST : LEAD_SEC));
+    src.start(at);
+    pl.nextTime = at + buffer.duration;
+    pl.sources.push(src);
+    take.pending += 1;
+    src.onended = function () {
+      var i = pl.sources.indexOf(src);
+      if (i < 0) return;                                   // 已被 stop() 清掉的，不重复记账
+      pl.sources.splice(i, 1);
+      take.pending -= 1;
+      take.check();
+    };
+  }
+  function plFlush(take) {
+    if (!take.bufLen) return;
+    var c = audioCtx(); if (!c) return;
+    var f = new Float32Array(take.bufLen), o = 0;
+    take.buf.forEach(function (a) { f.set(a, o); o += a.length; });
+    take.buf = []; take.bufLen = 0;
+    var b = c.createBuffer(1, f.length, take.rate || PCM_RATE);   // 采样率以 wav 头为准（见 plPush），没头才按 24k
+    if (typeof b.copyToChannel === 'function') b.copyToChannel(f, 0); else b.getChannelData(0).set(f);
+    take.samples += f.length;
+    plSchedule(b, take);
+  }
+  // 读 wav 头：从第 12 字节起一块块走（fmt / LIST / data…），拿到采样率、声道，返回样本从哪个字节开始。
+  // 头还没收全（data 块没出现）返回 null，让调用方攒着下一块再来。流式 wav 的 data 长度字段是假的，不看。
+  function wavHead(u) {
+    var dv = new DataView(u.buffer, u.byteOffset, u.byteLength);
+    var pos = 12, rate = 0, ch = 1, bits = 16;
+    while (pos + 8 <= u.length) {
+      var id = String.fromCharCode(u[pos], u[pos + 1], u[pos + 2], u[pos + 3]);
+      var size = dv.getUint32(pos + 4, true);
+      if (id === 'data') return (rate ? { rate: rate, ch: ch, bits: bits, off: pos + 8 } : null);
+      if (id === 'fmt ') {
+        if (pos + 24 > u.length) return null;
+        ch = dv.getUint16(pos + 10, true) || 1;
+        rate = dv.getUint32(pos + 12, true) || 0;
+        bits = dv.getUint16(pos + 22, true) || 16;
+      }
+      pos += 8 + size + (size & 1);
+    }
+    return null;
+  }
+  // 收到一块音频流：wav 的话头只在最前面（可能被网络切成两块），读出采样率后跳过它，后面全当裸 Int16 小端样本。
+  // 网络分块不按样本对齐，单出来的零头留到下一块拼上。双声道就左右取平均。
+  function plPush(take, bytes) {
+    if (take.settled) return;
+    var u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (!take.sawHead) {
+      if (take.head) { var hm = new Uint8Array(take.head.length + u.length); hm.set(take.head); hm.set(u, take.head.length); u = hm; take.head = null; }
+      if (u.length < 12) { take.head = u.slice(); return; }                 // 连 RIFF 四个字都没凑齐
+      if (u[0] === 0x52 && u[1] === 0x49 && u[2] === 0x46 && u[3] === 0x46) {
+        var h = wavHead(u);
+        if (!h) { if (u.length < 8192) { take.head = u.slice(); return; } }  // 头跨块了：攒着；攒到 8K 还没头就当裸流
+        else { take.rate = h.rate; take.ch = h.ch; u = u.subarray(h.off); try { DOC._sbttsLastRate = h.rate; } catch (e) {} }
+      }
+      take.sawHead = true;
+    }
+    if (take.carry) { var m = new Uint8Array(take.carry.length + u.length); m.set(take.carry); m.set(u, take.carry.length); u = m; take.carry = null; }
+    var ch = take.ch || 1, frame = 2 * ch;
+    var n = Math.floor(u.length / frame);
+    if (u.length % frame) take.carry = u.slice(n * frame);
+    if (!n) return;
+    var dv = new DataView(u.buffer, u.byteOffset, n * frame), f = new Float32Array(n);
+    if (ch === 1) { for (var i = 0; i < n; i++) f[i] = dv.getInt16(i * 2, true) / 32768; }
+    else { for (var i2 = 0; i2 < n; i2++) { var s = 0; for (var k = 0; k < ch; k++) s += dv.getInt16((i2 * ch + k) * 2, true); f[i2] = s / ch / 32768; } }
+    take.buf.push(f); take.bufLen += n;
+    if (take.bufLen >= MIN_CHUNK) plFlush(take);
+  }
+  // 这句不会再来数据了：剩的零头也排上，然后等最后一个 buffer 放完
+  function plEnd(take) {
+    if (take.ended) return;
+    plFlush(take);
+    take.ended = true;
+    take.check();
+  }
+  // mp3/wav 整段音频：交给浏览器解码成 AudioBuffer，走同一个时间线（老 Safari 只认回调写法，两种都接）
+  function plDecode(ab) {
+    return new Promise(function (res, rej) {
+      var c = audioCtx();
+      if (!c) { rej(new Error('这个浏览器不支持 Web Audio')); return; }
+      try {
+        var p = c.decodeAudioData(ab, res, function () { rej(new Error('音频解不开（服务返回的不是能放的音频）')); });
+        if (p && p.then) p.then(res, function () { rej(new Error('音频解不开（服务返回的不是能放的音频）')); });
+      } catch (e) { rej(new Error('音频解不开：' + (e && e.message || e))); }
+    });
+  }
+  // 全停：所有排上的 buffer 立刻掐掉，时间线归零，等着的 take 一律当「被停了」放行
+  function plStop() {
+    var s = pl.sources; pl.sources = [];
+    s.forEach(function (x) { try { x.onended = null; x.stop(); } catch (e) {} });
+    pl.nextTime = 0;
+    pl.takes.slice().forEach(function (t) { t.settle('stopped'); });
+  }
+
+  // ── 通话朗读队列 ──
+  // fails 跨批次累计（每轮台词是一批 lines，失败原因多半是配置问题，不会因为换一批就好了）；
+  // 连着 3 句失败 → gaveUp，这通电话剩下的台词都不念，免得每轮都弹一遍错。挂断/换一通电话才清零
+  var cq = { items: [], ctrl: null, running: false, id: '', fails: 0, gaveUp: false };
+  var FISH_NATIVE_KEY = 'sbnyc_tts_fish_native2|';   // + Fish 地址；''=没试过 'p'=走 /proxy/v1/tts '1'=走 /v1/tts '0'=都没有（10-13 换了名字，让老玩家的旧记账作废、重新先试反代）
+
+  function callCfg() {
+    var c = getCfg();
+    return (c && c.callVoice !== false) ? c : null;   // 没配语音或开关关着：通话里什么都不做，也不弹 toast 骚扰
+  }
+  function spokenOf(t) {
+    // 跟语音条一样：括号里是给人看的描写（叹气/笑），不念；全是括号的这句就整句跳过
+    return String(t || '').replace(/[（(][^（）()]*[）)]/g, '').replace(/\s+/g, ' ').trim();
+  }
+  var CALL_CSS_ID = 'sblab-tts-callcss';
+  function markCall(on) {
+    try {
+      if (on && !DOC.getElementById(CALL_CSS_ID)) {
+        var st = DOC.createElement('style');
+        st.id = CALL_CSS_ID;
+        st.textContent = '#sbnyc-panel .sb-call[data-sbtts="1"] .sb-callava{box-shadow:0 0 0 6px rgba(201,165,102,.35),0 4px 18px rgba(0,0,0,.4);}';
+        (DOC.head || DOC.documentElement).appendChild(st);
+      }
+      // 面板重画只重写 .sb-call 的 innerHTML，.sb-call 本身不换，属性挂在它身上不会丢
+      DOC.querySelectorAll('#sbnyc-panel .sb-call').forEach(function (el) {
+        if (on) el.setAttribute('data-sbtts', '1'); else el.removeAttribute('data-sbtts');
+      });
+    } catch (e) {}
+  }
+  // 停掉通话朗读：abort 进行中的请求、清队列、掐声音。打断/重说/挂断/拔耳机/点语音条都走这里
+  function callStop() {
+    try {
+      if (cq.ctrl) { try { cq.ctrl.abort(); } catch (e) {} }
+      cq.ctrl = null; cq.items = []; cq.running = false;
+      plStop();
+      ringStop();
+      markCall(false);
+    } catch (e) {}
+  }
+  function waitOr(p, signal) {
+    return new Promise(function (res) {
+      if (signal.aborted) { res(); return; }
+      var on = function () { res(); };
+      signal.addEventListener('abort', on);
+      Promise.resolve(p).then(function () { signal.removeEventListener('abort', on); res(); }, function () { res(); });
+    });
+  }
+
+  function onCallEvent(ev) {
+    try {
+      var d = (ev && ev.detail) || {};
+      if (d.ev === 'ring') { ringStart(); return; }                       // 拨出：回铃音（不管配没配 TTS，嘟嘟声人人有）
+      if (d.ev === 'end') {
+        var wasRinging = d.phase === 'ringing', wasActive = d.phase === 'active';
+        callStop(); keepAlive(false); cq.fails = 0; cq.gaveUp = false; cq.id = '';
+        if (wasRinging) busyTone(); else if (wasActive) endBeep();     // 没接通就挂/被拒：嘟嘟嘟；通着挂断：一声嘟
+        return;
+      }
+      if (d.ev === 'interrupt' || d.ev === 'reroll') { callStop(); return; }   // 打断不停无声循环：下一句马上就来
+      if (d.ev !== 'lines') return;
+      ringStop();                                                            // 第一批台词到＝对方接了
+      var cfg = callCfg();
+      if (!cfg) return;
+      keepAlive(true);
+      if (cq.id && d.id && d.id !== cq.id) { callStop(); cq.fails = 0; cq.gaveUp = false; }   // 换了一通电话：上一通的残句不许串过来
+      if (cq.gaveUp) return;
+      if (d.id) cq.id = d.id;
+      (d.lines || []).forEach(function (l) {
+        if (!l || l.w !== 'them' || (l.k || 'line') !== 'line') return;   // 自己说的、视频画面描写都不念
+        var t = spokenOf(l.t);
+        if (t) cq.items.push({ text: t, name: d.name || '' });
+      });
+      // 连着来的 lines 只往队尾接，不打断正在念的
+      if (cq.items.length && !cq.running) callRun();
+    } catch (e) {}
+  }
+
+  async function callRun() {
+    var Ctl = (typeof AbortController === 'function') ? AbortController : (DOC.defaultView || window).AbortController;
+    var ctrl = new Ctl();
+    cq.ctrl = ctrl; cq.running = true;
+    var sig = ctrl.signal, prevDone = null;
+    try {
+      stopCur();                    // 同一时间只有一个声音：语音条先停
+      ctxWake();                    // 已经被点过解锁的话这里就是 no-op；没解锁的 iOS 会排着等下一次点屏幕
+      markCall(true);
+      while (!sig.aborted) {
+        if (cq.items.length) {
+          var cfg = callCfg();
+          if (!cfg) { cq.items = []; break; }               // 念到一半玩家关了开关
+          var it = cq.items.shift();
+          try {
+            var take = await callSpeak(cfg, it.text, it.name, sig);
+            cq.fails = 0;
+            // 只往前多下载一句：第 i+1 句排上之后，等第 i 句念完再去要第 i+2 句
+            if (prevDone) await waitOr(prevDone, sig);
+            prevDone = take.done;
+          } catch (e) {
+            if (sig.aborted) break;
+            cq.fails += 1;
+            if (cq.fails >= 3) { cq.gaveUp = true; toast('连着 3 句没念成，这通电话先不念了：' + (e && e.message || '未知错误'), 'err'); cq.items = []; break; }
+            toast('这句没念成，跳过：' + (e && e.message || '未知错误'), 'err');
+          }
+        } else if (prevDone) {
+          var p = prevDone; prevDone = null;
+          await waitOr(p, sig);                             // 等最后一句念完；这期间新来的 lines 会接着排
+        } else break;
+      }
+    } catch (e) {
+    } finally {
+      if (cq.ctrl === ctrl) { cq.running = false; cq.ctrl = null; markCall(false); }
+    }
+  }
+
+  // 念一句：Fish 走原生流式，其他后端（或 Fish 中转没开原生端点）整段要 mp3/wav 再解码
+  async function callSpeak(cfg, text, name, sig) {
+    var cap = Number(cfg.maxLen) || 240;
+    if (text.length > cap) text = text.slice(0, cap);       // 通话里不弹「太长」的 toast，默默截
+    var take = newTake();
+    try {
+      if (cfg.backend === 'fish') {
+        var base = String(cfg.url || '').replace(/\/+$/, '') || 'https://api.fish.audio';
+        // 这个地址的原生端点记账：'' 没试过 / 'p' 走 /proxy/v1/tts / '1' 走 /v1/tts / '0' 都没有
+        // 为什么先试 /proxy/：10-13 实测公益站自己的 /v1/tts 会把 prosody 剥掉（语速白调），
+        // 它的透明反代 /proxy/v1/tts 原样转给 Fish，语速才生效。官方地址没这条路，404 一次就记住不再试。
+        var known = ''; try { known = store.getItem(FISH_NATIVE_KEY + base) || ''; } catch (e) {}
+        function remember(v) { try { store.setItem(FISH_NATIVE_KEY + base, v); } catch (e) {} }
+        if (known !== '0') {
+          var r = null;
+          if (cfg.url && (known === '' || known === 'p')) {
+            r = await fishNativeStream(cfg, base, text, name, sig, take, '/proxy/v1/tts');
+            if (r === 'ok') { remember('p'); return take; }
+            if (r === 'nonative' || (known === 'p' && r === 'neterr')) { known = '1'; r = null; }   // 反代路不通，换普通原生路
+          }
+          if (r === null) {
+            r = await fishNativeStream(cfg, base, text, name, sig, take);
+            if (r === 'ok') { remember('1'); return take; }
+            if (r === 'nonative') remember('0');
+          }
+          // r === 'neterr'：直连连不上，可能只是原生路径没开跨域，退回兼容端点试一次（不记账，下次还先试原生）
+        }
+      }
+      var dataUrl = await callTtsApi(cfg, text, name);
+      if (sig.aborted) throw new Error('stopped');
+      var ab = b64ToBytes(String(dataUrl).slice(String(dataUrl).indexOf(',') + 1)).buffer;
+      var audio = await plDecode(ab);
+      if (sig.aborted) throw new Error('stopped');
+      take.samples += audio.length;
+      plSchedule(audio, take);
+      plEnd(take);
+      return take;
+    } catch (e) {
+      take.settle('error');
+      // 直连被跨域拦的玩家，告诉她还有代理这条路
+      if (cfg.backend === 'fish' && !cfg.viaProxy && e && /跨域/.test(e.message || ''))
+        throw new Error(e.message + '（也可以在 🎙 配置里勾「经酒馆代理发请求」）');
+      throw e;
+    }
+  }
+
+  // 酒馆 CORS 代理要的头（含 CSRF）。酒馆把 getRequestHeaders 挂在 SillyTavern.getContext() 上，老版本也有直接挂的
+  function stHeaders() {
+    try {
+      var ST = (DOC.defaultView || window).SillyTavern;
+      var f = ST && (ST.getRequestHeaders || (ST.getContext && ST.getContext().getRequestHeaders));
+      var h = (typeof f === 'function') ? (f() || {}) : {};
+      var out = {};
+      Object.keys(h).forEach(function (k) { if (k.toLowerCase() !== 'authorization') out[k] = h[k]; });
+      return out;
+    } catch (e) { return {}; }
+  }
+
+  // Fish 原生 /v1/tts：要裸 PCM 流，response.body 一块块读、边读边排
+  // 返回 'ok' / 'nonative'（404/405：这个中转没开原生端点）/ 'neterr'（直连 fetch 直接挂了）；其他错误直接抛
+  async function fishNativeStream(cfg, base, text, name, sig, take, path) {
+    var target = base + (path || '/v1/tts');
+    var proxy = !!cfg.viaProxy;
+    var headers = { 'Content-Type': 'application/json', 'model': cfg.model || 's2.1-pro-free' };
+    var url = target;
+    if (proxy) {
+      // 酒馆的 /proxy/ 会把我们的请求头原样转给上游（只删 csrf/cookie/host 这些）。
+      // 不能用 Authorization：酒馆开了 basic 登录时，浏览器自动带的登录头会被它挤掉 → 酒馆直接 401。
+      // Fish 认 api-key 这个头，所以代理模式下 key 放这儿。
+      Object.assign(headers, stHeaders());
+      headers['Content-Type'] = 'application/json';         // 酒馆代理按 JSON 解析请求体再转发，必须是这个
+      headers['api-key'] = cfg.key;
+      url = (DOC.defaultView || window).location.origin + '/proxy/' + target;
+    } else {
+      headers['Authorization'] = 'Bearer ' + cfg.key;
+    }
+    // 要 wav 不要裸 pcm：有的中转（10-13 实测公益站自己的 /v1/tts）不理 sample_rate、回 44.1k，裸流没头我们只能瞎猜 24k，
+    // 结果放出来慢一半、嗓子压低（Fan 得把语速调到 1.8 才正常）。wav 头里写着真实采样率，plPush 照它建 buffer。
+    var body = { text: text, format: 'wav', sample_rate: PCM_RATE, latency: 'balanced', normalize: true,
+      prosody: { speed: Number(cfg.speed) || 1.0, volume: 0 } };
+    var ref = voiceOf(name, 'fish') || cfg.voice || fishDefaultVoice();
+    if (ref) body.reference_id = ref;
+
+    // 自己的 AbortController：外面 abort（打断/挂断）或 90 秒超时，都掐这一个
+    var Ctl = (typeof AbortController === 'function') ? AbortController : (DOC.defaultView || window).AbortController;
+    var ctl = new Ctl(), timedOut = false;
+    var onAbort = function () { try { ctl.abort(); } catch (e) {} };
+    sig.addEventListener('abort', onAbort);
+    var timer = setTimeout(function () { timedOut = true; onAbort(); }, 90000);
+    try {
+      var r;
+      try {
+        r = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify(body), signal: ctl.signal });
+      } catch (e) {
+        if (sig.aborted) throw new Error('stopped');
+        if (timedOut) throw new Error('Fish 超时（90秒没响应）');
+        if (proxy) throw new Error('连不上酒馆代理——酒馆还开着吗？也可以取消「经酒馆代理」改用允许跨域的中转地址');
+        return 'neterr';
+      }
+      if (!r.ok) {
+        var txt = ''; try { txt = (await r.text()).slice(0, 400); } catch (e) {}
+        var wa = ''; try { wa = r.headers.get('www-authenticate') || ''; } catch (e) {}
+        if (r.status === 401 && /SillyTavern/i.test(wa)) throw new Error('被酒馆的登录保护拦下了，不是 key 的问题——取消「经酒馆代理」，改用允许跨域的中转地址');
+        if (proxy && (/CORS proxy is disabled|enableCorsProxy/i.test(txt) || (r.status === 404 && !txt.trim())))
+          throw new Error('请在酒馆 config.yaml 开启 enableCorsProxy 后重启，或改用允许跨域的中转地址');
+        if (r.status === 404 || r.status === 405) return 'nonative';
+        // 酒馆代理会把上游的 401 改成 400 转回来（怕重置浏览器的 basic 登录），所以代理模式下 400 也要看一眼是不是 key 错
+        if (r.status === 401 || r.status === 403 || (proxy && r.status === 400 && /\b401\b|unauthori[sz]ed|invalid.{0,12}(api.?key|token)/i.test(txt)))
+          throw new Error('Fish 的 key 不对');
+        if (r.status === 402) throw new Error('Fish 额度用完了');
+        if (r.status === 429) throw new Error('Fish 限流了，等一会儿再试');
+        // 400 把服务器原话带上：公益站缺音色 ID 也是 400，瞎猜「内容策略」会把人带沟里（10-13 实锤）
+        var why = ''; try { var ej = JSON.parse(txt); why = (ej.error && (ej.error.message || ej.error)) || ej.message || ej.detail || ''; } catch (e) { why = txt; }
+        why = String(why || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (r.status === 400) {
+          if (/reference_id|voice/i.test(why) && !ref) throw new Error('Fish 要先填「默认音色」（🎙 面板里，格子下面有音色库链接）');
+          if (/reference not found|model not found/i.test(why)) throw new Error('Fish 上找不到这个音色 ID（' + String(ref).slice(0, 8) + '…）：复制错了，或它是私有音色、公益站的 Key 看不到');
+          throw new Error('Fish 不肯念这句' + (why ? '：' + why : '（多半是内容策略）'));
+        }
+        throw new Error('Fish 出声失败 HTTP ' + r.status + (why ? '：' + why : ''));
+      }
+      var ct = ''; try { ct = r.headers.get('content-type') || ''; } catch (e) {}
+      if (/json|text/i.test(ct)) {
+        var t2 = ''; try { t2 = (await r.text()).slice(0, 120); } catch (e) {}
+        throw new Error('Fish 返回了文字没返回音频' + (t2 ? '：' + t2 : ''));
+      }
+      if (r.body && r.body.getReader) {
+        var rd = r.body.getReader();
+        while (true) {
+          var x;
+          try { x = await rd.read(); }
+          catch (e) { if (sig.aborted) throw new Error('stopped'); throw new Error(timedOut ? 'Fish 超时（90秒没念完）' : '读 Fish 的音频流时断线了'); }
+          if (x.done) break;
+          if (sig.aborted) { try { rd.cancel(); } catch (e) {} throw new Error('stopped'); }
+          if (x.value && x.value.length) plPush(take, x.value);
+        }
+      } else {
+        plPush(take, new Uint8Array(await r.arrayBuffer()));   // 不支持流的老浏览器：整段收完再排
+      }
+      plEnd(take);
+      if (!take.samples) throw new Error('Fish 回了个空音频');
+      return 'ok';
+    } finally {
+      clearTimeout(timer);
+      sig.removeEventListener('abort', onAbort);
+    }
+  }
+
   // ── 装饰器：给 NPC 语音条的波形行挂 🔊 ──
   function decorate() {
     var panel = DOC.getElementById('sbnyc-panel');
@@ -6559,6 +7092,8 @@
   }
 
   // ── 配置面板 ──
+  // 试听用的句子：先英文后中文——三张卡的私信台词是英文，玩家最想知道的是这个嗓子念英文好不好听
+  var TRY_TEXT = "Good evening. It's raining out there tonight, come in. 晚上好，今晚外面在下雨，进来吧。";
   function openCfg() {
     var panel = DOC.getElementById('sbnyc-panel');
     var host = panel && panel.querySelector('.sb-screen');
@@ -6571,6 +7106,14 @@
     var KEYATTRS = 'autocomplete="off" data-lpignore="true" data-1p-ignore data-form-type="other" style="-webkit-text-security:disc;width:100%;box-sizing:border-box;padding:6px;border:1px solid #ccc;border-radius:6px;"';
     var INP = 'style="width:100%;box-sizing:border-box;padding:6px;border:1px solid #ccc;border-radius:6px;"';
     function opt(v, label) { return '<option value="' + v + '"' + ((c.backend || 'fish') === v ? ' selected' : '') + '>' + label + '</option>'; }
+    // 每个格子标上「哪些后端用得着」，选了 Fish 就只露 Fish 的那几格——别让玩家对着 GroupId、参考音频发呆
+    function fld(forList, html) { return '<label data-for="' + forList + '" style="display:block;margin-bottom:10px;">' + html + '</label>'; }
+    var HINT = {   // 同一格在不同后端下的提示语
+      url:   { fish: '公益站：填它给你的地址；用 fish.audio 自己的 Key 就留空', local: '默认 http://127.0.0.1:9880', openai: '中转站填中转地址；留空走官方', gemini: '留空走官方', minimax: '留空走官方' },
+      key:   { fish: '公益站给的 sk- 令牌，或 fish.audio 后台的 Key', openai: 'API Key', gemini: 'API Key', minimax: 'API Key' },
+      model: { local: '模型/说话人名（留空走默认）', openai: '留空走 tts-1', gemini: '留空走 gemini-2.5-flash-preview-tts', minimax: '留空走 speech-02-turbo' },
+      voice: { fish: '没单独配的人都用它' + (fishDefaultVoice() ? '；留空就用卡自带的那个' : '') + '。想换：去 <a href="https://fish.audio/zh-CN/discovery" target="_blank" rel="noopener" style="color:#b89968;">fish.audio 音色库</a> 点一个音色，网址末尾那串就是', openai: 'alloy / echo / nova 等', gemini: 'Kore / Puck 等', minimax: '音色 ID' },
+    };
     ov.innerHTML =
       '<h3 style="margin:4px 0 12px;">🎙 语音配置 <small style="font-weight:400;opacity:.6;">SB实验室</small></h3>' +
       '<label style="display:block;margin-bottom:10px;">后端<br><select id="lt-backend" ' + INP + '>' +
@@ -6580,15 +7123,19 @@
         opt('gemini', 'Gemini（免费额度）') +
         opt('minimax', 'MiniMax（中文音色最好）') +
       '</select></label>' +
-      '<label style="display:block;margin-bottom:10px;">URL（Fish 公益站填中转地址；本地默认 http://127.0.0.1:9880；云端留空走官方）<br><input id="lt-url" ' + INP + ' value="' + (c.url || '') + '"></label>' +
-      '<label style="display:block;margin-bottom:10px;">Key（本地服务不用填）<br><input id="lt-key" ' + KEYATTRS + ' value="' + (c.key || '') + '"></label>' +
-      '<label style="display:block;margin-bottom:10px;">模型（留空走默认）<br><input id="lt-model" ' + INP + ' value="' + (c.model || '') + '"></label>' +
-      '<label style="display:block;margin-bottom:10px;">默认音色 ID（Fish：没单独配的人都用它；音色页网址末尾那串）<br><input id="lt-voice" ' + INP + ' value="' + (c.voice || '') + '"></label>' +
-      '<label style="display:block;margin-bottom:10px;">每人的音色（一行一个：名字=音色ID，跟着上面选的后端走）<br><textarea id="lt-npcv" rows="5" ' + INP + ' placeholder="T.=音色ID&#10;Akuma=音色ID">' + npcVoiceText(c.backend || 'fish') + '</textarea></label>' +
-      '<label style="display:block;margin-bottom:10px;">参考音频路径（仅本地/GPT-SoVITS：服务器上那个 wav 的路径，如 D:/voice/akuma.wav）<br><input id="lt-ref" ' + INP + ' value="' + (c.refAudio || '') + '"></label>' +
-      '<label style="display:block;margin-bottom:10px;">参考音频那句话（仅本地克隆用：和参考音频逐字对应，对不上克隆出来会怪）<br><input id="lt-prompt" ' + INP + ' value="' + (c.promptText || '') + '"></label>' +
-      '<label style="display:block;margin-bottom:10px;">GroupId（仅 MiniMax）<br><input id="lt-group" ' + INP + ' value="' + (c.groupId || '') + '"></label>' +
+      fld('fish local openai gemini minimax', 'URL <small id="lt-h-url" style="opacity:.65;"></small><br><input id="lt-url" ' + INP + ' value="' + (c.url || '') + '">') +
+      fld('fish openai gemini minimax', 'Key <small id="lt-h-key" style="opacity:.65;"></small><br><input id="lt-key" ' + KEYATTRS + ' value="' + (c.key || '') + '">') +
+      fld('local openai gemini minimax', '模型 <small id="lt-h-model" style="opacity:.65;"></small><br><input id="lt-model" ' + INP + ' value="' + (c.model || '') + '">') +
+      fld('fish openai gemini minimax', '默认音色 <small id="lt-h-voice" style="opacity:.65;"></small><br><input id="lt-voice" ' + INP + ' value="' + (c.voice || '') + '">') +
+      fld('fish local openai gemini minimax', '每人的音色 <small style="opacity:.65;">可不填。固定联系人都列好了，把音色 ID 贴到等号后面；留空的用默认</small><br><textarea id="lt-npcv" rows="7" ' + INP + ' placeholder="名字=音色ID">' + npcVoiceText(c.backend || 'fish') + '</textarea>' +
+        '<button type="button" id="lt-addcur" style="margin-top:6px;padding:5px 10px;border:1px solid #b89968;border-radius:999px;background:#fff;color:#1a2a3a;cursor:pointer;font-size:12px;">➕ 加上正在聊天的对象</button> ' +
+        '<button type="button" id="lt-tryline" style="margin-top:6px;padding:5px 10px;border:1px solid #b89968;border-radius:999px;background:#fff;color:#1a2a3a;cursor:pointer;font-size:12px;">🔊 试听光标那一行</button>') +
+      fld('local', '参考音频路径 <small style="opacity:.65;">GPT-SoVITS：服务器上那个 wav 的路径，如 D:/voice/akuma.wav</small><br><input id="lt-ref" ' + INP + ' value="' + (c.refAudio || '') + '">') +
+      fld('local', '参考音频那句话 <small style="opacity:.65;">和参考音频逐字对应，对不上克隆出来会怪</small><br><input id="lt-prompt" ' + INP + ' value="' + (c.promptText || '') + '">') +
+      fld('minimax', 'GroupId<br><input id="lt-group" ' + INP + ' value="' + (c.groupId || '') + '">') +
       '<label style="display:block;margin-bottom:10px;">语速 <input id="lt-speed" type="number" step="0.1" min="0.5" max="2" value="' + (c.speed || 1) + '" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:6px;"></label>' +
+      '<label style="display:block;margin-bottom:8px;"><input id="lt-callv" type="checkbox"' + (c.callVoice !== false ? ' checked' : '') + '> 📞 通话里自动念对方台词</label>' +
+      fld('fish', '<input id="lt-proxy" type="checkbox"' + (c.viaProxy ? ' checked' : '') + '> 经酒馆代理发请求 <small style="opacity:.65;">平时不勾；试听报「跨域」才勾，且要在酒馆 config.yaml 开 enableCorsProxy</small>') +
       '<small style="display:block;opacity:.65;margin-bottom:12px;">⚠️ 云端 TTS 拒念露骨台词——要听那种话必须本地服务。本地服务要开 CORS（使用说明有教程）；酒馆跑在 https 上时连不了 http 本地服务。</small>' +
       '<div style="display:flex;gap:8px;">' +
         '<button id="lt-test" style="flex:1;padding:9px;border:none;border-radius:999px;background:#b89968;color:#fff;cursor:pointer;">🔊 试听</button>' +
@@ -6607,25 +7154,75 @@
         groupId: ov.querySelector('#lt-group').value.trim(),
         voice: ov.querySelector('#lt-voice').value.trim(),
         speed: Number(ov.querySelector('#lt-speed').value) || 1,
+        callVoice: !!ov.querySelector('#lt-callv').checked,
+        viaProxy: !!ov.querySelector('#lt-proxy').checked,
       };
     }
-    ov.querySelector('#lt-backend').onchange = function () { ov.querySelector('#lt-npcv').value = npcVoiceText(this.value); };
+    function showFor(b) {
+      Array.prototype.forEach.call(ov.querySelectorAll('[data-for]'), function (el) {
+        el.style.display = (' ' + el.getAttribute('data-for') + ' ').indexOf(' ' + b + ' ') >= 0 ? 'block' : 'none';
+      });
+      Object.keys(HINT).forEach(function (k) { var h = ov.querySelector('#lt-h-' + k); if (h) h.innerHTML = HINT[k][b] || ''; });
+    }
+    showFor(c.backend || 'fish');
+    ov.querySelector('#lt-backend').onchange = function () { ov.querySelector('#lt-npcv').value = npcVoiceText(this.value); showFor(this.value); };
+    // ➕ 把正在聊天的那个人加进名单（Fan 10-13）：读聊天页标题里的名字，已有就只把光标放过去
+    ov.querySelector('#lt-addcur').onclick = function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      var chat = DOC.getElementById('sbnyc-chat');
+      var nameEl = chat && chat.style.display !== 'none' && chat.querySelector('.sb-ch-name b');
+      var name = nameEl ? (nameEl.textContent || '').trim() : '';
+      if (!name) { toast('先打开和谁的聊天，再点这个', 'err'); return; }
+      var ta = ov.querySelector('#lt-npcv');
+      var lines = ta.value.split(/\n/), hit = -1;
+      for (var i = 0; i < lines.length; i++) { if (lines[i].slice(0, lines[i].search(/[=＝]/) < 0 ? lines[i].length : lines[i].search(/[=＝]/)).trim() === name) { hit = i; break; } }
+      if (hit < 0) { if (ta.value && !/\n$/.test(ta.value)) ta.value += '\n'; ta.value += name + '='; hit = ta.value.split(/\n/).length - 1; }
+      var pos = 0; ta.value.split(/\n/).forEach(function (l, j) { if (j < hit) pos += l.length + 1; else if (j === hit) pos += l.length; });
+      try { ta.focus(); ta.setSelectionRange(pos, pos); ta.scrollTop = ta.scrollHeight; } catch (e) {}
+      toast(hit >= 0 ? name + ' 在名单里了，把音色 ID 贴到等号后面' : '');
+    };
     ov.querySelector('#lt-close').onclick = function () { ov.remove(); };
+    function needVoice(nc) {   // Fish 不填音色：公益站直接 400，官方也只会用一个随机默认嗓子——都不是玩家想要的
+      if (nc.backend === 'fish' && !nc.voice && !fishDefaultVoice()) { toast('Fish 要填「默认音色」：点格子下面的音色库链接挑一个，网址末尾那串贴进来', 'err'); return true; }
+      return false;
+    }
     ov.querySelector('#lt-save').onclick = function () {
       var nc = readForm();
       if (nc.backend !== 'local' && !nc.key) { toast('云端后端要填 Key（本地才可以不填）', 'err'); return; }
+      if (needVoice(nc)) return;
       saveNpcVoice(nc.backend, ov.querySelector('#lt-npcv').value);
+      // 改过配置就忘掉「这个地址没开原生端点」的记录，下次通话重新试一次（中转站可能刚开了）
+      try { store.removeItem(FISH_NATIVE_KEY + (String(nc.url || '').replace(/\/+$/, '') || 'https://api.fish.audio')); } catch (e) {}
       if (saveCfg(nc)) { toast('语音配置已保存'); ov.remove(); }
     };
     ov.querySelector('#lt-test').onclick = async function () {   // 试听：不用等真消息，当场验配置
       var nc = readForm();
       if (nc.backend !== 'local' && !nc.key) { toast('先填 Key 再试听', 'err'); return; }
+      if (needVoice(nc)) return;
       toast('试听合成中…');
       try {
         saveNpcVoice(nc.backend, ov.querySelector('#lt-npcv').value);
-        var d = await callTtsApi(nc, '晚上好，这里是 SugarOS。今晚外面在下雨。', 'Akuma');
-        stopCur(); cur = new Audio(d); cur.play();
+        var d = await callTtsApi(nc, TRY_TEXT, '');          // 名字留空：听的是「默认音色」那一格，不是谁的专属嗓子
+        callStop(); stopCur(); cur = new Audio(d); cur.play();
         toast('✅ 这条链是通的');
+      } catch (e) { toast('试听失败：' + (e && e.message || '未知'), 'err'); }
+    };
+    // 🔊 试听光标那一行：念一句英文+一句中文，用那一行等号后面的音色（Fan 10-13：「我怎么知道这个讲英文好不好听」）
+    ov.querySelector('#lt-tryline').onclick = async function (ev) {
+      ev.preventDefault(); ev.stopPropagation();
+      var nc = readForm();
+      if (nc.backend !== 'local' && !nc.key) { toast('先填 Key 再试听', 'err'); return; }
+      var ta = ov.querySelector('#lt-npcv');
+      var upto = ta.value.slice(0, ta.selectionStart || 0).split(/\n/).length - 1;
+      var line = (ta.value.split(/\n/)[upto] || '');
+      var i = line.search(/[=＝]/);
+      var who = i > 0 ? line.slice(0, i).trim() : line.trim(), vid = i > 0 ? line.slice(i + 1).trim() : '';
+      if (!vid) { toast((who ? who + ' 这行' : '这行') + '等号后面还没贴音色 ID', 'err'); return; }
+      toast('合成 ' + (who || '这个音色') + ' 的试听…');
+      try {
+        var nc2 = Object.assign({}, nc, { voice: vid });
+        var d2 = await callTtsApi(nc2, TRY_TEXT, '');
+        callStop(); stopCur(); cur = new Audio(d2); cur.play();
       } catch (e) { toast('试听失败：' + (e && e.message || '未知'), 'err'); }
     };
   }
@@ -6661,4 +7258,44 @@
   }
   setInterval(ensureHooks, 1500);
   ensureHooks();
+
+  // ── 通话语音的三个监听：都挂在父文档上 ──
+  // 酒馆切聊天/重载脚本时这个 iframe 会被重建，旧监听要是留着会变成僵尸（甚至一句台词念两遍）；
+  // 所以句柄存在 DOC 上，装新的之前先拆旧的、先让旧的那套闭嘴。
+  try {
+    if (typeof DOC._sbttsStop === 'function') { try { DOC._sbttsStop(); } catch (e) {} }
+    DOC._sbttsStop = callStop;
+
+    // ① 面板的通话广播
+    if (DOC._sbttsCallH) DOC.removeEventListener('sbnyc-call', DOC._sbttsCallH);
+    DOC._sbttsCallH = function (ev) { try { onCallEvent(ev); } catch (e) {} };
+    DOC.addEventListener('sbnyc-call', DOC._sbttsCallH);
+
+    // ② 解锁声音：手机面板里任何一次点按都顺手 resume 一下（必须同步调用、不能 await——
+    //    iOS 只认手势回调里「当场」发生的 resume；隔一个 await 就不算手势了）
+    if (DOC._sbttsUnlockH) ['click', 'touchend', 'pointerdown'].forEach(function (t) { DOC.removeEventListener(t, DOC._sbttsUnlockH, true); });
+    DOC._sbttsUnlockH = function (ev) {
+      try {
+        var p = DOC.getElementById('sbnyc-panel');
+        if (!p || !ev || !ev.target || !p.contains(ev.target)) return;
+        if (!callCfg()) return;                // 没开通话朗读的玩家，不平白建一个 AudioContext
+        ctxWake();
+      } catch (e) {}
+    };
+    ['click', 'touchend', 'pointerdown'].forEach(function (t) { DOC.addEventListener(t, DOC._sbttsUnlockH, true); });
+
+    // ③ 耳机保护：输出设备一变（拔耳机/蓝牙断开）就立刻停，不自动续播——免得突然从外放念出来
+    var md = null; try { md = (DOC.defaultView || window).navigator.mediaDevices; } catch (e) {}
+    if (md && md.addEventListener) {
+      if (DOC._sbttsDevH) { try { md.removeEventListener('devicechange', DOC._sbttsDevH); } catch (e) {} }
+      DOC._sbttsDevH = function () {
+        try {
+          if (!cq.running && !pl.sources.length) return;
+          callStop();
+          toast('检测到音频设备变化，已停止朗读');
+        } catch (e) {}
+      };
+      md.addEventListener('devicechange', DOC._sbttsDevH);
+    }
+  } catch (e) {}
 })();
