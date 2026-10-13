@@ -6645,7 +6645,8 @@ var SBLAB_CARD = "nyc";
   var MIN_CHUNK = 2400;          // 攒够约 50ms 再建 buffer：块太碎了排起来会有咔哒声
   var LEAD_SEC = 0.04;           // 排时间线时至少留 40ms 余量，不然 start() 的时刻已经过去了会被吞头
   var LEAD_FIRST = 0.18;         // 时间线闲着时的第一块多留一点：输出通道刚醒（蓝牙耳机尤其）头 100 多毫秒是哑的，Fan 10-13 反馈每句第一个词被吞
-  var GAP_SEC = 0.25;            // 句与句之间喘口气
+  var GAP_SEC = 0.45;            // 句与句之间喘口气（10-14 Fan：停顿太短 → 0.25 加到 0.45）
+  var PAUSE_SEC = 0.5;           // 喘息句里省略号处的真停顿：拆成几段分别合成，段与段之间至少空这么久
   var pl = { nextTime: 0, sources: [], takes: [], keep: null };
 
   // 通话期间持续放一条无声循环：让 AudioContext 和蓝牙/外放通道一直醒着，不然每句开头都要重新唤醒、第一个词被吃掉
@@ -6948,11 +6949,27 @@ var SBLAB_CARD = "nyc";
   }
 
   // 念一句：Fish 走原生流式，其他后端（或 Fish 中转没开原生端点）整段要 mp3/wav 再解码
+  // 喘息句：拟声+省略号两处以上。再慢一成，并且在省略号处拆开分段合成——模型念省略号只停一瞬，
+  // 真正的停顿由我们在段与段之间空出来（Fan 10-14：「句式中间的停顿太短」）
+  var MOAN_RE = /(嗯|哈啊|啊|呼|哈|mm+h?|hm+|ha+h|ngh)[….~\.]+/gi;
   async function callSpeak(cfg, text, name, sig) {
     var cap = Number(cfg.maxLen) || 240;
     if (text.length > cap) text = text.slice(0, cap);       // 通话里不弹「太长」的 toast，默默截
-    // 喘息多的句子再慢一成（Fan 10-14：床戏台词念太快）：拟声+省略号两处以上就算
-    if ((text.match(/(嗯|哈啊|啊|呼|哈)[….~]+/g) || []).length >= 2) cfg = Object.assign({}, cfg, { speed: speedOf(cfg) * 0.88 });
+    if ((text.match(MOAN_RE) || []).length < 2) return speakOne(cfg, text, name, sig);
+    cfg = Object.assign({}, cfg, { speed: speedOf(cfg) * 0.88 });
+    var raw = text.match(/[^….]+(?:…+|\.{3,})?/g) || [text], pieces = [];
+    raw.forEach(function (p) { p = p.trim(); if (!p) return; if (pieces.length && p.replace(/[….\s]/g, '').length < 2) pieces[pieces.length - 1] += p; else pieces.push(p); });
+    if (pieces.length < 2) return speakOne(cfg, text, name, sig);
+    var last = null;
+    for (var i = 0; i < pieces.length; i++) {
+      if (sig.aborted) throw new Error('stopped');
+      if (i > 0) { var c = audioCtx(); if (c) pl.nextTime = Math.max(pl.nextTime, c.currentTime) + PAUSE_SEC; }
+      last = await speakOne(cfg, pieces[i], name, sig);
+      await waitOr(last.done, sig);                      // 等这一段放完再要下一段，停顿才落在省略号的位置
+    }
+    return last;
+  }
+  async function speakOne(cfg, text, name, sig) {
     var take = newTake();
     try {
       if (cfg.backend === 'fish') {
