@@ -6251,7 +6251,7 @@ var SBLAB_CARD = "sd";
   // sd：10-14 换成 ccd9a20a…「魅惑女声」（Fan 嫌 13 号那个「娇媚女声」尖；一掷千金的联系人几乎全是女孩，默认必须是女声）；鎏金/原版见下面 FISH_CARD_VOICE 的注释
   var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
   // 管家的联系人名在卡里是 SugarElite™（显示 S.）：一掷千金用中文女声「温柔」（Fan 10-13 听了论坛播报说「很好听，写进卡」），鎏金/原版沿用 S. 的英式 JARVIS
-  NPC_VOICE['SugarElite™'] = CARD === 'sd' ? { fish: 'df7680a1fb774048b76c7fa4cce43a70' } : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
+  NPC_VOICE['SugarElite™'] = CARD === 'sd' ? { fish: 'ae4f2bad30d54aeda048b0a06224ad3e' }   /* 10-14 换成「情感女声旁白」气声款（用户嫌「温柔」像客服，Fan 三选一定 v5） */ : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
   var FISH_CARD_VOICE = { sd: 'ccd9a20abb214f0486b65950d9006f89', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: 'bf322df2096a46f18c579d0baa36f41d' };   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
