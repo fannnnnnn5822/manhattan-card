@@ -6322,7 +6322,7 @@ var SBLAB_CARD = "classic";
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
   var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
   // 卡的默认语速：玩家没在 🎙 里改过就用它。一掷千金 0.9（Fan 10-14：床戏台词念太快）；别的卡 1
-  var CARD_SPEED = CARD === 'sd' ? 0.9 : 1;
+  var CARD_SPEED = CARD === 'sd' ? 0.8 : 0.9;   // 10-14 Fan 又听了一轮：一掷千金 0.9 仍快 → 0.8；S. 的英文也快 → 鎏金/原版 0.9
   function speedOf(cfg) { return Number(cfg && cfg.speed) || CARD_SPEED; }
 
   // 每人音色：存 localStorage sbnyc_npc_voice（{名字:{后端:音色}}），配置面板里按行编辑
@@ -6940,6 +6940,8 @@ var SBLAB_CARD = "classic";
   async function callSpeak(cfg, text, name, sig) {
     var cap = Number(cfg.maxLen) || 240;
     if (text.length > cap) text = text.slice(0, cap);       // 通话里不弹「太长」的 toast，默默截
+    // 喘息多的句子再慢一成（Fan 10-14：床戏台词念太快）：拟声+省略号两处以上就算
+    if ((text.match(/(嗯|哈啊|啊|呼|哈)[….~]+/g) || []).length >= 2) cfg = Object.assign({}, cfg, { speed: speedOf(cfg) * 0.88 });
     var take = newTake();
     try {
       if (cfg.backend === 'fish') {
