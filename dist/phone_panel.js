@@ -6323,7 +6323,7 @@ var SBLAB_CARD = "nyc";
     return '';
   }
   // 卡自带的 Fish 默认音色：玩家「默认音色」留空就用它（构建脚本在本文件前面注入 SBLAB_CARD 说明这是哪张卡）
-  // sd：Fan 10-13 选定 870eb86b…（一掷千金全是男金主）；鎏金/原版：Sarah（10-13 实测通的女声）
+  // sd：Fan 10-13 选定 870eb86b…「娇媚女声」（一掷千金的联系人几乎全是女孩，默认必须是女声）；鎏金/原版见下面 FISH_CARD_VOICE 的注释
   var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
   // 管家的联系人名在卡里是 SugarElite™（显示 S.）：一掷千金用中文女声「温柔」（Fan 10-13 听了论坛播报说「很好听，写进卡」），鎏金/原版沿用 S. 的英式 JARVIS
   NPC_VOICE['SugarElite™'] = CARD === 'sd' ? { fish: 'df7680a1fb774048b76c7fa4cce43a70' } : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
@@ -6331,6 +6331,9 @@ var SBLAB_CARD = "nyc";
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
   var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
+  // 卡的默认语速：玩家没在 🎙 里改过就用它。一掷千金 0.9（Fan 10-14：床戏台词念太快）；别的卡 1
+  var CARD_SPEED = CARD === 'sd' ? 0.9 : 1;
+  function speedOf(cfg) { return Number(cfg && cfg.speed) || CARD_SPEED; }
 
   // 每人音色：存 localStorage sbnyc_npc_voice（{名字:{后端:音色}}），配置面板里按行编辑
   // 固定 NPC 名单：从聊天变量里拿 persistent 的联系人（群和 SugarElite 不算），鎏金/原版再并上预填表里的名字
@@ -6454,14 +6457,14 @@ var SBLAB_CARD = "nyc";
             speaker_id: voice,
             prompt_text: cfg.promptText || '',
             mode: cfg.mode || 'zero_shot',
-            speed: Number(cfg.speed) || 1.0,
+            speed: speedOf(cfg),
             pitch: 0, format: 'wav',
             // ↓ GPT-SoVITS api_v2 字段
             text_lang: cfg.textLang || 'zh',
             prompt_lang: cfg.promptLang || 'zh',
             ref_audio_path: voice || cfg.refAudio || '',   // 优先每 NPC 的音色（local 列），没有用全局默认
             text_split_method: 'cut5',
-            speed_factor: Number(cfg.speed) || 1.0,
+            speed_factor: speedOf(cfg),
             media_type: 'wav',
             streaming_mode: false,
           }),
@@ -6489,7 +6492,7 @@ var SBLAB_CARD = "nyc";
       var fm = cfg.model || 's2.1-pro-free';
       var fv = voice || cfg.voice || fishDefaultVoice();
       var fh = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key };
-      var spd = Number(cfg.speed) || 1.0;
+      var spd = speedOf(cfg);
       var routes = [
         { path: '/compat/v1/audio/speech', body: { model: fm.indexOf('/') >= 0 ? fm : 'fish-audio/' + fm, input: text, voice: fv, response_format: 'mp3',
             provider: { options: { 'fish-audio': { prosody: { speed: spd }, latency: 'balanced' } } } } },
@@ -6518,7 +6521,7 @@ var SBLAB_CARD = "nyc";
     if (cfg.backend === 'openai') {
       var r = await fetchTimeout((url || 'https://api.openai.com') + '/v1/audio/speech', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
-        body: JSON.stringify({ model: cfg.model || 'tts-1', input: text, voice: voice, speed: Number(cfg.speed) || 1.0, response_format: 'mp3' }),
+        body: JSON.stringify({ model: cfg.model || 'tts-1', input: text, voice: voice, speed: speedOf(cfg), response_format: 'mp3' }),
       }, 60000);
       if (!r.ok) throw new Error(await ttsErr(r, 'OpenAI'));
       return abToDataUrl(await r.arrayBuffer(), 'audio/mpeg');
@@ -6545,7 +6548,7 @@ var SBLAB_CARD = "nyc";
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
       body: JSON.stringify({
         model: cfg.model || 'speech-02-turbo', text: text, stream: false,
-        voice_setting: { voice_id: voice, speed: Number(cfg.speed) || 1.0, vol: 1, pitch: 0 },
+        voice_setting: { voice_id: voice, speed: speedOf(cfg), vol: 1, pitch: 0 },
         audio_setting: { format: 'mp3', sample_rate: 32000 },
       }),
     }, 60000);
@@ -7022,7 +7025,7 @@ var SBLAB_CARD = "nyc";
     // 要 wav 不要裸 pcm：有的中转（10-13 实测公益站自己的 /v1/tts）不理 sample_rate、回 44.1k，裸流没头我们只能瞎猜 24k，
     // 结果放出来慢一半、嗓子压低（Fan 得把语速调到 1.8 才正常）。wav 头里写着真实采样率，plPush 照它建 buffer。
     var body = { text: text, format: 'wav', sample_rate: PCM_RATE, latency: 'balanced', normalize: true,
-      prosody: { speed: Number(cfg.speed) || 1.0, volume: 0 } };
+      prosody: { speed: speedOf(cfg), volume: 0 } };
     var ref = voiceOf(name, 'fish') || cfg.voice || fishDefaultVoice();
     if (ref) body.reference_id = ref;
 
@@ -7154,7 +7157,7 @@ var SBLAB_CARD = "nyc";
       fld('local', '参考音频路径 <small style="opacity:.65;">GPT-SoVITS：服务器上那个 wav 的路径，如 D:/voice/akuma.wav</small><br><input id="lt-ref" ' + INP + ' value="' + (c.refAudio || '') + '">') +
       fld('local', '参考音频那句话 <small style="opacity:.65;">和参考音频逐字对应，对不上克隆出来会怪</small><br><input id="lt-prompt" ' + INP + ' value="' + (c.promptText || '') + '">') +
       fld('minimax', 'GroupId<br><input id="lt-group" ' + INP + ' value="' + (c.groupId || '') + '">') +
-      '<label style="display:block;margin-bottom:10px;">语速 <input id="lt-speed" type="number" step="0.1" min="0.5" max="2" value="' + (c.speed || 1) + '" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:6px;"></label>' +
+      '<label style="display:block;margin-bottom:10px;">语速 <input id="lt-speed" type="number" step="0.1" min="0.5" max="2" value="' + (c.speed || CARD_SPEED) + '" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:6px;"></label>' +
       '<label style="display:block;margin-bottom:8px;"><input id="lt-callv" type="checkbox"' + (c.callVoice !== false ? ' checked' : '') + '> 📞 通话里自动念对方台词</label>' +
       fld('fish', '<input id="lt-proxy" type="checkbox"' + (c.viaProxy ? ' checked' : '') + '> 经酒馆代理发请求 <small style="opacity:.65;">平时不勾；试听报「跨域」才勾，且要在酒馆 config.yaml 开 enableCorsProxy</small>') +
       '<small style="display:block;opacity:.65;margin-bottom:12px;">⚠️ 云端 TTS 拒念露骨台词——要听那种话必须本地服务。本地服务要开 CORS（使用说明有教程）；酒馆跑在 https 上时连不了 http 本地服务。</small>' +
@@ -7174,7 +7177,7 @@ var SBLAB_CARD = "nyc";
         promptText: ov.querySelector('#lt-prompt').value.trim(),
         groupId: ov.querySelector('#lt-group').value.trim(),
         voice: ov.querySelector('#lt-voice').value.trim(),
-        speed: Number(ov.querySelector('#lt-speed').value) || 1,
+        speed: Number(ov.querySelector('#lt-speed').value) || CARD_SPEED,
         callVoice: !!ov.querySelector('#lt-callv').checked,
         viaProxy: !!ov.querySelector('#lt-proxy').checked,
       };
