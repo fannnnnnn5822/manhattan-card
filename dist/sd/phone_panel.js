@@ -6207,7 +6207,8 @@ var SBLAB_CARD = "sd";
     // ── 一掷千金（S市金主版）的固定NPC：只配了 Fish（Fan 10-13 挑的），别的后端走默认 ──
     // 苏念：Fan 10-13 给的 fish 7f7c4c0c… 在 Fish 上查无此音色（Reference not found），等她确认再烤
     '纪思瑶':           { fish: '6ce7ea8ada884bf3889fa7c7fb206691' },   // 杀猪盘前端、甜腻撒娇🥺：Fan 10-13 选的「御女茉莉」（软、气声、甜；查过存在）
-    '叶知秋':           { fish: 'fbe02f8306fc4d3d915e9871722a39d5' },   // 邻居幼儿园老师、朴素真实：Fan 10-13 给「普通女生」→ 她；「嘉岚3.0」（软、日常口吻；查过存在）
+    '叶知秋':           { fish: 'fbe02f8306fc4d3d915e9871722a39d5' },
+    '沈冰月':           { fish: '76930766f91241a6881c139ab8752133' },   // 顶级职业SB、28岁：Fan 10-14 给的「风骚熟女」v6，固定角色里只有她够熟，她觉得不像再挪   // 邻居幼儿园老师、朴素真实：Fan 10-13 给「普通女生」→ 她；「嘉岚3.0」（软、日常口吻；查过存在）
   };
 
   var CFG_KEY = 'sbnyc_tts_cfg';
@@ -6247,11 +6248,11 @@ var SBLAB_CARD = "sd";
     return '';
   }
   // 卡自带的 Fish 默认音色：玩家「默认音色」留空就用它（构建脚本在本文件前面注入 SBLAB_CARD 说明这是哪张卡）
-  // sd：Fan 10-13 选定 870eb86b…「娇媚女声」（一掷千金的联系人几乎全是女孩，默认必须是女声）；鎏金/原版见下面 FISH_CARD_VOICE 的注释
+  // sd：10-14 换成 ccd9a20a…「魅惑女声」（Fan 嫌 13 号那个「娇媚女声」尖；一掷千金的联系人几乎全是女孩，默认必须是女声）；鎏金/原版见下面 FISH_CARD_VOICE 的注释
   var CARD = (typeof SBLAB_CARD !== 'undefined') ? String(SBLAB_CARD) : 'nyc';
   // 管家的联系人名在卡里是 SugarElite™（显示 S.）：一掷千金用中文女声「温柔」（Fan 10-13 听了论坛播报说「很好听，写进卡」），鎏金/原版沿用 S. 的英式 JARVIS
   NPC_VOICE['SugarElite™'] = CARD === 'sd' ? { fish: 'df7680a1fb774048b76c7fa4cce43a70' } : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
-  var FISH_CARD_VOICE = { sd: '870eb86b5c5f4dd1bc9ff4f1cc5338f1', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: 'bf322df2096a46f18c579d0baa36f41d' };   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
+  var FISH_CARD_VOICE = { sd: 'ccd9a20abb214f0486b65950d9006f89', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: 'bf322df2096a46f18c579d0baa36f41d' };   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
   var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
