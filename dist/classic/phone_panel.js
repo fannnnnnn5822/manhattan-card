@@ -6247,7 +6247,7 @@ var SBLAB_CARD = "classic";
     'T.':              { local: '', openai: 'onyx',    gemini: 'Charon',    minimax: 'male-qn-badao' },     // 41岁巨鲸：低沉、权威、不解释
     'Marco Rossi':     { local: '', fish: 'f6f293aabfe24e46aff0fc309c233d31', openai: 'echo', gemini: 'Fenrir', minimax: 'male-qn-daxuesheng' },// 假富话痨：亢奋、油、自来熟；fish「曹操」（陈建斌）是 Fan 10-13 选的搞笑款——T. 不许搞笑，就给他
     'David Pemberton': { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律师：气声、压低、像在门口耳语
-    'Hudson Park':     { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 男公关战友：松弛、干燥幽默
+    'Hudson Park':     { local: '', fish: 'd8a1340984ee4b63ad1ffae27a6a4339', openai: 'alloy', gemini: 'Puck', minimax: 'male-qn-jingying' },  // 男公关战友：松弛、干燥幽默；fish「ELITE」年轻干脆阳光——Fan 10-13 听样音点的
     'Cole Marlowe':    { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 破碎乐手：慢、飘、凌晨三点的嗓子
     'Father Dan':      { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 神父：清晰、克制、忏悔室音量
     'L.':              { local: '', openai: 'onyx',    gemini: 'Schedar',   minimax: 'presenter_male' },    // 58岁仪式化stalker：慢、平、从不提高音量（他不发语音，备着）
@@ -6260,7 +6260,7 @@ var SBLAB_CARD = "classic";
     // 音色按原型对齐 NYC 的同类角色（隔壁已婚律师、男公关战友、破碎乐手、禁忌神职），省得重新试音。
     '纪司柏':           { local: '', openai: 'onyx',    gemini: 'Algieba',   minimax: 'male-qn-qingse' },    // 28岁高段位假富：好听、不急不慢、从不用感叹号
     '顾维':             { local: '', openai: 'fable',   gemini: 'Enceladus', minimax: 'male-qn-qingse' },    // 已婚律所合伙人：压低、体面、把命令说成建议
-    '楚何河':           { local: '', openai: 'alloy',   gemini: 'Puck',      minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默
+    '楚何河':           { local: '', fish: 'd8a1340984ee4b63ad1ffae27a6a4339', openai: 'alloy', gemini: 'Puck', minimax: 'male-qn-jingying' },  // 顶级男公关：松弛、干燥幽默；fish 同 Hudson Park（ELITE）
     '祈星':             { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 22岁破碎乐手：慢、飘、凌晨三点的嗓子
     '释空':             { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 高僧：清晰、克制、讲经的音量
     // ── 一掷千金（S市金主版）的固定NPC：只配了 Fish（Fan 10-13 挑的），别的后端走默认 ──
