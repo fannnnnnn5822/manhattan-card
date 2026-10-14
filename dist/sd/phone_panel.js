@@ -6507,10 +6507,11 @@ var SBLAB_CARD = "sd";
     '祈星':             { local: '', openai: 'echo',    gemini: 'Umbriel',   minimax: 'male-qn-qingse' },    // 22岁破碎乐手：慢、飘、凌晨三点的嗓子
     '释空':             { local: '', openai: 'fable',   gemini: 'Iapetus',   minimax: 'male-qn-jingying' },  // 高僧：清晰、克制、讲经的音量
     // ── 一掷千金（S市金主版）的固定NPC：只配了 Fish（Fan 10-13 挑的），别的后端走默认 ──
-    // 苏念：Fan 10-13 给的 fish 7f7c4c0c… 在 Fish 上查无此音色（Reference not found），等她确认再烤
-    '纪思瑶':           { fish: '6ce7ea8ada884bf3889fa7c7fb206691' },   // 杀猪盘前端、甜腻撒娇🥺：Fan 10-13 选的「御女茉莉」（软、气声、甜；查过存在）
-    '叶知秋':           { fish: 'fbe02f8306fc4d3d915e9871722a39d5' },
-    '沈冰月':           { fish: '76930766f91241a6881c139ab8752133' },   // 顶级职业SB、28岁：Fan 10-14 给的「风骚熟女」v6，固定角色里只有她够熟，她觉得不像再挪   // 邻居幼儿园老师、朴素真实：Fan 10-13 给「普通女生」→ 她；「嘉岚3.0」（软、日常口吻；查过存在）
+    // 10-14 用户推荐、Fan 转来的一批（Fish 上查过都在、中文试读时长正常）：苏念、沈冰月采用；纪思瑶、叶知秋不换（理由见各行）
+    '苏念':             { fish: '2114c7a772354051a9523b61f85143a0' },   // 23岁穷学生、腼腆真诚：「小花衣こっこ」年轻、轻柔、气声、暖。⚠️ 这是日语训练的音色，读中文可能带口音，等 Fan 耳朵确认
+    '纪思瑶':           { fish: '6ce7ea8ada884bf3889fa7c7fb206691' },   // 杀猪盘前端、装 22 岁小白🥺：留 Fan 10-13 选的「御女茉莉」（软、气声、甜）；推荐的「骚气御姐音」是姐姐腔，和她叫"哥哥"的人设面具对不上
+    '叶知秋':           { fish: 'fbe02f8306fc4d3d915e9871722a39d5' },   // 邻居幼儿园老师、朴素温柔：留「嘉岚3.0」（软、日常口吻）；推荐的「御姐」是戏谑强势款（官方样句"跪得好看点"），不像她
+    '沈冰月':           { fish: '8ce34d386ff2497f805003aeb4104b9c' },   // 28岁顶级职业SB、冷、算 ROI：10-14 换成推荐的「极品少御」（年轻的御、慢、气声）；之前的「风骚熟女」76930766 太熟太骚，她是冷
   };
 
   var CFG_KEY = 'sbnyc_tts_cfg';
@@ -6529,7 +6530,9 @@ var SBLAB_CARD = "sd";
   function voiceOf(name, backend) {
     var over = {};
     try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
-    var v = (over[name]) || NPC_VOICE[name] || {};
+    var ov = overVal(over, name, backend);
+    if (ov) return ov;
+    var v = NPC_VOICE[name] || {};
     if (v[backend] != null && v[backend] !== '') return v[backend];
     // 陌生人没有名字可配：按人设标签/简介里的关键词自动配（Fan 10-13：「SB卡里有没有土大款」——随机金主里有暴发户这一型）
     var byArch = archeVoice(name, backend);
@@ -6555,6 +6558,17 @@ var SBLAB_CARD = "sd";
   // 管家的联系人名在卡里是 SugarElite™（显示 S.）：一掷千金用中文女声「温柔」（Fan 10-13 听了论坛播报说「很好听，写进卡」），鎏金/原版沿用 S. 的英式 JARVIS
   if (CARD === 'classic') NPC_VOICE['S.'] = { local: '', fish: 'ae4f2bad30d54aeda048b0a06224ad3e', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };   // 原版是中文卡，S. 用气声旁白女声（10-14）
   NPC_VOICE['SugarElite™'] = CARD !== 'nyc' ? { fish: 'ae4f2bad30d54aeda048b0a06224ad3e' }   /* 10-14 换成「情感女声旁白」气声款（用户嫌「温柔」像客服，Fan 三选一定 v5） */ : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
+  // Akuma 在一掷千金换成用户推荐的「抖音欲（御姐音）」61fcf5da…：气声、玩味、"姐姐"腔，正是她叫"小少爷"那股劲；
+  // 原来那个「温柔动听女声」是安抚旁白款，太乖。鎏金/原版先不动（Fan 10-13 选的；要统一她说一声）
+  if (CARD === 'sd') NPC_VOICE['Akuma'] = Object.assign({}, NPC_VOICE['Akuma'], { fish: '61fcf5daf7d244a0b753cf92633f9079' });
+  // 卡里换掉的旧默认嗓子：玩家以前在设置页点过保存，会把当时显示的默认值一起存成"自己的"——读到这些就当没设，跟卡走
+  var RETIRED_FISH = { '沈冰月': ['76930766f91241a6881c139ab8752133'], 'Akuma': CARD === 'sd' ? ['faccba1a8ac54016bcfc02761285e67f'] : [] };
+  function overVal(over, n, backend) {
+    var x = over && over[n] && over[n][backend];
+    if (!x) return '';
+    if (backend === 'fish' && RETIRED_FISH[n] && RETIRED_FISH[n].indexOf(x) >= 0) return '';
+    return x;
+  }
   var FISH_CARD_VOICE = { sd: 'ccd9a20abb214f0486b65950d9006f89', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: '9927a47b9bd0490abaa81dd3b45dc0dc' };   // 原版是中文卡：默认「慵懒轻熟男音」（Fan 10-14 zm2 一百分）；鎏金 Adrian   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
   // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
@@ -6584,7 +6598,7 @@ var SBLAB_CARD = "sd";
   function npcVoiceText(backend) {
     var over = {}; try { over = JSON.parse(store.getItem('sbnyc_npc_voice') || '{}'); } catch (e) {}
     var fixed = fixedNpcNames(), lines = [];
-    fixed.forEach(function (n) { lines.push(n + '=' + ((over[n] && over[n][backend]) || (NPC_VOICE[n] && NPC_VOICE[n][backend]) || '')); });   // 卡里烤好的（如 Akuma）也显示出来，让人知道她有专属嗓子
+    fixed.forEach(function (n) { lines.push(n + '=' + (overVal(over, n, backend) || (NPC_VOICE[n] && NPC_VOICE[n][backend]) || '')); });   // 卡里烤好的（如 Akuma）也显示出来，让人知道她有专属嗓子
     Object.keys(over).forEach(function (n) { if (fixed.indexOf(n) < 0 && over[n] && over[n][backend]) lines.push(n + '=' + over[n][backend]); });
     return lines.join('\n');
   }
@@ -6594,7 +6608,8 @@ var SBLAB_CARD = "sd";
     String(txt || '').split(/\n/).forEach(function (line) {
       var i = line.search(/[=＝]/); if (i < 1) return;
       var n = line.slice(0, i).trim(), v = line.slice(i + 1).trim(); if (!n || !v) return;
-      over[n] = Object.assign({}, NPC_VOICE[n] || {}, over[n] || {}); over[n][backend] = v;
+      if (NPC_VOICE[n] && NPC_VOICE[n][backend] === v) return;   // 和卡里默认一样＝没改，不存（存了以后卡换嗓子她就跟不上了）
+      over[n] = Object.assign({}, over[n] || {}); over[n][backend] = v;
     });
     try { store.setItem('sbnyc_npc_voice', JSON.stringify(over)); } catch (e) {}
   }
