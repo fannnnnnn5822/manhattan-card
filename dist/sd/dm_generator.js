@@ -835,6 +835,28 @@ function anonSelfLine(sb, name) {
   }
   return out.join('\n');
 }
+// 🎭🧂🧰 穷光蛋三件套（手机写 sb.rental / sb.salt / sb.gig）→ 一段话告诉 AI；私信和正文共用
+function poorDigest(sb) {
+  var day = (sb.game && sb.game.day) || 1;
+  var out = '';
+  var r = sb.rental;
+  if (r && r.day === day && Array.isArray(r.items) && r.items.length) {
+    out += '【租来的行头】User 今天身上的「' + r.items.join('」「') + '」是一日租借来的，明天一早就得还。' +
+      '看不看得穿看各人眼力：见过真货的老手（Akuma、沈冰月这类）多半一眼看穿，露馅在细节上——表扣内侧的租赁编号、车钥匙上租车行的牌子、包没有配货单；新人多半信了，按有钱人待他。' +
+      '看穿的人通常当面不点破，转头可能在论坛八卦版挂他。\n';
+  }
+  var sl = sb.salt;
+  if (sl && sl.rank >= 1 && sl.rank <= 3) {
+    out += '【江湖名声·白嫖榜】User 在 SugarSecret 白嫖榜排第 ' + sl.rank + '（聊了 ' + (sl.n || 0) + ' 条私信，只花了 ￥' + (sl.spent || 0).toLocaleString() + '），Akuma 在榜单置顶亲自点评过他。' +
+      '刷论坛的人大多看过：有人拿这个打趣他，有人开口先要门槛费，也有人反而好奇这个"最会聊的穷鬼"。\n';
+  }
+  var g = sb.gig;
+  if (g && g.day === day) {
+    out += '【今天的零活】User 今天在招聘版接了一单：「' + g.title + '」（发单人 @' + (g.from || '匿名') + '，日结 ￥' + (g.pay || 0).toLocaleString() + ' 已到账）。这是他眼下过的日子，正文和私信里都可能撞上相关的人和事。\n';
+  }
+  return out;
+}
+
 function describeState(sb) {
   var p = sb.profile || {};
   var lines = [];
@@ -854,6 +876,8 @@ function describeState(sb) {
       + '同样按各人的关系和人设挑，谨慎的那几个只用"你"最像她们。');
   var w = sb.wallet || {};
   lines.push('【钱包】余额 ￥' + (w.balance != null ? w.balance : 0).toLocaleString());
+  var poorD = poorDigest(sb);
+  if (poorD) lines.push(poorD.trim());
   // Akuma 私信要用到的江湖地位（她刷论坛看得到榜）——只在超过/紧咬时提，Akuma 领先是常态不用说（专场里她也在岗，照常）
   var stD = akumaStanding(sb);
   if (stD.over) lines.push('【SugarSecret 榜】User 现在排在 Akuma 之上（Akuma 常年霸榜，头一遭被一个新金主压）。生成 Akuma 私信时：对User态度微妙变化——表面配合暗地较劲（约User去啃硬骨头/自己搞钱）+偶尔漏真心又秒撤，三者混着来，别写成纯恭喜或纯嫉妒');
@@ -2530,7 +2554,8 @@ function buildDigest(sb) {
   }
   var closet = (sb.closet || []).slice(-10).map(function (c) { return c.name + (c.to ? '→' + c.to : ''); });
   var toyD = toyDigest(sb);   // 🎛 遥控玩具（谁戴着 / 开着时按在不在身边分写法）
-  if (!blocks.length && !closet.length && !toyD) return '';
+  var poorD2 = poorDigest(sb);   // 🎭🧂🧰 租借 / 白嫖榜 / 零活
+  if (!blocks.length && !closet.length && !toyD && !poorD2) return '';
   var out = '【User 手机上的时间：' + nowTime() + '（正文的时刻感尽量与之呼应）】\n';
   if (blocks.length) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
@@ -2539,6 +2564,7 @@ function buildDigest(sb) {
     out += '【User 送出去的礼物（他买给她们的，收礼的人会戴着/用着出现，别人看得见的是"东西在她身上"，不是价格和来路；箭头后面是收礼人）】' + closet.join('、') + '\n';
   }
   if (toyD) out += toyD;
+  if (poorD2) out += poorD2;
   var schD = (sb.schedule || []).filter(function (s) { return !s.done; }).slice(-8).map(function (s) {
     var label = s.academic ? '📚' : '📅';
     var dateStr = s.gameDay ? (' ' + gameDayToMD(s.gameDay, sb) + ' ' + gameDayToWeekday(s.gameDay, sb)) : '';

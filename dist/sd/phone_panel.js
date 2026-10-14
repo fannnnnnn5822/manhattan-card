@@ -2641,6 +2641,188 @@
     SBemit('sb_updated');
     toast('success', '🔗 已转发给 ' + who + '——去TA的聊天页点「发送」，看TA上不上道');
   }
+
+  // ══ 穷光蛋三件套（Fan 10-14：好多人玩穷光蛋开局，给他们加点乐子）══
+  // 🎭 一日租借（Trend 版，不用订阅 Elite）/ 🧂 白嫖榜（慷慨榜下面）/ 🧰 零活（招聘版，一天一单）
+  // 三样都只写 v.sb.rental / v.sb.salt / v.sb.gig，dm_generator 的 poorDigest 读它们告诉 AI
+  var RENTALS = [
+    ['rolex', '劳力士 迪通拿 熊猫盘', '一日租', 680],
+    ['pp', '百达翡丽 鹦鹉螺 5711', '一日租', 1200],
+    ['birkin', '爱马仕 Birkin 25 金扣', '拍照借用 · 两小时', 399],
+    ['p911', '保时捷 911 敞篷', '一日租', 1280],
+    ['suit', 'Brioni 定制西装（腰身改过）', '一日租', 360],
+    ['maybach', '迈巴赫 S680 + 司机', '半天', 2600],
+  ];
+  function gameDay() { return (state && state.game && state.game.day) || 1; }
+  function rentedToday() {
+    var r = state && state.rental;
+    return (r && r.day === gameDay() && Array.isArray(r.items)) ? r.items : [];
+  }
+  function rentalHtml() {
+    var on = rentedToday();
+    var h = '<div class="sb-sec">🎭 晒不起？一日租借</div>';
+    for (var i = 0; i < RENTALS.length; i++) {
+      var r = RENTALS[i];
+      var mine = on.indexOf(r[1]) >= 0;
+      h += '<div class="sb-rank"><div class="rb"><b>' + esc(r[1]) + '</b><small>' + esc(r[2]) + (mine ? ' · 今天在你身上' : '') + '</small></div>' +
+        '<span class="ra">' + fmtCNY(r[3]) + '</span>' +
+        (mine ? '' : '<button class="sb-buy sb-rent" data-r="' + r[0] + '">租</button>') + '</div>';
+    }
+    h += '<div class="sb-empty">明天一早自动归还。新人多半看不出来，老手一眼就看穿——看穿了当面不说，转头上八卦版。</div>';
+    return h;
+  }
+  function rentItem(id) {
+    var r = null;
+    for (var i = 0; i < RENTALS.length; i++) if (RENTALS[i][0] === id) r = RENTALS[i];
+    if (!r) return;
+    var ok = true;
+    try { ok = (DOC.defaultView || window).confirm('花 ' + fmtCNY(r[3]) + ' 租「' + r[1] + '」（' + r[2] + '）？\n今天它就是你的，明天一早还回去。'); } catch (e) {}
+    if (!ok) return;
+    if (!debit(r[3], '租借 · ' + r[1], '一日租借')) return;
+    var gd = gameDay();
+    function put(rt) {
+      var items = (rt && rt.day === gd && Array.isArray(rt.items)) ? rt.items.slice() : [];
+      if (items.indexOf(r[1]) < 0) items.push(r[1]);
+      return { day: gd, items: items };
+    }
+    SBupdate(function (v) { if (v.sb) v.sb.rental = put(v.sb.rental); return v; });
+    if (state) state.rental = put(state.rental);
+    toast('success', '🎭 ' + r[1] + ' 今天归你了——明天一早还回去');
+    SBemit('sb_updated');
+    if (currentPage === 'board:trend') openBoard('trend');
+  }
+
+  // 🧂 白嫖榜：聊得最多、花得最少。指数 = 发出的私信条数 × 1000 ÷ (累计出手 + 1000)
+  var SALT_NPC = [
+    { name: '画饼大师·老周', n: 260, spent: 88, blurb: '三年聊了四十个，转账最大一笔是一杯奶茶' },
+    { name: 'Mr.下次一定', n: 210, spent: 520, blurb: '口头禅：下次带你去' },
+    { name: '验资侠本侠', n: 95, spent: 0, blurb: '只验别人的资' },
+    { name: 'Leo_在融资', n: 160, spent: 1314, blurb: 'B 轮之后什么都有' },
+    { name: '白金卡（副卡）', n: 140, spent: 3200, blurb: '卡是老婆的' },
+  ];
+  function saltScore(n, spent) { return Math.round((n || 0) * 1000 / ((spent || 0) + 1000)); }
+  function myMsgCount() {
+    var npcs = (state && state.npcs) || {}, c = 0;
+    Object.keys(npcs).forEach(function (k) {
+      var h = npcs[k].dm_history || [];
+      for (var i = 0; i < h.length; i++) if (h[i] && h[i].sender === 'USER') c++;
+    });
+    return c;
+  }
+  function saltHtml() {
+    var n = myMsgCount(), spent = Math.round(totalSpent());
+    var meName = (state && state.profile && (state.profile.name_cn || state.profile.name_en)) || 'You';
+    var list = SALT_NPC.map(function (x) { return { name: x.name, n: x.n, spent: x.spent, blurb: x.blurb, sc: saltScore(x.n, x.spent) }; });
+    list.push({ name: meName, n: n, spent: spent, blurb: '—— 就是你', sc: saltScore(n, spent), you: true });
+    list.sort(function (a, b) { return b.sc - a.sc; });
+    var rank = 0;
+    for (var i = 0; i < list.length; i++) if (list[i].you) rank = i + 1;
+    var last = rank === list.length;
+    var ak = rank === 1 ? '恭喜小少爷，榜首。聊了 ' + n + ' 条，花了 ' + fmtCNY(spent) + '。姐妹们算过了，跟你说一句话比发一条短信还便宜。'
+      : rank <= 3 ? '前三了呀。再熬一熬，把老周也熬走——人家好歹请过一杯奶茶。'
+      : !last ? '上榜了，但还不够白。下次聊天别转账，转账会降低你的纯度。'
+      : '你花得太多、聊得太少，这个榜不收你。楼上慷慨榜欢迎你，那边专收冤大头。';
+    var h = '<div class="sb-sec">🧂 白嫖榜 · 聊得最多，花得最少</div>';
+    h += '<div class="sb-post" style="border-color:var(--gold);"><b>📌 Akuma 点评</b><div class="pb">' + esc(ak) + '</div><div class="pm">@Akuma · 论坛人气王 · 每周亲自更新</div></div>';
+    for (var j = 0; j < list.length; j++) {
+      var d = list[j];
+      h += '<div class="sb-rank' + (d.you ? ' you' : '') + '"><span class="rn">' + (j === 0 ? '🧂' : (j + 1)) + '</span><div class="rb"><b>' + esc(d.name) + (d.you ? ' ✦' : '') + '</b><small>' + esc(d.blurb) + ' · 聊了 ' + d.n + ' 条 · 花了 ' + fmtCNY(d.spent) + '</small></div><span class="ra">' + d.sc + '</span></div>';
+    }
+    // 名次写回变量（变了才写，防止渲染↔写入互相触发）：前三名会被注进提示词，圈里都知道
+    var old = state && state.salt;
+    if (!old || old.rank !== rank) {
+      var rec = { rank: rank, n: n, spent: spent };
+      SBupdate(function (v) { if (v.sb) v.sb.salt = rec; return v; });
+      if (state) state.salt = rec;
+    }
+    return h;
+  }
+
+  // 🧰 零活：招聘版置顶，按剧情日抽三单，一天只接一单。接单＝日结到账＋把开场填进正文输入框
+  var GIGS = [
+    { t: '急招僚机一名（今晚）', a: 'CBD_巨鲸', b: '今晚约了个新认识的，需要一个人坐旁边帮我捧。会说话、别比我好看、我讲笑话你先笑。', pay: 800,
+      seed: '今晚给 @CBD_巨鲸 当僚机。地点他发来了：一家要提前三天订位的餐厅。我的活：坐在旁边，在她面前不经意地夸他，他讲笑话我先笑，关键时刻接一个"王总，那个并购……"的电话。' },
+    { t: '找个手好看的男生拍照', a: 'Lily_在巴黎', b: '拍几张"男朋友视角"发 ins，只露手和手表。表我提供，手你自己带。', pay: 300,
+      seed: '去给 @Lily_在巴黎 拍"男朋友视角"。她递给我一块比我全部身家还贵的表，叮嘱我手别抖。' },
+    { t: '替我去见一个人', a: '谨慎的W先生', b: '帮我先去见一面，看看她是不是照骗。你就说你是我助理，别乱说话。', pay: 600,
+      seed: '替 @谨慎的W先生 去 M&G 探路。我自称他的助理，坐在约好的咖啡馆等那个女生出现，手机里存着他交代的三个问题。' },
+    { t: '饭局缺人头', a: '某上市公司小陈总', b: '今晚饭局缺两个人，你坐那装我公司副总。少说话多点头，酒我替你挡（大概）。', pay: 500,
+      seed: '今晚在 @某上市公司小陈总 的饭局上装他公司的副总。名片是现印的，上面的名字不是我。' },
+    { t: '慈善晚宴举牌', a: '匿名', b: '周六晚宴帮我在一件拍品上举两次牌，把价抬上去。别真拍下来。', pay: 1000,
+      seed: '慈善晚宴，我坐在后排，任务是在 12 号拍品上举两次牌把价抬上去——然后在最后一口价之前收手。' },
+    { t: '送个盒子', a: '已婚勿扰', b: '帮我把一个盒子送到一个女生手上。别问是谁，别让任何人看见你。', pay: 400,
+      seed: '替 @已婚勿扰 送一个系着缎带的盒子。地址是一栋公寓楼，门卫看我的眼神像在看快递员——我本来也是。' },
+    { t: '教我谈价', a: '刚入圈的小王', b: '教我怎么在私信里跟她们谈价，我总被宰。按小时算。', pay: 200,
+      seed: '给 @刚入圈的小王 上一节"私信谈价课"。他比我有钱一百倍，但他问的第一个问题是"转账备注写什么显得不土"。' },
+    { t: '生日局撑场面', a: 'Akuma的小姐妹', b: '下周 Akuma 生日局，缺几个看起来有钱的男生撑场面。站着、举杯、别开口说价钱。衣服自己想办法。', pay: 700,
+      seed: '去 Akuma 的生日局撑场面。要求是"看起来有钱"，我把唯一一套像样的衣服熨了两遍。' },
+    { t: '遛狗', a: '某位太太', b: '帮我遛一下我的狗（它比你贵），顺便把它送去宠物 SPA。', pay: 300,
+      seed: '帮 @某位太太 遛狗。这只狗的项圈比我的表贵，它看我的眼神也是这么说的。' },
+    { t: '门店排队', a: 'Birkin_收藏家', b: '爱马仕门店配货，替我站一上午，别让人插队。', pay: 350,
+      seed: '替 @Birkin_收藏家 在爱马仕门口排一上午的队。前后站着的，有一半和我一样是替人排的。' },
+  ];
+  function gigsToday() {
+    var d = gameDay(), out = [], used = {};
+    for (var k = 0; out.length < 3 && k < 30; k++) {
+      var i = (d * 7 + k * 3) % GIGS.length;
+      if (!used[i]) { used[i] = 1; out.push(i); }
+    }
+    return out;
+  }
+  function gigHtml() {
+    var g = state && state.gig;
+    var done = g && g.day === gameDay();
+    var h = '<div class="sb-sec">🧰 零活 · 日结（一天只接一单）</div>';
+    if (done) h += '<div class="sb-empty">今天接了「' + esc(g.title) + '」，' + fmtCNY(g.pay) + ' 已到账。明天再来看新单。</div>';
+    var idx = gigsToday();
+    for (var i = 0; i < idx.length; i++) {
+      var x = GIGS[idx[i]];
+      h += '<div class="sb-post"><b>🧰 ' + esc(x.t) + '</b><div class="pb">' + esc(x.b) + '</div><div class="pm">@' + esc(x.a) + ' · 日结 ' + fmtCNY(x.pay) + '</div>' +
+        (done ? '' : '<div class="sb-cmt-pull sb-gig" data-g="' + idx[i] + '">💼 接单</div>') + '</div>';
+    }
+    return h;
+  }
+  function credit(amount, what, channel) {
+    function add(w) {
+      w.balance = (w.balance || 0) + amount;
+      if (!w.transactions) w.transactions = [];
+      w.transactions.push({ direction: '+', amount: amount, counterparty: what, channel: channel || '', note: '', time: nowT() });
+      if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+    }
+    SBupdate(function (v) {
+      if (!v.sb) return v;
+      if (!v.sb.wallet) v.sb.wallet = { balance: 0, bills: [], transactions: [] };
+      add(v.sb.wallet);
+      if (!Array.isArray(v.sb.wallet.allTransactions)) v.sb.wallet.allTransactions = [];
+      v.sb.wallet.allTransactions.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), direction: '+', amount: amount, counterparty: what, channel: channel || '', note: '', time: nowT(), gameDay: (v.sb.game && v.sb.game.day) || 1 });
+      if (v.sb.wallet.allTransactions.length > 500) v.sb.wallet.allTransactions = v.sb.wallet.allTransactions.slice(-500);
+      return v;
+    });
+    if (state && state.wallet) add(state.wallet);
+    SBemit('sb_floor_log', { lines: ['💰〔' + nowT() + '〕+' + fmtCNY(amount) + ' · ' + what] });
+  }
+  function takeGig(i) {
+    var x = GIGS[i]; if (!x) return;
+    var g = state && state.gig;
+    if (g && g.day === gameDay()) { toast('info', '今天已经接过一单了'); return; }
+    var ok = true;
+    try { ok = (DOC.defaultView || window).confirm('接这单「' + x.t + '」？\n日结 ' + fmtCNY(x.pay) + '，接了就开一段正文。'); } catch (e) {}
+    if (!ok) return;
+    var rec = { day: gameDay(), title: x.t, from: x.a, pay: x.pay };
+    SBupdate(function (v) { if (v.sb) v.sb.gig = rec; return v; });
+    if (state) state.gig = rec;
+    credit(x.pay, '零活 · ' + x.t, '日结');
+    toast('success', '🧰 接了「' + x.t + '」，' + fmtCNY(x.pay) + ' 已到账');
+    SBemit('sb_updated');
+    fillMainInput('【接了零活】' + x.seed + '（日结 ' + fmtCNY(x.pay) + ' 已到账）');
+    panel.classList.remove('open');
+  }
+  function bindPoorKit() {
+    var rs = chatEl.querySelectorAll('.sb-rent');
+    for (var i = 0; i < rs.length; i++) (function (b) { b.addEventListener('click', function (ev) { ev.stopPropagation(); rentItem(b.getAttribute('data-r')); }); })(rs[i]);
+    var gs = chatEl.querySelectorAll('.sb-gig');
+    for (var j = 0; j < gs.length; j++) (function (b) { b.addEventListener('click', function (ev) { ev.stopPropagation(); takeGig(parseInt(b.getAttribute('data-g'), 10)); }); })(gs[j]);
+  }
   // 联系人选择器（复用长按菜单样式）：按最近活跃排前10
   // opts（可选，转发那边不传=保持原样）：title 换标题、filter 换筛选、limit 换条数、empty 换空态提示
   // deferOpen：调用方在点击事件里同步打开时传 true——菜单等这次点击冒泡完再挂上，
@@ -2781,6 +2963,7 @@
         var d = l2[i2];
         body += '<div class="sb-rank' + (d.you ? ' you' : '') + '"><span class="rn">' + (i2 === 0 ? '🥇' : (i2 + 1)) + '</span><div class="rb"><b>' + esc(d.name) + (d.you ? ' ✦' : '') + (d.live ? ' <span class="sb-live">LIVE</span>' : '') + '</b><small>' + esc(d.blurb || '') + '</small></div><span class="ra">' + fmtCNY(d.amount || 0) + '</span></div>';
       }
+      body += saltHtml();
     } else if (key === 'gossip') {
       title = '☕ Community Gossip'; sub = 'spill it · SugarSecret™';
       fetchGlobalPosts();   // 异步拉全服姐妹楼，到货自动重画本页
@@ -2815,6 +2998,7 @@
           (t4.price > 0 ? '<span class="ra">' + fmtCNY(t4.price) + '</span><button class="sb-fwd" data-n="' + esc(t4.name) + '" data-p="' + t4.price + '" title="转发给联系人——圈内都懂的暗示">🔗</button><button class="sb-buy" data-n="' + esc(t4.name) + '" data-p="' + t4.price + '">拔草</button>' : '') + '</div>';
       }
       body += '<div class="sb-empty">看到什么就买什么。这是本版版规。</div>';
+      body += rentalHtml();
     } else if (key === 'abyss') {
       title = '🕳️ 深渊区'; sub = 'no names. no questions.';
       var l5 = mag.abyss || [];
@@ -2823,6 +3007,7 @@
       }
     } else if (key === 'recruit') {
       title = '📋 招聘版'; sub = 'SB/SD 互招 · 挂个牌，等人上钩';
+      body += gigHtml();
       body += '<div style="display:flex;margin:0 12px 10px;"><button class="sb-abtn" id="sbnyc-recruit-post" style="flex:1;">✍️ 发招聘帖（挂出去，等人来应聘）</button></div>';
       var mine = (state && state.myAds) || [];
       for (var rm = mine.length - 1; rm >= 0; rm--) {
@@ -2858,8 +3043,9 @@
     if (rpost) rpost.addEventListener('click', openRecruitCompose);
     var gpost = chatEl.querySelector('#sbnyc-gossip-post');
     if (gpost) gpost.addEventListener('click', openGossipCompose);
+    bindPoorKit();
     // 💬 拉评论按钮（我的招聘帖下面；:not 把八卦版和全服楼的同类按钮让出去，各归各的处理器）
-    var pulls = chatEl.querySelectorAll('.sb-cmt-pull:not(.sb-apply):not(.sb-gpull):not(.sb-greply):not(.sb-gdm)');
+    var pulls = chatEl.querySelectorAll('.sb-cmt-pull:not(.sb-apply):not(.sb-gpull):not(.sb-greply):not(.sb-gdm):not(.sb-gig)');
     for (var pk = 0; pk < pulls.length; pk++) {
       (function (b) {
         b.addEventListener('click', function () {
