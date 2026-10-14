@@ -2515,21 +2515,11 @@
     if (!ok) return;
     if (price > 0 && !debit(price, name, channel)) return;
     if (!exp) {
-      pickContact(function (who) {
-        addCloset({ name: name, price: price, to: who || '', from: channel, img: img || '', time: nowT(), gameDay: (state && state.game && state.game.day) || 1 });
-        toast('success', '🎁 ' + name + (who ? ' → 送给 ' + who : '（还没定给谁）') + (price > 0 ? '（-' + fmtCNY(price) + '）' : ''));
-        // 送出去要看得见（用户 10-13：「怎么送东西，怎么只有下单」）：礼物进她的私信，并让她本人回一句
-        if (who) {
-          callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] ' + name + (price > 0 ? ' —— ' + fmtCNY(price) : '') + '（SugarElite 商城，已下单直接寄给你）' }]);
-          SBemit('sb_request_dm', { reason: '🎁 送礼：User 刚买了「' + name + '」' + (price > 0 ? '（' + fmtCNY(price) + '）' : '') + '送给 ' + who + '，礼物已经到她手上。只让 ' + who + ' 本人回应：按她的人设和两人现在的关系收礼——真心的道谢、职业型的分寸、撒娇型的加码、拜金型的理所当然、杀猪盘的趁热打铁；可以只有一句，也可以发语音', n: '1-2', to: [who] });
-        }
-        SBemit('sb_updated');
-      }, {
-        title: '这件送给谁？（点「✕ 算了」＝先买着，回头再定）',
-        limit: 20,
-        filter: function (np) { return np && np.unlocked !== false && !(np.name === 'SugarElite™'); },
-        empty: '通讯录里还没人——先买着，回头再送',
-      });
+      // 先入衣橱再选人：选人菜单被关掉、点「✕ 算了」都不会丢东西（10-14 以前是选完才入橱，菜单一没，钱扣了东西也没了）
+      addCloset({ name: name, price: price, to: '', from: channel, img: img || '', time: nowT(), gameDay: (state && state.game && state.game.day) || 1 });
+      toast('success', '🛍 ' + name + ' 已下单' + (price > 0 ? '（-' + fmtCNY(price) + '）' : '') + '——选个人送出去，不选就先放衣橱');
+      SBemit('sb_updated');
+      giftFromCloset(((state && state.closet) || []).length - 1);
     } else if (price > 0) {
       toast('success', '💳 -' + fmtCNY(price) + ' ' + name);
     }
@@ -2538,6 +2528,31 @@
       fillMainInput('我去了预订好的「' + name + '」' + (price > 0 ? '（' + fmtCNY(price) + ' 已付）' : '') + '。');
       panel.classList.remove('open');
     }
+  }
+  // 送礼选人菜单的口径（下单时和衣橱补送共用）
+  var GIFT_PICK_OPTS = {
+    title: '这件送给谁？（点「✕ 算了」＝先放衣橱，回头再送）',
+    limit: 20,
+    filter: function (np) { return np && np.unlocked !== false && !(np.name === 'SugarElite™'); },
+    empty: '通讯录里还没人——先放衣橱，回头再送',
+  };
+  // 送出去要看得见（用户 10-13：「怎么送东西，怎么只有下单」）：礼物进她的私信，并让她本人回一句
+  function deliverGift(who, name, price) {
+    callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] ' + name + (price > 0 ? ' —— ' + fmtCNY(price) : '') + '（SugarElite 商城，已下单直接寄给你）' }]);
+    SBemit('sb_request_dm', { reason: '🎁 送礼：User 刚买了「' + name + '」' + (price > 0 ? '（' + fmtCNY(price) + '）' : '') + '送给 ' + who + '，礼物已经到她手上。只让 ' + who + ' 本人回应：按她的人设和两人现在的关系收礼——真心的道谢、职业型的分寸、撒娇型的加码、拜金型的理所当然、杀猪盘的趁热打铁；可以只有一句，也可以发语音', n: '1-2', to: [who] });
+  }
+  // 衣橱里还没送出去的那件 → 补送（玩家 10-14：拔草买了两件都没送出去，只好转发链接，被 Akuma 嘲讽）
+  function giftFromCloset(idx) {
+    var cl = (state && state.closet) || [];
+    var it = cl[idx]; if (!it || it.to) return;
+    pickContact(function (who) {
+      SBupdate(function (v) { var c0 = v.sb && v.sb.closet && v.sb.closet[idx]; if (c0 && c0.name === it.name && !c0.to) c0.to = who; return v; });
+      it.to = who;
+      toast('success', '🎁 ' + it.name + ' → 送给 ' + who);
+      deliverGift(who, it.name, Number(it.price) || 0);
+      SBemit('sb_updated');
+      if (currentPage === 'closet') openCloset();
+    }, GIFT_PICK_OPTS, true);
   }
   // 奢华体验下单：扣钱 → 把作者写的剧本种子(seed)注入正文输入框 → 主线AI对着写整段旅程
   // 和普通体验购买(purchase)的区别：普通的只填一句"我去了X"，这个填的是作者手写的一整段场景引导
@@ -2587,7 +2602,9 @@
   }
   // 联系人选择器（复用长按菜单样式）：按最近活跃排前10
   // opts（可选，转发那边不传=保持原样）：title 换标题、filter 换筛选、limit 换条数、empty 换空态提示
-  function pickContact(cb, opts) {
+  // deferOpen：调用方在点击事件里同步打开时传 true——菜单等这次点击冒泡完再挂上，
+  // 不然 chatEl 上「点菜单外＝收菜单」会把它当场关掉（10-14 拔草送不出去就是这个：菜单闪一下就没了，钱已经扣了）
+  function pickContact(cb, opts, deferOpen) {
     opts = opts || {};
     var npcs = (state && state.npcs) || {};
     var keys = Object.keys(npcs)
@@ -2606,7 +2623,11 @@
     }
     mh += '<button data-pick="">✕ 算了</button>';
     menu.innerHTML = mh;
-    panel.appendChild(menu);
+    if (deferOpen) {
+      setTimeout(function () { closeMsgMenu(); panel.appendChild(menu); _msgMenu = menu; }, 0);
+    } else {
+      panel.appendChild(menu);
+    }
     menu.addEventListener('click', function (e) {
       var pk = e.target && e.target.closest && e.target.closest('[data-pick]');
       if (!pk) return;
@@ -2615,7 +2636,7 @@
       _msgMenu = null;
       if (who) cb(who);
     });
-    _msgMenu = menu;
+    if (!deferOpen) _msgMenu = menu;
   }
   function bindFwdButtons(scopeEl) {
     var fbs = scopeEl.querySelectorAll('.sb-fwd');
@@ -2634,7 +2655,8 @@
     var btns = scopeEl.querySelectorAll('.sb-buy');
     for (var i = 0; i < btns.length; i++) {
       (function (b) {
-        b.addEventListener('click', function () {
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();   // 老规矩：下单后要开选人菜单，冒泡上去会被「点菜单外＝收菜单」当场关掉
           purchase(b.getAttribute('data-n') || '', parseInt(b.getAttribute('data-p'), 10) || 0, channel, b.getAttribute('data-img') || '', !!forceExp);
         });
       })(btns[i]);
@@ -3674,14 +3696,18 @@
         var paid0 = Number(c2.price) || 0;
         var offer0 = paid0 > 0 ? resellOffer(c2.name, paid0) : 0;
         var meta0 = paid0 > 0 ? (esc(c2.from || '') + ' · 入手 ' + fmtCNY(paid0) + ' · 回收价 ' + fmtCNY(offer0)) : (esc(c2.from || '') + ' · 入手价没记——点出二手补个市价');
-        h += '<div class="sb-rank"><div class="rb"><b>' + esc(c2.name) + '</b><small>' + meta0 + '</small></div><button class="sb-buy" data-i="' + i + '" data-o="' + offer0 + '">出二手</button></div>';
+        var toLine = c2.to ? ('<small>🎁 已送给 ' + esc(c2.to) + '</small>') : '';
+        var giveBtn = (!c2.to && !isExperience(c2.name)) ? '<button class="sb-buy sb-give" data-g="' + i + '">送人</button>' : '';
+        h += '<div class="sb-rank"><div class="rb"><b>' + esc(c2.name) + '</b><small>' + meta0 + '</small>' + toLine + '</div>' + giveBtn + '<button class="sb-buy" data-i="' + i + '" data-o="' + offer0 + '">出二手</button></div>';
       }
     }
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     bindPageChrome(closeChat);
-    var btns = chatEl.querySelectorAll('.sb-buy');
+    var btns = chatEl.querySelectorAll('.sb-buy[data-i]');
     for (var k = 0; k < btns.length; k++) { (function (b) { b.addEventListener('click', function () { resellItem(parseInt(b.getAttribute('data-i'), 10), parseInt(b.getAttribute('data-o'), 10)); }); })(btns[k]); }
+    var gbs = chatEl.querySelectorAll('.sb-give');
+    for (var g = 0; g < gbs.length; g++) { (function (b) { b.addEventListener('click', function (ev) { ev.stopPropagation(); giftFromCloset(parseInt(b.getAttribute('data-g'), 10)); }); })(gbs[g]); }
   }
   // 二手回收率按品类（玩家考据的市场规律）：纯金不跌破金价、硬奢珠宝/爱马仕保值、表和大牌包中游、鞋和衣服血亏
   function resellRate(name) {
@@ -3817,7 +3843,8 @@
     var btns = scope.querySelectorAll('.sb-buy');
     for (var k = 0; k < btns.length; k++) {
       (function (b) {
-        b.addEventListener('click', function () {
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();   // 同上：防选人菜单被秒关
           var n = b.getAttribute('data-n') || '';
           var p = parseInt(b.getAttribute('data-p'), 10) || 0;
           var kind = b.getAttribute('data-kind');
