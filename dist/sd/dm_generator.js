@@ -2556,7 +2556,8 @@ function buildDigest(sb) {
     }
     blocks.push(lines.join('\n'));
   }
-  var closet = (sb.closet || []).slice(-10).map(function (c) { return c.name + (c.to ? '→' + c.to : ''); });
+  var closet = (sb.closet || []).filter(function (c) { return c && c.name; }).slice(-10).map(function (c) { return c.name + (c.fake ? '（高仿）' : '') + (c.to ? '→' + c.to : ''); });
+  var hasFake = (sb.closet || []).slice(-10).some(function (c) { return c.fake && c.to; });
   var toyD = toyDigest(sb);   // 🎛 遥控玩具（谁戴着 / 开着时按在不在身边分写法）
   var poorD2 = poorDigest(sb);   // 🎭🧂🧰 租借 / 白嫖榜 / 零活
   if (!blocks.length && !closet.length && !toyD && !poorD2) return '';
@@ -2565,7 +2566,7 @@ function buildDigest(sb) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
   }
   if (closet.length) {
-    out += '【User 送出去的礼物（他买给她们的，收礼的人会戴着/用着出现，别人看得见的是"东西在她身上"，不是价格和来路；箭头后面是收礼人）】' + closet.join('、') + '\n';
+    out += '【User 送出去的礼物（他买给她们的，收礼的人会戴着/用着出现，别人看得见的是"东西在她身上"，不是价格和来路；箭头后面是收礼人）】' + closet.join('、') + (hasFake ? '（标「高仿」的是假货，User 送的时候说是专柜买的。收礼的人未必知道：见过真货的迟早看出来，被身边懂行的人点破也是一种可能；没看穿的就当真的戴）' : '') + '\n';
   }
   if (toyD) out += toyD;
   if (poorD2) out += poorD2;

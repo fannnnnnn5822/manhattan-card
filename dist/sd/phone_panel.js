@@ -2508,6 +2508,7 @@
   // 购物分两路（User 定稿）：实物 → 扣款直接入衣橱，不打扰主线（AI 通过衣橱摘要知道她拥有什么）；
   // 体验 → 扣款后把开头填进正文输入框，玩家补充后自己发送，AI 接着写这段体验。没有隐形空消息那回事了。
   function purchase(name, price, channel, img, forceExp) {
+    if (!name) return;   // 没有商品名的按钮不是购买按钮（10-14：租借按钮被当拔草绑上，每租一次多出一件空名零元货）
     var exp = forceExp || isExperience(name);
     var ok = true;
     // 这张卡买东西默认是**买给她**（不是入自己的衣橱）——下单前问一句送给谁，记进送礼账
@@ -2537,7 +2538,12 @@
     empty: '通讯录里还没人——先存着，回头在她私信的 ＋ 里送',
   };
   // 送出去要看得见（用户 10-13：「怎么送东西，怎么只有下单」）：礼物进她的私信，并让她本人回一句
-  function deliverGift(who, name, price) {
+  function deliverGift(who, name, price, fake) {
+    if (fake) {
+      callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] ' + name + '（专柜买的，寄到你那了）' }]);
+      SBemit('sb_request_dm', { reason: '🎁 送礼：User 送了「' + name + '」给 ' + who + '，说是专柜买的——其实是高仿（User 只花了 ' + fmtCNY(price) + '，他自己知道）。礼物已经到她手上。看不看得穿按 ' + who + ' 的眼力和人设：见过真货的老手一上手就知道（五金、走线、皮料、编码、配货单），可能当面拆穿、冷笑收下转头上论坛挂他、或者装不知道另有打算；没见过真货的多半当真欢喜。只让 ' + who + ' 本人回应；可以只有一句，也可以发语音', n: '1-2', to: [who] });
+      return;
+    }
     callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] ' + name + (price > 0 ? ' —— ' + fmtCNY(price) : '') + '（SugarElite 商城，已下单直接寄给你）' }]);
     SBemit('sb_request_dm', { reason: '🎁 送礼：User 刚买了「' + name + '」' + (price > 0 ? '（' + fmtCNY(price) + '）' : '') + '送给 ' + who + '，礼物已经到她手上。只让 ' + who + ' 本人回应：按她的人设和两人现在的关系收礼——真心的道谢、职业型的分寸、撒娇型的加码、拜金型的理所当然、杀猪盘的趁热打铁；可以只有一句，也可以发语音', n: '1-2', to: [who] });
   }
@@ -2545,7 +2551,7 @@
   function unsentGifts() {
     var cl = (state && state.closet) || [];
     var out = [];
-    for (var i = 0; i < cl.length; i++) if (cl[i] && !cl[i].to && !isExperience(cl[i].name)) out.push(i);
+    for (var i = 0; i < cl.length; i++) if (cl[i] && cl[i].name && !cl[i].to && !isExperience(cl[i].name)) out.push(i);
     return out;
   }
   // 在她的私信里点 ＋ →「🎁 送她」：一件就直接送，多件先挑一件（SD 的衣橱页没有入口，补送放这里）
@@ -2558,7 +2564,7 @@
       SBupdate(function (v) { var c0 = v.sb && v.sb.closet && v.sb.closet[idx]; if (c0 && c0.name === it.name && !c0.to) c0.to = who; return v; });
       it.to = who;
       toast('success', '🎁 ' + it.name + ' → 送给 ' + who);
-      deliverGift(who, it.name, Number(it.price) || 0);
+      deliverGift(who, it.name, Number(it.price) || 0, !!it.fake);
       SBemit('sb_updated');
     }
     if (idxs.length === 1) { give(idxs[0]); return; }
@@ -2569,7 +2575,7 @@
     var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">送 ' + esc(who) + ' 哪一件？</div>';
     for (var k = idxs.length - 1; k >= 0; k--) {
       var c = cl[idxs[k]];
-      mh += '<button data-gi="' + idxs[k] + '">' + esc(c.name) + (Number(c.price) > 0 ? ' <span style="opacity:.5;font-size:10px;">' + fmtCNY(Number(c.price)) + '</span>' : '') + '</button>';
+      mh += '<button data-gi="' + idxs[k] + '">' + esc(c.name) + (c.fake ? '（高仿）' : '') + (Number(c.price) > 0 ? ' <span style="opacity:.5;font-size:10px;">' + fmtCNY(Number(c.price)) + '</span>' : '') + '</button>';
     }
     mh += '<button data-gi="">✕ 算了</button>';
     menu.innerHTML = mh;
@@ -2590,7 +2596,7 @@
       SBupdate(function (v) { var c0 = v.sb && v.sb.closet && v.sb.closet[idx]; if (c0 && c0.name === it.name && !c0.to) c0.to = who; return v; });
       it.to = who;
       toast('success', '🎁 ' + it.name + ' → 送给 ' + who);
-      deliverGift(who, it.name, Number(it.price) || 0);
+      deliverGift(who, it.name, Number(it.price) || 0, !!it.fake);
       SBemit('sb_updated');
       if (currentPage === 'closet') openCloset();
     }, GIFT_PICK_OPTS, true);
@@ -2657,6 +2663,39 @@
   function rentedToday() {
     var r = state && state.rental;
     return (r && r.day === gameDay() && Array.isArray(r.items)) ? r.items : [];
+  }
+  // 🤫 假货（Fan 10-14：市场里挂一点假货）：衣橱里记的是真品名 + fake:true，送出去她看到的是真品名
+  var FAKES = [
+    ['bk', 'Hermès Birkin 25', '顶级原单 · 五金是镀的', 1880],
+    ['cf', 'Chanel CF 中号', '莆田直发 · 链条有点轻', 980],
+    ['rx', 'Rolex 绿水鬼', '一体机芯 · 秒针走得有点急', 1280],
+    ['love', 'Cartier LOVE 手镯', '1:1 · 螺丝刀不配', 399],
+    ['vca', 'VCA 四叶草项链', '专柜版 · 贝母是塑料的', 268],
+    ['cl', 'Louboutin 红底高跟鞋', '红底是自己刷的', 360],
+    ['dior', 'Dior 真我香水', '分装 · 兑过水', 99],
+  ];
+  function fakesHtml() {
+    var h = '<div class="sb-sec">🤫 莆田直发 · 懂的都懂</div>';
+    for (var i = 0; i < FAKES.length; i++) {
+      var f = FAKES[i];
+      h += '<div class="sb-rank"><div class="rb"><b>' + esc(f[1]) + '（高仿）</b><small>' + esc(f[2]) + '</small></div>' +
+        '<span class="ra">' + fmtCNY(f[3]) + '</span><button class="sb-buy sb-fake" data-f="' + f[0] + '">拔草</button></div>';
+    }
+    h += '<div class="sb-empty">送出去的时候，她看到的是真品的名字。看不看得穿，看她见没见过真货。</div>';
+    return h;
+  }
+  function buyFake(id) {
+    var f = null;
+    for (var i = 0; i < FAKES.length; i++) if (FAKES[i][0] === id) f = FAKES[i];
+    if (!f) return;
+    var ok = true;
+    try { ok = (DOC.defaultView || window).confirm('花 ' + fmtCNY(f[3]) + ' 拿下「' + f[1] + '」高仿？\n（送出去时她看到的是「' + f[1] + '」，不带价钱）'); } catch (e) {}
+    if (!ok) return;
+    if (!debit(f[3], '高仿 · ' + f[1], '莆田直发')) return;
+    addCloset({ name: f[1], price: f[3], fake: true, to: '', from: '莆田直发', img: '', time: nowT(), gameDay: gameDay() });
+    toast('success', '🤫 ' + f[1] + '（高仿）到手——选个人送出去；不选就先存着，回头在她私信的 ＋ 里送');
+    SBemit('sb_updated');
+    giftFromCloset(((state && state.closet) || []).length - 1);
   }
   function rentalHtml() {
     var on = rentedToday();
@@ -2818,6 +2857,8 @@
     panel.classList.remove('open');
   }
   function bindPoorKit() {
+    var fs = chatEl.querySelectorAll('.sb-fake');
+    for (var fi = 0; fi < fs.length; fi++) (function (b) { b.addEventListener('click', function (ev) { ev.stopPropagation(); buyFake(b.getAttribute('data-f')); }); })(fs[fi]);
     var rs = chatEl.querySelectorAll('.sb-rent');
     for (var i = 0; i < rs.length; i++) (function (b) { b.addEventListener('click', function (ev) { ev.stopPropagation(); rentItem(b.getAttribute('data-r')); }); })(rs[i]);
     var gs = chatEl.querySelectorAll('.sb-gig');
@@ -2875,7 +2916,7 @@
     }
   }
   function bindBuyButtons(scopeEl, channel, forceExp) {
-    var btns = scopeEl.querySelectorAll('.sb-buy');
+    var btns = scopeEl.querySelectorAll('.sb-buy[data-n]');   // 只认带商品名的；租借/高仿按钮也借 sb-buy 的样式，但各有自己的处理器
     for (var i = 0; i < btns.length; i++) {
       (function (b) {
         b.addEventListener('click', function (ev) {
@@ -2998,6 +3039,7 @@
           (t4.price > 0 ? '<span class="ra">' + fmtCNY(t4.price) + '</span><button class="sb-fwd" data-n="' + esc(t4.name) + '" data-p="' + t4.price + '" title="转发给联系人——圈内都懂的暗示">🔗</button><button class="sb-buy" data-n="' + esc(t4.name) + '" data-p="' + t4.price + '">拔草</button>' : '') + '</div>';
       }
       body += '<div class="sb-empty">看到什么就买什么。这是本版版规。</div>';
+      body += fakesHtml();
       body += rentalHtml();
     } else if (key === 'abyss') {
       title = '🕳️ 深渊区'; sub = 'no names. no questions.';
