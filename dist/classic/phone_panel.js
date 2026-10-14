@@ -6273,8 +6273,8 @@ var SBLAB_CARD = "classic";
     // ── 一掷千金（S市金主版）的固定NPC：只配了 Fish（Fan 10-13 挑的），别的后端走默认 ──
     // 10-14 用户推荐、Fan 转来的一批（Fish 上查过都在、中文试读时长正常）：苏念、沈冰月采用；纪思瑶、叶知秋不换（理由见各行）
     '苏念':             { fish: '2114c7a772354051a9523b61f85143a0' },   // 23岁穷学生、腼腆真诚：「小花衣こっこ」年轻、轻柔、气声、暖。⚠️ 这是日语训练的音色，读中文可能带口音，等 Fan 耳朵确认
-    '纪思瑶':           { fish: '6ce7ea8ada884bf3889fa7c7fb206691' },   // 杀猪盘前端、装 22 岁小白🥺：留 Fan 10-13 选的「御女茉莉」（软、气声、甜）；推荐的「骚气御姐音」是姐姐腔，和她叫"哥哥"的人设面具对不上
-    '叶知秋':           { fish: 'fbe02f8306fc4d3d915e9871722a39d5' },   // 邻居幼儿园老师、朴素温柔：留「嘉岚3.0」（软、日常口吻）；推荐的「御姐」是戏谑强势款（官方样句"跪得好看点"），不像她
+    '纪思瑶':           { fish: 'f44181a3d6d444beae284ad585a1af37' },   // 杀猪盘前端、装 22 岁小白🥺：10-14 换成用户推荐的「骚气御姐音」（Fan：除了 Akuma 都换）；之前是「御女茉莉」6ce7ea8a
+    '叶知秋':           { fish: '8a88ef7d77d748e59879d8994e216e01' },   // 邻居幼儿园老师、朴素温柔：10-14 换成用户推荐的「御姐」（Fan：除了 Akuma 都换）；之前是「嘉岚3.0」fbe02f83
     '沈冰月':           { fish: '8ce34d386ff2497f805003aeb4104b9c' },   // 28岁顶级职业SB、冷、算 ROI：10-14 换成推荐的「极品少御」（年轻的御、慢、气声）；之前的「风骚熟女」76930766 太熟太骚，她是冷
   };
 
@@ -6322,11 +6322,9 @@ var SBLAB_CARD = "classic";
   // 管家的联系人名在卡里是 SugarElite™（显示 S.）：一掷千金用中文女声「温柔」（Fan 10-13 听了论坛播报说「很好听，写进卡」），鎏金/原版沿用 S. 的英式 JARVIS
   if (CARD === 'classic') NPC_VOICE['S.'] = { local: '', fish: 'ae4f2bad30d54aeda048b0a06224ad3e', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };   // 原版是中文卡，S. 用气声旁白女声（10-14）
   NPC_VOICE['SugarElite™'] = CARD !== 'nyc' ? { fish: 'ae4f2bad30d54aeda048b0a06224ad3e' }   /* 10-14 换成「情感女声旁白」气声款（用户嫌「温柔」像客服，Fan 三选一定 v5） */ : { fish: '41f0953d7a6b4c078445c7e65d620eeb', openai: 'shimmer', gemini: 'Kore', minimax: 'presenter_female' };
-  // Akuma 在一掷千金换成用户推荐的「抖音欲（御姐音）」61fcf5da…：气声、玩味、"姐姐"腔，正是她叫"小少爷"那股劲；
-  // 原来那个「温柔动听女声」是安抚旁白款，太乖。鎏金/原版先不动（Fan 10-13 选的；要统一她说一声）
-  if (CARD === 'sd') NPC_VOICE['Akuma'] = Object.assign({}, NPC_VOICE['Akuma'], { fish: '61fcf5daf7d244a0b753cf92633f9079' });
+  // Akuma 三张卡都留 Fan 10-13 选的那个；用户推荐的「抖音欲」61fcf5da 试过，Fan 10-14 说除了 Akuma 都换
   // 卡里换掉的旧默认嗓子：玩家以前在设置页点过保存，会把当时显示的默认值一起存成"自己的"——读到这些就当没设，跟卡走
-  var RETIRED_FISH = { '沈冰月': ['76930766f91241a6881c139ab8752133'], 'Akuma': CARD === 'sd' ? ['faccba1a8ac54016bcfc02761285e67f'] : [] };
+  var RETIRED_FISH = { '沈冰月': ['76930766f91241a6881c139ab8752133'], '纪思瑶': ['6ce7ea8ada884bf3889fa7c7fb206691'], '叶知秋': ['fbe02f8306fc4d3d915e9871722a39d5'] };
   function overVal(over, n, backend) {
     var x = over && over[n] && over[n][backend];
     if (!x) return '';
