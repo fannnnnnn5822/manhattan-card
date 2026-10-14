@@ -2517,7 +2517,7 @@
     if (!exp) {
       // 先入衣橱再选人：选人菜单被关掉、点「✕ 算了」都不会丢东西（10-14 以前是选完才入橱，菜单一没，钱扣了东西也没了）
       addCloset({ name: name, price: price, to: '', from: channel, img: img || '', time: nowT(), gameDay: (state && state.game && state.game.day) || 1 });
-      toast('success', '🛍 ' + name + ' 已下单' + (price > 0 ? '（-' + fmtCNY(price) + '）' : '') + '——选个人送出去，不选就先放衣橱');
+      toast('success', '🛍 ' + name + ' 已下单' + (price > 0 ? '（-' + fmtCNY(price) + '）' : '') + '——选个人送出去；不选就先存着，回头在她私信的 ＋ 里送');
       SBemit('sb_updated');
       giftFromCloset(((state && state.closet) || []).length - 1);
     } else if (price > 0) {
@@ -2531,15 +2531,56 @@
   }
   // 送礼选人菜单的口径（下单时和衣橱补送共用）
   var GIFT_PICK_OPTS = {
-    title: '这件送给谁？（点「✕ 算了」＝先放衣橱，回头再送）',
+    title: '这件送给谁？（点「✕ 算了」＝先存着，回头在她私信的 ＋ 里送）',
     limit: 20,
     filter: function (np) { return np && np.unlocked !== false && !(np.name === 'SugarElite™'); },
-    empty: '通讯录里还没人——先放衣橱，回头再送',
+    empty: '通讯录里还没人——先存着，回头在她私信的 ＋ 里送',
   };
   // 送出去要看得见（用户 10-13：「怎么送东西，怎么只有下单」）：礼物进她的私信，并让她本人回一句
   function deliverGift(who, name, price) {
     callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] ' + name + (price > 0 ? ' —— ' + fmtCNY(price) : '') + '（SugarElite 商城，已下单直接寄给你）' }]);
     SBemit('sb_request_dm', { reason: '🎁 送礼：User 刚买了「' + name + '」' + (price > 0 ? '（' + fmtCNY(price) + '）' : '') + '送给 ' + who + '，礼物已经到她手上。只让 ' + who + ' 本人回应：按她的人设和两人现在的关系收礼——真心的道谢、职业型的分寸、撒娇型的加码、拜金型的理所当然、杀猪盘的趁热打铁；可以只有一句，也可以发语音', n: '1-2', to: [who] });
+  }
+  // 买了还没送出去的（to 为空的实物）
+  function unsentGifts() {
+    var cl = (state && state.closet) || [];
+    var out = [];
+    for (var i = 0; i < cl.length; i++) if (cl[i] && !cl[i].to && !isExperience(cl[i].name)) out.push(i);
+    return out;
+  }
+  // 在她的私信里点 ＋ →「🎁 送她」：一件就直接送，多件先挑一件（SD 的衣橱页没有入口，补送放这里）
+  function giftUnsentTo(who) {
+    var idxs = unsentGifts();
+    var cl = (state && state.closet) || [];
+    if (!idxs.length) { toast('info', '没有买好没送的东西——去 Trend 或 Elite 挑一件'); return; }
+    function give(idx) {
+      var it = cl[idx]; if (!it || it.to) return;
+      SBupdate(function (v) { var c0 = v.sb && v.sb.closet && v.sb.closet[idx]; if (c0 && c0.name === it.name && !c0.to) c0.to = who; return v; });
+      it.to = who;
+      toast('success', '🎁 ' + it.name + ' → 送给 ' + who);
+      deliverGift(who, it.name, Number(it.price) || 0);
+      SBemit('sb_updated');
+    }
+    if (idxs.length === 1) { give(idxs[0]); return; }
+    closeMsgMenu();
+    var menu = DOC.createElement('div');
+    menu.className = 'sb-msgmenu';
+    menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '18%';
+    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">送 ' + esc(who) + ' 哪一件？</div>';
+    for (var k = idxs.length - 1; k >= 0; k--) {
+      var c = cl[idxs[k]];
+      mh += '<button data-gi="' + idxs[k] + '">' + esc(c.name) + (Number(c.price) > 0 ? ' <span style="opacity:.5;font-size:10px;">' + fmtCNY(Number(c.price)) + '</span>' : '') + '</button>';
+    }
+    mh += '<button data-gi="">✕ 算了</button>';
+    menu.innerHTML = mh;
+    menu.addEventListener('click', function (e) {
+      var b = e.target && e.target.closest && e.target.closest('[data-gi]');
+      if (!b) return;
+      var v = b.getAttribute('data-gi');
+      closeMsgMenu(); _msgMenu = null;
+      if (v !== '') give(parseInt(v, 10));
+    });
+    setTimeout(function () { closeMsgMenu(); panel.appendChild(menu); _msgMenu = menu; }, 0);   // 等这次点击冒泡完再挂，防秒关
   }
   // 衣橱里还没送出去的那件 → 补送（玩家 10-14：拔草买了两件都没送出去，只好转发链接，被 Akuma 嘲讽）
   function giftFromCloset(idx) {
@@ -4876,6 +4917,8 @@
           '<button data-pa="loc">📍 发定位</button>' +
           '<button data-pa="pay">💸 转账给TA（从你钱包扣）</button>' +
           '<button data-pa="link">🔗 发链接（科普帖/账单/商品）</button>';
+        var ung = unsentGifts().length;
+        if (ung) mh += '<button data-pa="gift">🎁 送TA买好没送的（' + ung + ' 件）</button>';
       }
       mh += '<button data-pa="">✕ 算了</button>';
       menu.innerHTML = mh;
@@ -4894,6 +4937,10 @@
         }
         else if (act === 'acall' || act === 'vcall') startCall(name, act === 'vcall' ? 'video' : 'audio');
         else if (act === 'broke') { queueMsg(pickFrom(QUICK_POOLS.broke), 'text'); replyOne(name); }
+        else if (act === 'gift') {
+          if (npc.blocked) { toast('warning', name + ' 已经把你拉黑了，送不过去'); return; }
+          giftUnsentTo(name);
+        }
         else if (act === 'selfie') { queueMsg(pickFrom(QUICK_POOLS.selfie), 'image'); replyOne(name); }
         else if (act.charAt(0) === 'q') { queueMsg(SE_Q[parseInt(act.slice(1), 10)], 'text'); replyOne(name); }
         else if (act === 'ground') askGroupRound(name, npc.anon
