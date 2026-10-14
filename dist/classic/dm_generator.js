@@ -942,8 +942,40 @@ function describeState(sb) {
 var THINK_TAGS = 'thinking|think|thought|cot|analysis|plan|scratchpad|reasoning|draft';
 // 标签名后面那个 (?:\s[^>]*)?> 是守卫：只认 <draft> / <draft id="1">，不会把 <DRAFTINKG> 这种同头异名的壳子当草稿整块删掉
 var RE_THINK = new RegExp('<(' + THINK_TAGS + ')(?:\\s[^>]*)?>[\\s\\S]*?<\\/\\1\\s*>', 'gi');
+// ── 10-15 隐形手机记录（data-sbmemo）：给剧情总结插件（小白X 等）看的，玩家看不见、主线 AI 不读 ──
+// 小白X 的剧情总结直接读楼层原文，还默认把 ``` 到 ``` 之间整段删掉——气泡版私信全在 ```chat 围栏里，
+// 消费/送礼/卖二手只走隐形注入、根本不进楼层 → 总结里手机上发生的事一片空白。
+// 现在凡是"没以可读形式写进楼层"的手机动态，都压成纯文本行挂在最后一楼末尾，一楼只一个块（后来的行并进去）：
+//   \n<div hidden data-sbmemo>【手机记录·供剧情总结】\n行1\n行2</div>
+// 屏幕上看不见（hidden + 面板 EXTRA_CSS 双保险）；主线 prompt 里剥掉（stripMemoFromPrompt）；
+// 手机自己读正文（cleanProse / deepPlotFor / 论坛检测）也先剥掉。
+// ⚠️ 剥除铁律（User：剥离很容易删掉不该删的东西）：块里的字全经 memoSafe 消毒，永远不含 < 和 >——
+//    所以 SBMEMO_RE 用 [^<>]，只可能匹配到我们自己的块，绝不会越过块尾吃进正文。
+//    行与行之间用换行分（不用 <br>，<br> 带尖括号会破这条铁律）。全文件只认这一个正则，别处不许手写。
+var SBMEMO_HEAD = '<div hidden data-sbmemo>';
+var SBMEMO_TITLE = '【手机记录·供剧情总结】';
+var SBMEMO_RE = /\n?<div hidden data-sbmemo>[^<>]*?<\/div>/g;
+var SBMEMO_LINE_MAX = 300;     // 单条封顶：总结要的是"发生了什么"，逐字记录手机里有
+function stripMemo(s) { return String(s == null ? '' : s).replace(SBMEMO_RE, ''); }
+// 记录里不许出现能被当成标签/围栏/方括号标记的东西：< > 换 ‹ ›，[ ] 换全角（躲开 [WALLET]/[CLOSET]/[TIME] 解析），
+// ``` 换 '''，换行压成 /（一条占一行，行分隔符只能是我们自己加的换行）
+function memoSafe(s) {
+  return String(s == null ? '' : s)
+    .replace(/```/g, "'''")
+    .replace(/</g, '\u2039').replace(/>/g, '\u203a')
+    .replace(/\[/g, '\uff3b').replace(/\]/g, '\uff3d')
+    .replace(/[\r\n]+/g, ' / ')
+    .replace(/^\s+|\s+$/g, '');
+}
+function memoCap(s, max) { s = memoSafe(s); max = max || SBMEMO_LINE_MAX; return s.length > max ? s.slice(0, max) + '…' : s; }
+// 找楼里最后一个记录块：返回 {start, end}（end 指向块尾 </div> 之后）；没有返回 null
+function memoFind(txt) {
+  var re = new RegExp(SBMEMO_RE.source, 'g'), mm, last = null;
+  while ((mm = re.exec(txt))) last = { start: mm.index, end: mm.index + mm[0].length };
+  return last;
+}
 function cleanProse(s) {
-  return String(s || '')
+  return stripMemo(String(s || ''))       // 10-15 隐形手机记录不是剧情（不剥 = 手机内容被下面去标签那步放出来，回灌成"正文"）
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<!--[\s\S]*?-->/g, '')
@@ -2153,7 +2185,8 @@ async function runOnce(req) {
   // 追加这一轮手机往来（User发的+对方回的）到最新楼层：默认关，玩家在手机设置里可开。
   // 关着时主线照样通过 syncInject 隐形注入知道手机内容，只是不在正文里显示出来。
   var logRows = dms.concat(grows.length ? [{ name: gKeyReq }] : []);
-  if (floorLogOn()) { try { await appendPhoneLog(logRows); } catch (e) { console.warn('[SB-S v4] append phone log failed', e); } }
+  // 10-15：可见记录全关也照走——没写成可读形式的那部分要进隐形手机记录（给剧情总结插件）
+  try { await appendPhoneLog(logRows); } catch (e) { console.warn('[SB-S v4] append phone log failed', e); }
 }
 
 // ── 「手机动态」专属楼层：手机上发生的一切（私信往来/消费/卖二手/付账单）都更新进同一层，
@@ -2172,7 +2205,7 @@ async function appendPhoneFloor(lines) {
     if (m && m.role === 'assistant' && String(m.message || '').indexOf('data-sbphone') !== -1) {
       // 最后一楼就是手机动态层 → 并进去（同层累积，玩家没说话前不开新层）
       var txt = String(m.message || '');
-      if (txt.indexOf(body) !== -1) return;                    // 一模一样的内容已在 → 防重复
+      if (txt.indexOf(body) !== -1) return true;               // 一模一样的内容已在 → 防重复（10-15：已在也算写成了）
       var updated = txt.indexOf(PH_CLOSE) !== -1
         ? txt.replace(PH_CLOSE, '<br>' + body + PH_CLOSE)
         : (txt + '\n\n' + PH_OPEN + body + PH_CLOSE);          // 结构被人手改过 → 兜底再挂一个完整块
@@ -2180,13 +2213,14 @@ async function appendPhoneFloor(lines) {
     } else {
       await createChatMessages([{ role: 'assistant', message: PH_OPEN + body + PH_CLOSE, is_hidden: false }]);
     }
+    return true;                                               // 10-15 告诉 appendPhoneLog：可读版本写成了
   } catch (e) { console.warn('[SB-S v4] appendPhoneFloor failed', e); }
 }
 // 手机面板的消费/卖二手事件也走这层（"买东西也像消息一样注入"）——只有新式独立层开着才记消费，
 // 旧式开关保持它原来的样子：只记私信摘要，不掺购物
 eventOn('sb_floor_log', function (p) {
   if (!p || !p.lines || !p.lines.length) return;
-  if (!floorLogLayer()) return;
+  if (!floorLogLayer()) { appendSbMemo(p.lines); return; }   // 10-15 独立层没开 → 这些只活在注入里，给剧情总结留一份隐形记录
   appendPhoneFloor(p.lines);
 });
 
@@ -2205,11 +2239,12 @@ async function appendNarrativeLog(lines) {
     if (m.role !== 'assistant') return;                       // 只往 AI 正文楼追加，不动 User 楼
     var txt = String(m.message || '');
     if (txt.indexOf('data-sbphone') !== -1) return appendPhoneFloor(lines);   // 最后一楼是独立动态层（两开关混用时）→ 别贴进人家的折叠层里
-    if (txt.indexOf(body) !== -1) return;                     // 一模一样的内容已在 → 防重复
+    if (txt.indexOf(body) !== -1) return true;                // 一模一样的内容已在 → 防重复（10-15：已在也算写成了）
     var updated = txt.indexOf(PT_CLOSE) !== -1
       ? txt.replace(PT_CLOSE, '<br>' + body + PT_CLOSE)       // 这楼尾巴上已有折叠块 → 并进去
       : txt + '\n\n' + PT_OPEN + body + PT_CLOSE;
     await setChatMessages([{ message_id: m.message_id, message: updated }], { refresh: 'affected' });
+    return true;                                              // 10-15 告诉 appendPhoneLog：可读版本写成了（最后一楼是 User 的楼时上面直接 return，算没写成）
   } catch (e) { console.warn('[SB-S v4] appendNarrativeLog failed', e); }
 }
 
@@ -2242,6 +2277,82 @@ function bubBlock(groups) {
   }
   return out.join('\n');
 }
+// ── 10-15 隐形手机记录的写入 / 擦除 / 出 prompt 剥除（铁律见文件前部 SBMEMO_RE 那段）──
+// 写进最后一楼；最后一楼是 User 说的话 → 往回找最近的 AI 楼（和气泡版一样不动 User 的楼），找不到才认最后一楼。
+// 一楼只一个块：已有就在它的 </div> 前并进去；一模一样的行已在 → 不重复。
+// 所有写入排成一队（_memoQ）：连买两样东西时两次读-改-写不会互相覆盖。
+var _memoQ = Promise.resolve();
+function appendSbMemo(lines, max) {
+  _memoQ = _memoQ.then(function () { return writeSbMemo(lines, max); }, function () { return writeSbMemo(lines, max); });
+  return _memoQ;
+}
+async function writeSbMemo(lines, max) {
+  if (!lines || !lines.length) return;
+  var add = [];
+  for (var i = 0; i < lines.length; i++) { var t = memoCap(lines[i], max); if (t) add.push(t); }
+  if (!add.length) return;
+  try {
+    var lastId = await getLastMessageId();
+    if (lastId == null || lastId < 0) return;
+    var msgs = await getChatMessages(Math.max(0, lastId - 5) + '-' + lastId);
+    if (!msgs || !msgs.length) return;
+    var m = msgs[msgs.length - 1];
+    if (m.role === 'user') {
+      for (var k = msgs.length - 2; k >= 0; k--) { if (msgs[k] && msgs[k].role === 'assistant') { m = msgs[k]; break; } }
+    }
+    var txt = String(m.message == null ? '' : m.message);
+    var blk = memoFind(txt);
+    var updated;
+    if (blk) {
+      var inner = txt.slice(blk.start, blk.end);
+      add = add.filter(function (l) { return inner.indexOf('\n' + l + '\n') === -1 && inner.indexOf('\n' + l + '</div>') === -1; });   // 这几行已在 → 不重复
+      if (!add.length) return;
+      var close = blk.end - 6;                                   // '</div>'.length：块里不可能有别的 </div>，这就是块自己的尾巴
+      updated = txt.slice(0, close) + '\n' + add.join('\n') + txt.slice(close);
+    } else {
+      updated = txt + '\n' + SBMEMO_HEAD + SBMEMO_TITLE + '\n' + add.join('\n') + '</div>';   // 原文一个字不动，块整个接在后面
+    }
+    await setChatMessages([{ message_id: m.message_id, message: updated }], { refresh: 'affected' });
+  } catch (e) { console.warn('[SB-S v4] appendSbMemo failed', e); }
+}
+// 擦楼层时顺手摘掉记录里提到 TA 的行（认法和可见块一样：认段落标题）；一行不剩就把块整个拆了（连同块前那个换行）
+function scrubMemo(txt, needle) {
+  return String(txt).replace(SBMEMO_RE, function (blk) {
+    var lead = blk.charAt(0) === '\n' ? '\n' : '';
+    var inner = blk.slice(lead.length + SBMEMO_HEAD.length, blk.length - 6);
+    var ls = inner.split('\n');
+    var kept = ls.filter(function (l) { return l.indexOf(needle) === -1; });
+    if (kept.length === ls.length) return blk;                 // 这块里没 TA → 原样不动
+    kept = kept.filter(function (l) { return l && l !== SBMEMO_TITLE; });
+    if (!kept.length) return '';
+    return lead + SBMEMO_HEAD + SBMEMO_TITLE + '\n' + kept.join('\n') + '</div>';
+  });
+}
+// 主线 AI 不读这块：发 prompt 前从每条消息里剥掉（dryRun 算 token 时也剥，数字才对得上）。只剥块本身，别的一个字不碰。
+// 小白X 的总结请求自己直连后端（/api/backends/chat-completions/generate），不经过这个事件，所以它照样读得到。
+function stripMemoFromPrompt(d) {
+  try {
+    var arr = d && d.chat;
+    if (!Array.isArray(arr)) return;
+    for (var i = 0; i < arr.length; i++) {
+      var msg = arr[i];
+      if (!msg) continue;
+      if (typeof msg.content === 'string') {
+        if (msg.content.indexOf('data-sbmemo') !== -1) msg.content = stripMemo(msg.content);
+      } else if (Array.isArray(msg.content)) {
+        for (var j = 0; j < msg.content.length; j++) {
+          var part = msg.content[j];
+          if (part && typeof part.text === 'string' && part.text.indexOf('data-sbmemo') !== -1) part.text = stripMemo(part.text);
+        }
+      }
+    }
+  } catch (e) {}
+}
+// 文本补全接口（非 chat completion）走的是拼好的一整条 prompt
+function stripMemoFromTextPrompt(d) {
+  try { if (d && typeof d.prompt === 'string' && d.prompt.indexOf('data-sbmemo') !== -1) d.prompt = stripMemo(d.prompt); } catch (e) {}
+}
+
 async function appendChatBubbles(groups) {
   if (!groups || !groups.length) return;
   var body = bubBlock(groups);
@@ -2256,6 +2367,11 @@ async function appendChatBubbles(groups) {
     if (m.role === 'assistant') {
       if (txt.indexOf(body) !== -1) return;                                  // 一模一样的内容已在 → 防重复
       var tail = txt.replace(/\s+$/, '');
+      // 10-15：楼尾挂着隐形手机记录 → 先摘下来再找围栏，写完原样挂回最后。
+      // 不摘的话围栏就不在楼尾了，下一轮气泡会另起第二个围栏（可见效果就变了）
+      var memoTail = '';
+      var mb = memoFind(tail);
+      if (mb && mb.end === tail.length) { memoTail = tail.slice(mb.start); tail = tail.slice(0, mb.start).replace(/\s+$/, ''); }
       var updated;
       // 这层尾巴上已经有我们写的气泡块 → 并进同一个围栏，不叠第二个。
       // 用下标定位最后一个围栏（不用正则跨整条消息匹配——正文里若还有别的代码块，
@@ -2266,6 +2382,7 @@ async function appendChatBubbles(groups) {
       } else {
         updated = tail + '\n\n```chat\n' + body + '\n```';
       }
+      if (memoTail) updated += (memoTail.charAt(0) === '\n' ? '' : '\n') + memoTail;   // 10-15 挂回去（必须另起一行，不然会粘在围栏的 ``` 后面）
       await setChatMessages([{ message_id: m.message_id, message: updated }], { refresh: 'affected' });
     } else {
       // 最后一层是 User 说的话 → 另起一层放气泡，不动 User 的楼
@@ -2405,12 +2522,14 @@ async function scrubNpcFloor(name) {
       var updates = [];
       var re = /(<details data-sb(?:phone|tail)><summary>[^<]*<\/summary><div>)([\s\S]*?)(<\/div><\/details>)/g;
       var bubNeedle = floorTitleOf(name, isG);            // 气泡块是纯文本，不转义
+      var memoNeedle = memoSafe(floorTitleOf(name, isG));  // 10-15 隐形手机记录里的标题是 memoSafe 过的
       for (var i = 0; i < (msgs || []).length; i++) {
         var m = msgs[i];
         var txt = String(m.message || '');
-        var hasFold = txt.indexOf('data-sb') !== -1 && txt.indexOf(needle) !== -1;
+        var hasFold = /data-sb(?:phone|tail)/.test(txt) && txt.indexOf(needle) !== -1;   // 10-15 收窄：data-sbmemo 也以 data-sb 开头，别让它把楼误判成有折叠块
         var hasBub = txt.indexOf('```chat') !== -1 && txt.indexOf(bubNeedle) !== -1;
-        if (!hasFold && !hasBub) continue;
+        var hasMemo = txt.indexOf('data-sbmemo') !== -1 && txt.indexOf(memoNeedle) !== -1;   // 10-15
+        if (!hasFold && !hasBub && !hasMemo) continue;
         var out = txt;
         if (hasFold) {
           out = out.replace(re, function (all, p1, body, p3) {
@@ -2420,7 +2539,8 @@ async function scrubNpcFloor(name) {
           });
         }
         if (hasBub) out = scrubBubbleBlocks(out, bubNeedle);
-        out = out.replace(/\n{3,}/g, '\n\n');
+        if (hasFold || hasBub) out = out.replace(/\n{3,}/g, '\n\n');   // 10-15：只有可见块动过才收空行；只动隐形记录的楼，正文一个字不碰
+        if (hasMemo) out = scrubMemo(out, memoNeedle);
         if (out !== txt) updates.push({ message_id: m.message_id, message: out });
       }
       if (updates.length) {
@@ -2450,6 +2570,7 @@ async function appendPhoneLog(dms) {
   var names = {};
   for (var i = 0; i < dms.length; i++) names[dms[i].name] = true;
   var lines = [];
+  var memoLines = [];   // 10-15 隐形手机记录用：同样的行，但每条消息先 memoSafe 再封顶 300 字
   var groups = [];      // 气泡版用的结构化数据：[{name, time, rows:[{who,text}]}]
   var marks = {};
   try {
@@ -2495,15 +2616,19 @@ async function appendPhoneLog(dms) {
       }
       if (!segLines.length) continue;
       lines.push((isGrp ? '💬〔' : '📩〔') + nowTime() + '〕' + floorTitleOf(nm, isGrp) + '：' + segLines.join(' ⇢ '));
+      memoLines.push((isGrp ? '💬〔' : '📩〔') + nowTime() + '〕' + floorTitleOf(nm, isGrp) + '：' + segLines.map(function (x) { return memoCap(x); }).join(' ⇢ '));
       groups.push({ name: nm, time: nowTime(), rows: rows, from: segStart, to: h.length, isGroup: isGrp });
       marks[nm] = h.length;
     }
   } catch (e) {}
   if (!lines.length) return;
   // 三选一（手机设置里互斥切换）：旧式=贴正文楼尾、新式=独立折叠层、气泡版=```chat 围栏渲染成聊天气泡（UWU）
-  if (floorLogTail()) await appendNarrativeLog(lines);
-  if (floorLogLayer()) await appendPhoneFloor(lines);
+  var readable = false;   // 10-15：这轮私信有没有以 HTML 折叠块的形式写进楼层（那种总结插件本来就读得到）
+  if (floorLogTail()) { if (await appendNarrativeLog(lines)) readable = true; }
+  if (floorLogLayer()) { if (await appendPhoneFloor(lines)) readable = true; }
   if (floorLogBubble()) await appendChatBubbles(groups);
+  // 10-15 气泡版（```chat 会被小白X 整段删）、全关、或楼尾版没写成 → 补一份隐形手机记录；折叠块版已经可读，不重复记
+  if (!readable) await appendSbMemo(memoLines, 100000);
   // 已注入的推水位线，下轮不重复
   try {
     await updateVariablesWith(function (v) {
@@ -2904,7 +3029,7 @@ async function onMainMessage(message_id) {
     // ── 论坛发帖检测（独立于标记处理）：正文描述 User 发帖 → 自动触发一批匹配 XP 的陌生人私信 ──
     if (!isSwipe) {
       try {
-        if (/(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(text)) {
+        if (/(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(stripMemo(text))) {   // 10-15 隐形手机记录里的私信提到发帖不算
           // 这一楼正文整段给（2026-09-16 拔掉前 800 字截断）：原来截的是没清洗的原文，开头常是注释/状态栏，
           // 800 字里可能一句剧情都没有。现在先 cleanProse 去掉脚手架，再整段当 reason 喂给生成器
           var forumSnippet = cleanProse(text);
@@ -3917,7 +4042,7 @@ async function deepPlotFor(name, budget) {
     for (var t = Math.max(0, arr.length - 6); t < arr.length; t++) take[t] = 1;   // 最近6层无条件收（此刻的处境）
     var hits = 0;
     for (var i = arr.length - 1; i >= 0; i--) {
-      var hay = String((arr[i] && arr[i].message) || '').toLowerCase();
+      var hay = stripMemo((arr[i] && arr[i].message) || '').toLowerCase();   // 10-15 隐形手机记录里提到 TA 不算正文命中
       var found = false;
       for (var k = 0; k < keys.length; k++) { if (hay.indexOf(keys[k]) !== -1) { found = true; break; } }
       if (!found) continue;
@@ -4367,6 +4492,8 @@ eventOn('sb_request_dm', syncInject);                       // 玩家刚在手�
 eventOn('sb_updated', syncInject);                          // NPC 回了消息 → 同步
 try { eventOn(tavern_events.GENERATION_AFTER_COMMANDS, syncInject); } catch (e) {}  // 每次主线生成前兜底刷新
 try { eventOn(tavern_events.MESSAGE_RECEIVED, onMainMessage); } catch (e) {}        // 正文钱包标记入账
+try { eventOn(tavern_events.CHAT_COMPLETION_PROMPT_READY, stripMemoFromPrompt); } catch (e) {}   // 10-15 隐形手机记录不进主线 prompt
+try { eventOn(tavern_events.GENERATE_AFTER_COMBINE_PROMPTS, stripMemoFromTextPrompt); } catch (e) {}   // 10-15 文本补全接口同理
 // 气泡反向同步（来自UWU，默认关）：删楼层/重roll → 扫剩下的楼层，气泡里没了的私信手机里也撤掉
 try { eventOn(tavern_events.MESSAGE_DELETED, scheduleBubbleSync); } catch (e) {}
 try { eventOn(tavern_events.MESSAGE_SWIPED, scheduleBubbleSync); } catch (e) {}
