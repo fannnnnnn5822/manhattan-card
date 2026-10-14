@@ -4450,6 +4450,7 @@
     }
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-floor-toggle" style="flex:1;">📄 私信摘要贴正文楼尾：' + (tailOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-floor2-toggle" style="flex:1;">📱 手机动态独立折叠层：' + (layerOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">用小白X 剧情总结的玩家必开（气泡模式里的私信它读不到）</div>';   // 10-15 小白X 总结默认删 ``` 围栏
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">三种"写进正文"<b>三选一</b>（开一个会自动关掉另外两个，也可以三个都关）：<b>💬 聊天气泡</b>=私信直接渲染成气泡出现在正文里，读起来就是"她低头看了眼手机"那种感觉（默认，来自 UWU 老师）；<b>📄 贴正文楼尾</b>=每轮私信压成小引用块接在剧情最后一楼尾巴上（最早那版）；<b>📱 独立动态层</b>=专门一层记手机上的一切（私信/买东西/卖二手/付账单），平时折叠点开才看。三种都<b>只记你回复过的对话</b>：你一回复，TA之前的搭讪+你的回复+TA的回应整段进正文；从头到尾没搭理的人一个字不占正文。三种正文 AI 都读得到。<b>全关也不影响正文「知道」手机内容</b>——后台另有隐形记忆在同步。</div>';
     // 🧠 AI 记忆的私信条数：60/150/300 三档循环
     var memN = 150; try { memN = parseInt(VIEW.localStorage.getItem('sbnyc_dm_mem'), 10) || 150; } catch (e) {}
