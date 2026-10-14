@@ -1075,6 +1075,20 @@
     '#sbnyc-panel .sb-msg.me .sb-qt{border-left-color:rgba(255,255,255,.75);background:rgba(255,255,255,.18);color:rgba(255,255,255,.92);}',
     '#sbnyc-panel .sb-msg.transfer{align-self:flex-start;background:linear-gradient(135deg,#f7c774,#e89d38);color:#fff;border-radius:14px;padding:12px 14px;max-width:200px;}',
     '#sbnyc-panel .sb-msg.transfer.me{align-self:flex-end;}',
+    // 🎁 礼物卡：奶白卡纸 + 黑礼盒 + 酒红缎带；夜间模式也保持卡纸色（礼物卡本来就该亮一下）
+    '#sbnyc-panel .sb-msg.sb-gift{align-self:flex-start;width:208px;max-width:208px;padding:0;background:#fbf7f0;color:#3a2a20;border:1px solid #e3d5bf;border-radius:14px;border-bottom-left-radius:4px;overflow:hidden;box-shadow:0 6px 18px rgba(70,35,15,.12);}',
+    '#sbnyc-panel .sb-msg.sb-gift.me{align-self:flex-end;border-bottom-left-radius:14px;border-bottom-right-radius:4px;}',
+    '#sbnyc-panel .sb-gift .gbox{position:relative;height:58px;background:linear-gradient(90deg,transparent 45%,#7d1a2a 45%,#7d1a2a 55%,transparent 55%),linear-gradient(180deg,transparent 42%,#7d1a2a 42%,#7d1a2a 58%,transparent 58%),linear-gradient(160deg,#26201c,#14110f);}',
+    '#sbnyc-panel .sb-gift .gbow{position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#b23a4c,#6a1322);box-shadow:-13px -3px 0 -3px #8e2235,13px -3px 0 -3px #8e2235;}',
+    '#sbnyc-panel .sb-gift .gbd{padding:10px 14px 9px;}',
+    '#sbnyc-panel .sb-gift .gk{font-family:var(--font-en);font-size:9px;letter-spacing:1.6px;color:#a2804f;}',
+    '#sbnyc-panel .sb-gift .gn{font-family:var(--font-cn);font-size:15px;font-weight:600;line-height:1.35;margin-top:4px;color:#2a1d15;}',
+    '#sbnyc-panel .sb-gift .gp{font-family:var(--font-en);font-size:12px;color:#a2804f;margin-top:2px;}',
+    '#sbnyc-panel .sb-gift .gm{font-family:var(--font-cn);font-weight:400;font-size:13px;line-height:1.55;color:#5a4334;margin-top:8px;padding-top:8px;border-top:1px dashed #e0cfb4;}',
+    '#sbnyc-panel .sb-gift .gm:before{content:"\\201C";color:#b48f5c;margin-right:1px;}',
+    '#sbnyc-panel .sb-gift .gm:after{content:"\\201D";color:#b48f5c;margin-left:1px;}',
+    '#sbnyc-panel .sb-gift .gt{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#a89a87;margin-top:8px;}',
+    '#sbnyc-panel .sb-gift .gt .mt{color:#a89a87;position:static;margin:0;}',
     '#sbnyc-panel .sb-msg.transfer .ta{font-family:var(--font-en);font-size:22px;font-weight:700;line-height:1.1;}',
     '#sbnyc-panel .sb-msg.transfer .tl{font-size:10px;letter-spacing:1px;opacity:.9;margin-top:2px;}',
     '#sbnyc-panel .sb-msg.media{font-style:italic;border:1px dashed var(--gold);background:var(--paper-3);color:var(--ink-sub);font-size:12px;}',
@@ -1941,11 +1955,29 @@
     }
     var rows = root.querySelectorAll('.sb-dmrow');
     for (var i = 0; i < rows.length; i++) { (function (r) { r.addEventListener('click', function () { var n = r.getAttribute('data-name'); if (n && npcs[n]) openChat(n, npcs[n]); }); })(rows[i]); }
+    // 📅 到点的行程（玩家 10-14 问：约好时间、到点刷新对方不主动发消息）：刷新时把「现在该发生的约」写进 reason，
+    // 不然生成器只看到一张行程表，不知道现在就是那个钟点
+    var dueSchedNote = function () {
+      var g = (state && state.game) || {};
+      var tm = String(g.time || '').match(/^(\d{1,2}):(\d{2})$/);
+      if (!tm) return '';
+      var now = (+tm[1]) * 60 + (+tm[2]), day = g.day || 1, due = [];
+      ((state && state.schedule) || []).forEach(function (s) {
+        if (!s || s.done || (s.gameDay != null && s.gameDay !== day)) return;
+        var st = String(s.txt || '').match(/(\d{1,2}):(\d{2})/);
+        if (!st) return;
+        var d = now - ((+st[1]) * 60 + (+st[2]));
+        if (d >= -20 && d <= 120) due.push(s.txt);
+      });
+      if (!due.length) return '';
+      return '。现在是 ' + g.time + '，到了约好的时间：「' + due.slice(0, 3).join('」「') + '」——约的那个人这一轮要主动来消息'
+        + '（到了、在路上、问人在哪、临时有事改时间、干脆放鸽子，按他的人设和你们的关系来）';
+    };
     var btns = root.querySelectorAll('.sb-abtn');
     for (var j = 0; j < btns.length; j++) { (function (b) { b.addEventListener('click', function () {
       var a = b.getAttribute('data-act');
       if (a === 'refresh') {
-        SBemit('sb_request_dm', { reason: '玩家刷新手机，看看有没有新消息' });
+        SBemit('sb_request_dm', { reason: '玩家刷新手机，看看有没有新消息' + dueSchedNote() });
         b.innerHTML = '⏳ 生成中…'; setStatus('⏳ 正在生成私信…');
         setTimeout(function () { b.innerHTML = sbIcon('refresh', 14) + ' 刷新'; }, 8000);
       }
@@ -5191,7 +5223,17 @@
       }
       return '<div class="sb-msg sb-tkc"' + dataA + ' data-tp="toy"><div class="tl">' + TOY_CARD_IC + 'TOY·LINK</div><div class="ta" style="font-size:14px;">' + esc(c) + '</div>' + tH + '</div>';
     }
-    if (type === 'gift') return '<div class="sb-msg transfer"' + dataA + ' data-tp="gift"><div class="tl">Gift · 已入衣橱</div><div class="ta" style="font-size:16px;">🎁 ' + esc(c) + '</div>' + tH + '</div>';
+    if (type === 'gift') {   // 🎁 礼物卡（10-14）：黑色礼盒 + 酒红缎带，下面是商品名、价格和他手写在小卡上的一句
+      var gf = m.gift || { name: c, price: 0, note: '' };
+      var gFrom = (isU ? 'YOU' : (gWho || trName || '')).toUpperCase();
+      return '<div class="sb-msg sb-gift' + (isU ? ' me' : '') + '"' + dataA + ' data-tp="gift">'
+        + '<div class="gbox"><i class="gbow"></i></div>'
+        + '<div class="gbd"><div class="gk">A GIFT FROM ' + esc(gFrom) + '</div>'
+        + '<div class="gn">' + esc(gf.name || c) + '</div>'
+        + (gf.price > 0 ? '<div class="gp">$' + Number(gf.price).toLocaleString('en-US') + '</div>' : '')
+        + (gf.note ? '<div class="gm">' + esc(gf.note) + '</div>' : '')
+        + '<div class="gt">已入衣橱' + tH + '</div></div></div>';
+    }
     if (type === 'image') {
       // 消息带 imgUrl（🎨 AI生图）→ 渲染真实 <img>；否则保持旧文字样式（UWU）
       if (m.imgUrl) {
@@ -6311,8 +6353,9 @@ var SBLAB_CARD = "nyc";
     // 陌生人没有名字可配：按人设标签/简介里的关键词自动配（Fan 10-13：「SB卡里有没有土大款」——随机金主里有暴发户这一型）
     var byArch = archeVoice(name, backend);
     if (byArch) return byArch;
-    return ({ local: '', fish: '', openai: 'nova', gemini: 'Kore', minimax: 'female-shaonv' })[backend];
+    return '';   // 没配的人交给设置页「默认音色」格；那格也空才用各后端内置默认（见 BUILTIN_VOICE）
   }
+  var BUILTIN_VOICE = { openai: 'nova', gemini: 'Kore', minimax: 'female-shaonv' };
   var ARCHE_VOICE = [
     { re: /暴发户|土豪|土大款|煤老板|大款|暴富/, fish: '57582c19a8b24de08adb22d2544b3be4' },   // 「魔女+战士」：中年、洪亮、霸道——Fan 10-13 选的土大款嗓子
   ];
@@ -6348,6 +6391,8 @@ var SBLAB_CARD = "nyc";
   // 卡的默认语速：玩家没在 🎙 里改过就用它。一掷千金 0.9（Fan 10-14：床戏台词念太快）；别的卡 1
   var CARD_SPEED = CARD === 'sd' ? 0.8 : 0.9;   // 10-14 Fan 又听了一轮：一掷千金 0.9 仍快 → 0.8；S. 的英文也快 → 鎏金/原版 0.9
   function speedOf(cfg) { return Number(cfg && cfg.speed) || CARD_SPEED; }
+  // 喘息句（拟声+省略号两处以上）单独一个语速（Fan 10-14：平时讲话和 NSFW 语速分开调）；没填就比平时慢一成多
+  function moanSpeedOf(cfg) { return Number(cfg && cfg.moanSpeed) || +(speedOf(cfg) * 0.88).toFixed(2); }
 
   // 每人音色：存 localStorage sbnyc_npc_voice（{名字:{后端:音色}}），配置面板里按行编辑
   // 固定 NPC 名单：从聊天变量里拿 persistent 的联系人（群和 SugarElite 不算），鎏金/原版再并上预填表里的名字
@@ -6456,7 +6501,7 @@ var SBLAB_CARD = "nyc";
   // ── 四家 TTS 后端 ──
   async function callTtsApi(cfg, text, npcName) {
     var url = String(cfg.url || '').replace(/\/+$/, '');
-    var voice = voiceOf(npcName, cfg.backend);
+    var voice = voiceOf(npcName, cfg.backend) || (cfg.backend !== 'fish' && cfg.backend !== 'local' ? (cfg.voice || BUILTIN_VOICE[cfg.backend] || '') : '');
 
     // ── 本地服务（CosyVoice / GPT-SoVITS / 任何 POST /tts → wav 的）：NSFW 唯一的路 ──
     if (cfg.backend === 'local') {
@@ -6559,7 +6604,7 @@ var SBLAB_CARD = "nyc";
     }
 
     // ── MiniMax（中文音色最好；音频是 hex 字符串不是 base64！）──
-    var mr = await fetchTimeout((url || 'https://api.minimax.chat') + '/v1/t2a_v2' + (cfg.groupId ? ('?GroupId=' + cfg.groupId) : ''), {
+    var mr = await fetchTimeout((url || 'https://api.minimaxi.com') + '/v1/t2a_v2' + (cfg.groupId ? ('?GroupId=' + cfg.groupId) : ''), {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
       body: JSON.stringify({
         model: cfg.model || 'speech-02-turbo', text: text, stream: false,
@@ -6570,7 +6615,18 @@ var SBLAB_CARD = "nyc";
     if (!mr.ok) throw new Error(await ttsErr(mr, 'MiniMax'));
     var mj = await mr.json();
     var hex = (mj.data || {}).audio || '';
-    if (!hex) throw new Error('MiniMax 没返回音频：' + (((mj.base_resp || {}).status_msg) || '未知'));
+    if (!hex) {
+      var mcode = (mj.base_resp || {}).status_code, mmsg = (mj.base_resp || {}).status_msg || '未知';
+      var MM_ERR = {
+        1004: 'Key 不对（复制时多了空格或少了一截？）',
+        2049: 'Key 和地址对不上：国内的 Key 地址留空（或填 https://api.minimaxi.com），海外 minimax.io 的 Key 填 https://api.minimax.io',
+        1008: '额度用完了',
+        1002: '请求太快被限流了，等一会儿再试', 1039: '请求太快被限流了，等一会儿再试',
+        1026: '这句话被内容审核拦了——换 Fish 或本地后端', 1027: '这句话被内容审核拦了——换 Fish 或本地后端',
+        2013: '参数不对，多半是音色 ID 写错了'
+      };
+      throw new Error('MiniMax：' + (MM_ERR[mcode] || ('没返回音频（' + mmsg + '）')));
+    }
     return abToDataUrl(hexToBytes(hex).buffer, 'audio/mpeg');
   }
 
@@ -6639,6 +6695,8 @@ var SBLAB_CARD = "nyc";
     btn.textContent = '⏳';
     toast('正在合成…');
     try {
+      // 语音条里的喘息句也走单独的语速（通话那边在 callSpeak 里）
+      if ((text.match(MOAN_RE) || []).length >= 2) cfg = Object.assign({}, cfg, { speed: moanSpeedOf(cfg) });
       var dataUrl = await callTtsApi(cfg, text, info.name);
       await dbPut('blobs', k, dataUrl);
       await playRef(k, btn);
@@ -6970,7 +7028,7 @@ var SBLAB_CARD = "nyc";
     var cap = Number(cfg.maxLen) || 240;
     if (text.length > cap) text = text.slice(0, cap);       // 通话里不弹「太长」的 toast，默默截
     if ((text.match(MOAN_RE) || []).length < 2) return speakOne(cfg, text, name, sig);
-    cfg = Object.assign({}, cfg, { speed: speedOf(cfg) * 0.88 });
+    cfg = Object.assign({}, cfg, { speed: moanSpeedOf(cfg) });
     var raw = text.match(/[^….]+(?:…+|\.{3,})?/g) || [text], pieces = [];
     raw.forEach(function (p) { p = p.trim(); if (!p) return; if (pieces.length && p.replace(/[….\s]/g, '').length < 2) pieces[pieces.length - 1] += p; else pieces.push(p); });
     if (pieces.length < 2) return speakOne(cfg, text, name, sig);
@@ -7167,10 +7225,10 @@ var SBLAB_CARD = "nyc";
     // 每个格子标上「哪些后端用得着」，选了 Fish 就只露 Fish 的那几格——别让玩家对着 GroupId、参考音频发呆
     function fld(forList, html) { return '<label data-for="' + forList + '" style="display:block;margin-bottom:10px;">' + html + '</label>'; }
     var HINT = {   // 同一格在不同后端下的提示语
-      url:   { fish: '已填好公益站地址，不用动；用 fish.audio 自己的 Key 就清空这格走官方', local: '默认 http://127.0.0.1:9880', openai: '中转站填中转地址；留空走官方', gemini: '留空走官方', minimax: '留空走官方' },
+      url:   { fish: '已填好公益站地址，不用动；用 fish.audio 自己的 Key 就清空这格走官方', local: '默认 http://127.0.0.1:9880', openai: '中转站填中转地址；留空走官方', gemini: '留空走官方', minimax: '国内的 Key 留空；海外 minimax.io 的 Key 填 https://api.minimax.io' },
       key:   { fish: '公益站登录后「我的 API 令牌」那串 sk-；用官方就填 fish.audio 后台的 Key', openai: 'API Key', gemini: 'API Key', minimax: 'API Key' },
       model: { local: '模型/说话人名（留空走默认）', openai: '留空走 tts-1', gemini: '留空走 gemini-2.5-flash-preview-tts', minimax: '留空走 speech-02-turbo' },
-      voice: { fish: '没单独配的人都用它' + (fishDefaultVoice() ? '；留空就用卡自带的那个' : '') + '。想换：去 <a href="https://fish.audio/zh-CN/discovery" target="_blank" rel="noopener" style="color:#b89968;">fish.audio 音色库</a> 点一个音色，网址末尾那串就是', openai: 'alloy / echo / nova 等', gemini: 'Kore / Puck 等', minimax: '音色 ID' },
+      voice: { fish: '没单独配的人都用它' + (fishDefaultVoice() ? '；留空就用卡自带的那个' : '') + '。想换：去 <a href="https://fish.audio/zh-CN/discovery" target="_blank" rel="noopener" style="color:#b89968;">fish.audio 音色库</a> 点一个音色，网址末尾那串就是', openai: 'alloy / echo / nova 等（留空用 nova）', gemini: 'Kore / Puck 等（留空用 Kore）', minimax: '音色 ID，如 female-tianmei（留空用 female-shaonv）' },
     };
     ov.innerHTML =
       '<h3 style="margin:4px 0 12px;">🎙 语音配置 <small style="font-weight:400;opacity:.6;">SB实验室</small></h3>' +
@@ -7190,8 +7248,8 @@ var SBLAB_CARD = "nyc";
         '<button type="button" id="lt-tryline" style="margin-top:6px;padding:5px 10px;border:1px solid #b89968;border-radius:999px;background:#fff;color:#1a2a3a;cursor:pointer;font-size:12px;">🔊 试听光标那一行</button>') +
       fld('local', '参考音频路径 <small style="opacity:.65;">GPT-SoVITS：服务器上那个 wav 的路径，如 D:/voice/akuma.wav</small><br><input id="lt-ref" ' + INP + ' value="' + (c.refAudio || '') + '">') +
       fld('local', '参考音频那句话 <small style="opacity:.65;">和参考音频逐字对应，对不上克隆出来会怪</small><br><input id="lt-prompt" ' + INP + ' value="' + (c.promptText || '') + '">') +
-      fld('minimax', 'GroupId<br><input id="lt-group" ' + INP + ' value="' + (c.groupId || '') + '">') +
-      '<label style="display:block;margin-bottom:10px;">语速 <input id="lt-speed" type="number" step="0.1" min="0.5" max="2" value="' + (c.speed || CARD_SPEED) + '" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:6px;"></label>' +
+      fld('minimax', 'GroupId <small style="opacity:.65;">新 Key 不用填，老 Key 报错才填</small><br><input id="lt-group" ' + INP + ' value="' + (c.groupId || '') + '">') +
+      '<label style="display:block;margin-bottom:10px;">语速 <input id="lt-speed" type="number" step="0.1" min="0.5" max="2" value="' + (c.speed || CARD_SPEED) + '" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:6px;"> 喘息句 <input id="lt-mspeed" type="number" step="0.05" min="0.5" max="2" placeholder="自动" value="' + (c.moanSpeed || '') + '" style="width:70px;padding:4px;border:1px solid #ccc;border-radius:6px;"><br><small style="opacity:.65;">喘息句＝嗯、啊、哈这类拟声加省略号的句子；留空就比平时慢一成</small></label>' +
       '<label style="display:block;margin-bottom:8px;"><input id="lt-callv" type="checkbox"' + (c.callVoice !== false ? ' checked' : '') + '> 📞 通话里自动念对方台词</label>' +
       fld('fish', '<input id="lt-proxy" type="checkbox"' + (c.viaProxy ? ' checked' : '') + '> 经酒馆代理发请求 <small style="opacity:.65;">平时不勾；试听报「跨域」才勾，且要在酒馆 config.yaml 开 enableCorsProxy</small>') +
       '<small style="display:block;opacity:.65;margin-bottom:12px;">⚠️ 云端 TTS 拒念露骨台词——要听那种话必须本地服务。本地服务要开 CORS（使用说明有教程）；酒馆跑在 https 上时连不了 http 本地服务。</small>' +
@@ -7212,6 +7270,7 @@ var SBLAB_CARD = "nyc";
         groupId: ov.querySelector('#lt-group').value.trim(),
         voice: ov.querySelector('#lt-voice').value.trim(),
         speed: Number(ov.querySelector('#lt-speed').value) || CARD_SPEED,
+        moanSpeed: Number(ov.querySelector('#lt-mspeed').value) || 0,
         callVoice: !!ov.querySelector('#lt-callv').checked,
         viaProxy: !!ov.querySelector('#lt-proxy').checked,
       };

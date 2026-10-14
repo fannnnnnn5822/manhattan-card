@@ -627,12 +627,20 @@ function pushThem(sb, name, type, content, zh, delay, who) {
       try { if (typeof toastr !== 'undefined') toastr.info('🎛 ' + name + ' ' + content, 'SugarOS'); } catch (e) {}
     } else return;
   }
+  var giftCard = null;
   if (type === 'gift') {
-    var gm = String(content).match(/^(.*?)(?:—+|--)\s*\$?([\d,.]+)\s*$/);
-    var gName = (gm ? gm[1] : String(content)).trim().slice(0, 40);
-    var gPrice = gm ? (parseFloat(gm[2].replace(/,/g, '')) || 0) : 0;
+    // 商品名——价格——卡片上手写的一句（第三段可省；老格式「商品名——价格」照旧认）
+    var gParts = String(content).split(/\s*(?:—+|--)\s*/);
+    var gName = String(gParts[0] || content).trim().slice(0, 40);
+    var gPrice = gParts.length > 1 ? (parseFloat(String(gParts[1]).replace(/[$,\s]/g, '')) || 0) : 0;
+    var gNote = gParts.length > 2 ? gParts.slice(2).join('——').trim().replace(/^["“「]|["”」]$/g, '').slice(0, 60) : '';
     if (!Array.isArray(sb.closet)) sb.closet = [];
-    sb.closet.push({ name: gName, price: gPrice, from: name + ' 送的', img: '', time: t });
+    sb.closet.push({ name: gName, price: gPrice, from: name + ' 送的', img: '', time: t, note: gNote });
+    // 送礼簿：主动送礼的闸（giftCue）靠它看今天送过没有、这个人上次什么时候送的
+    if (!Array.isArray(sb.giftLog)) sb.giftLog = [];
+    sb.giftLog.push({ who: name, day: (sb.game && sb.game.day) || 1 });
+    if (sb.giftLog.length > 40) sb.giftLog = sb.giftLog.slice(-40);
+    giftCard = { name: gName, price: gPrice, note: gNote };
     if (sb.closet.length > 60) sb.closet = sb.closet.slice(-60);
     try { if (typeof toastr !== 'undefined') toastr.success('👗 ' + name + ' 买下了「' + gName + '」→ 已入衣橱', 'SugarOS'); } catch (e) {}
     content = gName;   // 气泡只显示商品名，价格进衣橱记录
@@ -648,6 +656,7 @@ function pushThem(sb, name, type, content, zh, delay, who) {
   var rec = { sender: 'THEM', time: t, ts: Date.now(), type: type || 'text', content: content, note: '', zh: zh || '', gameDay: (sb.game && sb.game.day) || 1 };   // ts=真时间戳；gameDay=剧情第几天（UWU 日期标签/分割线靠它）
   if (who) rec.who = who;   // 👥 群消息的说话人（私信没有这个字段）
   if (toyFlag) { rec.toy = toyFlag; if (toyTier) rec.tier = toyTier; }
+  if (giftCard) rec.gift = giftCard;   // 手机把它画成礼物卡（商品名 / 价格 / 他手写的一句）
   // ⏳ 不秒回（2026-09-16，钟用我们自己的 game.day+game.time）：模型按剧情/人设在内容前写 ⏳分钟数
   //    → 这条先「在路上」（pending），时间戳直接写成送达那一刻；phone_panel 的 revealDue 看剧情钟走到点（或真实 8 分钟兜底）才显示。
   //    只对聊天类消息生效，转账/礼物/付账/系统行照旧秒到（钱和账不能跟气泡错位）。未读/列表预览/last_contact 都等送达那刻再记，不然列表先漏底。
@@ -1096,6 +1105,32 @@ function toyNpcLine(sb, name) {
   return s;
 }
 // 格式块：只对名单里此刻够得着的人提，提一次
+// 🎁 主动送礼的闸（Fan 10-14：金主会主动送礼物吗）。账归代码：一天最多一份；同一个人三天内不再送；
+// 只给真聊过一阵的人（User 回过话、私信来回 6 条以上），拉黑的、群、S. 不算。还要掷一下，免得天天有人送
+function giftCue(sb) {
+  var today = (sb.game && sb.game.day) || 1;
+  var log = Array.isArray(sb.giftLog) ? sb.giftLog : [];
+  for (var i = 0; i < log.length; i++) if (log[i].day === today) return '';   // 今天已经有人送过
+  if (Math.random() > 0.35) return '';
+  var cand = [];
+  var npcs = sb.npcs || {};
+  for (var k in npcs) {
+    if (!npcs.hasOwnProperty(k)) continue;
+    var n = npcs[k];
+    if (!n || n.isGroup || n.blocked || !n.engaged || k === 'SugarElite™') continue;
+    if (!Array.isArray(n.dm_history) || n.dm_history.length < 6) continue;
+    var recent = false;
+    for (var j = 0; j < log.length; j++) if (log[j].who === k && today - log[j].day < 3) recent = true;
+    if (recent) continue;
+    cand.push(n);
+  }
+  if (!cand.length) return '';
+  cand.sort(function (a, b) { return ((b.relationship || 0) + (b.total_transfers || 0) / 1000) - ((a.relationship || 0) + (a.total_transfers || 0) / 1000); });
+  var names = cand.slice(0, 3).map(function (n) { return n.name; });
+  return '  ②今天 ' + names.join('、') + ' 可以不等她开口，自己挑一件送她（这一轮最多一个人送）：东西跟着他的人设和财力走，'
+    + '由头也得是他的——哄她、赔罪、庆祝、想表个态、她随口提过想要、路过看见想到她。有由头才送，没有就这轮不送\n';
+}
+
 function toyFormatLine(sb) {
   var out = '', can = [];
   for (var n in TOY_GIVERS) if (toyCanOffer(sb, n) && (sb.npcs || {})[n]) can.push(n);
@@ -1668,7 +1703,10 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
     '- 撤回（稀用，一个月两三次）：某人发出消息又立刻后悔时，可发 名字|recall|他没说出口的那句话——手机上只显示"撤回了一条消息"，User看不到内容（但他自己记得说了什么）。' + (RANDOM_ONLY ? '' : '最适合"上夜班的人"这种人') + '\n' +
     '- 拉黑（极稀有，比撤回还稀有）：TA 被冒犯到底、受够了、或高危人设觉得暴露风险时，可以发 名字|block|一句话理由 —— 之后 User 的消息发不出去（拒收），TA 也不再回复，直到剧情里两人真的和好，TA 先发 名字|unblock| 再说话。冷淡不是拉黑，拉黑是关门\n' +
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
-    '- 真买下她转发的商品（**真买才写，口头答应不算**）：名字|gift|商品名——价格数字（照她链接里的原样），系统会把东西直接放进她衣橱。通常配一条 text 说句话\n' +
+    '- 送礼：名字|gift|商品名——价格数字——他写在礼物小卡上的一句话。系统把东西直接放进她衣橱，手机上显示成一张礼物卡\n' +
+    '  ①她转发过的商品，他真买下了（真买才写，口头答应不算；商品名和价格照她链接里的原样）\n' +
+    giftCue(sb) +
+    '  小卡那句是他亲手写给她的：一句、20 字以内、他自己的口吻和他们之间的事；礼物之外通常再配一条 text\n' +
     (sb.sugarelite && sb.sugarelite.subscribed ? '- S. 专属（只有 SugarElite™ 能发，别人写了无效）：送 User 一套气泡皮肤 SugarElite™|skin|代号 —— 代号只能是 ' + SKIN_KEYS.map(function (k) { return k + '=' + SKIN_CN[k]; }).join('／') + '。只在有由头时送（会员礼遇、庆祝、赔罪、User 刚念叨过想换个样子），一次一套，配一条 text 说一句；User 已有：' + ((sb.skins && Array.isArray(sb.skins.owned) && sb.skins.owned.length) ? sb.skins.owned.map(function (k) { return SKIN_CN[k] || k; }).join('、') : '还没有') + '，已有的不再送\n' : '') +
     toyFormatLine(sb) +
     '- 真替她交账单（只在她转发过账单、且这个人真愿意时）：名字|paybill|账单名（照她转发的名字写），系统会把这张账单标成已付进入下期；只想给钱让她自己交的就发 transfer\n' +
