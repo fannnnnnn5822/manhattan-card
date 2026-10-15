@@ -6542,6 +6542,7 @@ var SBLAB_CARD = "sd";
       var raw = store && store.getItem(CFG_KEY);
       var c = raw ? JSON.parse(raw) : null;
       // local 后端没有 key（审核抓的 bug：只查 key 会把本地玩家判死）
+      if (c && c.backend === 'fish' && String(c.url || '').replace(/\/+$/, '') === FISH_RELAY_OLD) c.url = '';   // 公益站已关
       if (c && (c.key || c.backend === 'local')) return c;
     } catch (e) {}
     return null;
@@ -6590,8 +6591,12 @@ var SBLAB_CARD = "sd";
   }
   var FISH_CARD_VOICE = { sd: 'ccd9a20abb214f0486b65950d9006f89', nyc: 'bf322df2096a46f18c579d0baa36f41d', classic: '9927a47b9bd0490abaa81dd3b45dc0dc' };   // 原版是中文卡：默认「慵懒轻熟男音」（Fan 10-14 zm2 一百分）；鎏金 Adrian   // SB 默认「Adrian」：纯英语、稳重——Fan 10-13 听样音定的（英文角色不要带口音的嗓子）
   function fishDefaultVoice() { return FISH_CARD_VOICE[CARD] || ''; }
-  // Fish 公益站地址：选 Fish 时自动填进 URL 格，玩家只填 Key（Fan 10-13 定）。每人用自己的令牌，额度各算各的；想走官方清空这格就行
-  var FISH_RELAY = 'https://fish-audio-relay.twydtacs.workers.dev';
+  // 10-15 公益站被攻击关停 → 卡改回默认直连 fish.audio 官方（玩家填官网 Key）。
+  // 官方 /compat/v1/audio/speech 开了跨域（10-15 实测 ACAO:*），浏览器能直打；原生 /v1/tts 没开，只有经酒馆代理才走。
+  // 老玩家存过的公益站地址读配置时当没填，自动落回官方。
+  var FISH_RELAY_OLD = 'https://fish-audio-relay.twydtacs.workers.dev';
+  // Fish 型号：只认 Fish 自家的名字。玩家在别家后端填过的型号（speech-02-turbo 之类）会留在隐藏格里，别发给 Fish
+  function fishModel(cfg) { var m = String((cfg && cfg.model) || ''); return /^(fish-audio\/|s\d|speech-1)/.test(m) ? m : 's2.1-pro-free'; }
   // 卡的默认语速：玩家没在 🎙 里改过就用它。一掷千金 0.9（Fan 10-14：床戏台词念太快）；别的卡 1
   var CARD_SPEED = CARD === 'sd' ? 0.8 : 0.9;   // 10-14 Fan 又听了一轮：一掷千金 0.9 仍快 → 0.8；S. 的英文也快 → 鎏金/原版 0.9
   function speedOf(cfg) { return Number(cfg && cfg.speed) || CARD_SPEED; }
@@ -6691,11 +6696,13 @@ var SBLAB_CARD = "sd";
       .catch(function (e) { throw (e && e.name === 'AbortError') ? new Error('超时（' + Math.round((ms || 60000) / 1000) + '秒没响应）') : e; })
       .finally(function () { clearTimeout(t); });
   }
+  // Fish 402：API 额度和网页版会员是两套（10-15，参考 TOY·LINK 的说明）
+  var FISH_402 = 'Fish 的 API 额度不够（API 额度和网页版会员是分开的两套）。卡默认用的是免费档 s2.1-pro-free；付费档要在 fish.audio 后台单独有 API credit';
   async function ttsErr(r, who) {
     var detail = '';
     try { detail = (await r.text()).slice(0, 160); } catch (e) {}
     if (r.status === 401 || r.status === 403) return who + ' 的 key 不对';
-    if (r.status === 402) return who + ' 额度用完了';
+    if (r.status === 402) return who === 'Fish' ? FISH_402 : who + ' 额度用完了';
     if (r.status === 429) return who + ' 限流了，等一会儿再试';
     if (r.status === 400 && /reference_id/i.test(detail)) return who + ' 要先填「默认音色」（🎙 面板里，格子下面有音色库链接）';
     if (r.status === 400) return who + ' 念不了这段（多半是内容策略——换本地后端）：' + detail;
@@ -6753,7 +6760,7 @@ var SBLAB_CARD = "sd";
     // voice = Fish 音色 ID（fish.audio 音色页网址里那串）；没配的 NPC 用配置里的「默认音色」。
     if (cfg.backend === 'fish') {
       var fbase = url || 'https://api.fish.audio';
-      var fm = cfg.model || 's2.1-pro-free';
+      var fm = fishModel(cfg);
       var fv = voice || cfg.voice || fishDefaultVoice();
       var fh = { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key };
       var spd = speedOf(cfg);
@@ -7255,6 +7262,7 @@ var SBLAB_CARD = "sd";
         // 它的透明反代 /proxy/v1/tts 原样转给 Fish，语速才生效。官方地址没这条路，404 一次就记住不再试。
         var known = ''; try { known = store.getItem(FISH_NATIVE_KEY + base) || ''; } catch (e) {}
         function remember(v) { try { store.setItem(FISH_NATIVE_KEY + base, v); } catch (e) {} }
+        if (!cfg.url && !cfg.viaProxy) known = '0';   // 官网原生端点没开跨域（10-15 实测），直连只能走兼容端点，省一趟白跑
         if (known !== '0') {
           var r = null;
           if (cfg.url && (known === '' || known === 'p')) {
@@ -7305,7 +7313,7 @@ var SBLAB_CARD = "sd";
   async function fishNativeStream(cfg, base, text, name, sig, take, path) {
     var target = base + (path || '/v1/tts');
     var proxy = !!cfg.viaProxy;
-    var headers = { 'Content-Type': 'application/json', 'model': cfg.model || 's2.1-pro-free' };
+    var headers = { 'Content-Type': 'application/json', 'model': fishModel(cfg) };
     var url = target;
     if (proxy) {
       // 酒馆的 /proxy/ 会把我们的请求头原样转给上游（只删 csrf/cookie/host 这些）。
@@ -7351,14 +7359,14 @@ var SBLAB_CARD = "sd";
         // 酒馆代理会把上游的 401 改成 400 转回来（怕重置浏览器的 basic 登录），所以代理模式下 400 也要看一眼是不是 key 错
         if (r.status === 401 || r.status === 403 || (proxy && r.status === 400 && /\b401\b|unauthori[sz]ed|invalid.{0,12}(api.?key|token)/i.test(txt)))
           throw new Error('Fish 的 key 不对');
-        if (r.status === 402) throw new Error('Fish 额度用完了');
+        if (r.status === 402) throw new Error(FISH_402);
         if (r.status === 429) throw new Error('Fish 限流了，等一会儿再试');
         // 400 把服务器原话带上：公益站缺音色 ID 也是 400，瞎猜「内容策略」会把人带沟里（10-13 实锤）
         var why = ''; try { var ej = JSON.parse(txt); why = (ej.error && (ej.error.message || ej.error)) || ej.message || ej.detail || ''; } catch (e) { why = txt; }
         why = String(why || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         if (r.status === 400) {
           if (/reference_id|voice/i.test(why) && !ref) throw new Error('Fish 要先填「默认音色」（🎙 面板里，格子下面有音色库链接）');
-          if (/reference not found|model not found/i.test(why)) throw new Error('Fish 上找不到这个音色 ID（' + String(ref).slice(0, 8) + '…）：复制错了，或它是私有音色、公益站的 Key 看不到');
+          if (/reference not found|model not found/i.test(why)) throw new Error('Fish 上找不到这个音色 ID（' + String(ref).slice(0, 8) + '…）：复制错了，或它是别人的私有音色');
           throw new Error('Fish 不肯念这句' + (why ? '：' + why : '（多半是内容策略）'));
         }
         throw new Error('Fish 出声失败 HTTP ' + r.status + (why ? '：' + why : ''));
@@ -7429,21 +7437,21 @@ var SBLAB_CARD = "sd";
     // 每个格子标上「哪些后端用得着」，选了 Fish 就只露 Fish 的那几格——别让玩家对着 GroupId、参考音频发呆
     function fld(forList, html) { return '<label data-for="' + forList + '" style="display:block;margin-bottom:10px;">' + html + '</label>'; }
     var HINT = {   // 同一格在不同后端下的提示语
-      url:   { fish: '已填好公益站地址，不用动；用 fish.audio 自己的 Key 就清空这格走官方', local: '默认 http://127.0.0.1:9880', openai: '中转站填中转地址；留空走官方', gemini: '留空走官方', minimax: '国内的 Key 留空；海外 minimax.io 的 Key 填 https://api.minimax.io' },
-      key:   { fish: '公益站登录后「我的 API 令牌」那串 sk-；用官方就填 fish.audio 后台的 Key', openai: 'API Key', gemini: 'API Key', minimax: 'API Key' },
+      url:   { fish: '留空＝直连 fish.audio 官网；自己架了中转才填', local: '默认 http://127.0.0.1:9880', openai: '中转站填中转地址；留空走官方', gemini: '留空走官方', minimax: '国内的 Key 留空；海外 minimax.io 的 Key 填 https://api.minimax.io' },
+      key:   { fish: '<a href="https://fish.audio/app/api-keys/" target="_blank" rel="noopener" style="color:#b89968;">fish.audio 后台 → API Keys</a> 新建一个贴进来（公益站的令牌在官网用不了）', openai: 'API Key', gemini: 'API Key', minimax: 'API Key' },
       model: { local: '模型/说话人名（留空走默认）', openai: '留空走 tts-1', gemini: '留空走 gemini-2.5-flash-preview-tts', minimax: '留空走 speech-02-turbo' },
       voice: { fish: '没单独配的人都用它' + (fishDefaultVoice() ? '；留空就用卡自带的那个' : '') + '。想换：去 <a href="https://fish.audio/zh-CN/discovery" target="_blank" rel="noopener" style="color:#b89968;">fish.audio 音色库</a> 点一个音色，网址末尾那串就是', openai: 'alloy / echo / nova 等（留空用 nova）', gemini: 'Kore / Puck 等（留空用 Kore）', minimax: '音色 ID，如 female-tianmei（留空用 female-shaonv）' },
     };
     ov.innerHTML =
       '<h3 style="margin:4px 0 12px;">🎙 语音配置 <small style="font-weight:400;opacity:.6;">SB实验室</small></h3>' +
       '<label style="display:block;margin-bottom:10px;">后端<br><select id="lt-backend" ' + INP + '>' +
-        opt('fish', 'Fish Audio（官方或公益中转）') +
+        opt('fish', 'Fish Audio（填官网 Key）') +
         opt('local', '本地服务（CosyVoice等）· 能克隆音色 · NSFW不受限 · 要自己部署') +
         opt('openai', 'OpenAI 兼容（最省事）') +
         opt('gemini', 'Gemini（免费额度）') +
         opt('minimax', 'MiniMax（中文音色最好）') +
       '</select></label>' +
-      fld('fish local openai gemini minimax', 'URL <small id="lt-h-url" style="opacity:.65;"></small><br><input id="lt-url" ' + INP + ' value="' + (c.url || ((c.backend || 'fish') === 'fish' && !c.key ? FISH_RELAY : '')) + '">') +
+      fld('fish local openai gemini minimax', 'URL <small id="lt-h-url" style="opacity:.65;"></small><br><input id="lt-url" ' + INP + ' value="' + (c.url || '') + '">') +
       fld('fish openai gemini minimax', 'Key <small id="lt-h-key" style="opacity:.65;"></small><br><input id="lt-key" ' + KEYATTRS + ' value="' + (c.key || '') + '">') +
       fld('local openai gemini minimax', '模型 <small id="lt-h-model" style="opacity:.65;"></small><br><input id="lt-model" ' + INP + ' value="' + (c.model || '') + '">') +
       fld('fish openai gemini minimax', '默认音色 <small id="lt-h-voice" style="opacity:.65;"></small><br><input id="lt-voice" ' + INP + ' value="' + (c.voice || '') + '">') +
@@ -7488,9 +7496,6 @@ var SBLAB_CARD = "sd";
     showFor(c.backend || 'fish');
     ov.querySelector('#lt-backend').onchange = function () {
       ov.querySelector('#lt-npcv').value = npcVoiceText(this.value); showFor(this.value);
-      var u = ov.querySelector('#lt-url');
-      if (this.value === 'fish' && !u.value.trim()) u.value = FISH_RELAY;            // 切到 Fish：空着就填公益站
-      else if (this.value !== 'fish' && u.value.trim() === FISH_RELAY) u.value = '';   // 切走：别把公益站地址带去别家
     };
     // ➕ 把正在聊天的那个人加进名单（Fan 10-13）：读聊天页标题里的名字，已有就只把光标放过去
     ov.querySelector('#lt-addcur').onclick = function (ev) {
@@ -7508,7 +7513,7 @@ var SBLAB_CARD = "sd";
       toast(hit >= 0 ? name + ' 在名单里了，把音色 ID 贴到等号后面' : '');
     };
     ov.querySelector('#lt-close').onclick = function () { ov.remove(); };
-    function needVoice(nc) {   // Fish 不填音色：公益站直接 400，官方也只会用一个随机默认嗓子——都不是玩家想要的
+    function needVoice(nc) {   // Fish 不填音色：中转直接 400，官方也只会用一个随机默认嗓子——都不是玩家想要的
       if (nc.backend === 'fish' && !nc.voice && !fishDefaultVoice()) { toast('Fish 要填「默认音色」：点格子下面的音色库链接挑一个，网址末尾那串贴进来', 'err'); return true; }
       return false;
     }
