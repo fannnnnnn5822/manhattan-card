@@ -534,6 +534,117 @@ function advanceDays(sb, d) {
   console.log('[SD-S v4] advanced ' + d + ' day(s) -> day ' + sb.game.day);
 }
 
+// ── 📅 日记本（10-15 Fan）：每过一天存一行小结。日历格子上色、点开过去某天、结局卡都从这里取数 ──
+// 代码自己数，不调模型，也不进提示词；只有玩家点「让 TA 提起这天」，下一轮才带一次（见 recallText）。
+// 私信每人只留 400 条、流水 500 笔，长线玩家最早那几天迟早被挤掉——小结一天一行、几百字节，不删。
+// sb.daybook = { 第几天: { s 花出 · i 进账 · g [[礼物, 给谁, 谁送的]] · n 私信条数 · t 聊得最多的人 · tn 条数
+//                         · q 那人当天最后一句 · p [行程] · b [拉黑他的人] · f [起楼, 止楼] } }，空字段不存
+// sb.daybookUpTo = 已经收好账的最后一天；之后的日子每次重算（今天还没过完）
+var DAYBOOK_KEEP = 400;
+var DAY_ROLLBACK_CP = '正文重roll回退';
+function dayDigestOf(sb, d) {
+  var e = { s: 0, i: 0, g: [], n: 0, t: '', tn: 0, q: '', p: [], b: [] };
+  var tx = (sb.wallet && sb.wallet.allTransactions) || [];
+  for (var i = 0; i < tx.length; i++) {
+    var x = tx[i];
+    if (!x || x.gameDay !== d) continue;
+    var amt = Number(x.amount) || 0;
+    if (x.counterparty === DAY_ROLLBACK_CP) { if (x.direction === '+') e.s -= amt; else e.i -= amt; }   // 回退是反着记的一笔，抵掉原来那笔
+    else if (x.direction === '-') e.s += amt; else e.i += amt;
+  }
+  e.s = Math.max(0, e.s); e.i = Math.max(0, e.i);
+  var cl = sb.closet || [];
+  for (var j = 0; j < cl.length; j++) {
+    var c = cl[j];
+    if (!c || c.gameDay !== d || !c.name) continue;
+    var fm = String(c.from || '').match(/^(.+?) 送的$/);
+    e.g.push([String(c.name).slice(0, 30), String(c.to || '').slice(0, 16), fm ? fm[1].slice(0, 16) : '']);
+  }
+  var npcs = sb.npcs || {};
+  for (var k in npcs) {
+    if (!npcs.hasOwnProperty(k) || !npcs[k]) continue;
+    var h = npcs[k].dm_history;
+    var cnt = 0, lastQ = '';
+    if (Array.isArray(h)) for (var m = 0; m < h.length; m++) {
+      var r = h[m];
+      if (!r || r.gameDay !== d || r.pending || r.type === 'system') continue;
+      cnt++;
+      if (r.sender === 'THEM' && (r.type || 'text') === 'text' && r.content) lastQ = String(r.content);
+    }
+    e.n += cnt;
+    if (cnt > e.tn && !npcs[k].isGroup) { e.tn = cnt; e.t = npcs[k].name || k; e.q = lastQ.replace(/\s+/g, ' ').slice(0, 40); }
+    if (npcs[k].blocked && npcs[k].blocked_day === d) e.b.push(npcs[k].name || k);
+  }
+  var sch = sb.schedule || [];
+  for (var si = 0; si < sch.length && e.p.length < 3; si++) if (sch[si] && sch[si].gameDay === d && sch[si].txt) e.p.push(String(sch[si].txt).slice(0, 30));
+  // 空字段不落盘：一天一行要尽量小
+  var out = {};
+  for (var key in e) {
+    if (!e.hasOwnProperty(key)) continue;
+    var val = e[key];
+    if (Array.isArray(val) ? val.length : val) out[key] = val;
+  }
+  return out;
+}
+function dayBookFold(sb, floorId) {
+  var today = (sb.game && sb.game.day) || 1;
+  if (!sb.daybook || typeof sb.daybook !== 'object' || Array.isArray(sb.daybook)) sb.daybook = {};
+  var book = sb.daybook;
+  for (var k in book) if (book.hasOwnProperty(k) && Number(k) > today) delete book[k];   // 重roll 退了天：之后的格子作废
+  var upTo = Math.min(Number(sb.daybookUpTo) || 0, today - 1);
+  for (var d = Math.max(upTo + 1, today - DAYBOOK_KEEP, 1); d <= today; d++) {
+    var e = dayDigestOf(sb, d), old = book[d];
+    if (old && old.f) e.f = old.f;
+    if (Object.keys(e).length) book[d] = e; else delete book[d];
+  }
+  sb.daybookUpTo = today - 1;
+  if (floorId != null && floorId >= 0) {   // 这一楼正文算今天的：点开那天能跳回去重读
+    var cur = book[today] || (book[today] = {});
+    cur.f = cur.f ? [Math.min(cur.f[0], floorId), Math.max(cur.f[1], floorId)] : [floorId, floorId];
+  }
+  var ks = Object.keys(book).map(Number).sort(function (a, b) { return a - b; });
+  while (ks.length > DAYBOOK_KEEP) delete book[ks.shift()];
+}
+// 💭 「让 TA 提起这天」：玩家在日历上点了某一天 → sb.recall = { d, id, p 正文还没用, m 私信还没用 }，各带一次
+var _recallSeenP = 0;   // 这一版提示词里带的是哪一次点击（落账时只清这一次，防止误清后来新点的）
+var _recallSeenM = 0;
+function recallText(sb, forProse) {
+  var r = sb.recall;
+  if (!r || !r.d || !(forProse ? r.p : r.m)) return '';
+  var d = r.d;
+  var e = (sb.daybook && sb.daybook[d]) || dayDigestOf(sb, d);
+  var parts = [];
+  if (e.t) {
+    var n = sb.npcs && sb.npcs[e.t], h = (n && n.dm_history) || [], said = [];
+    for (var i = 0; i < h.length; i++) {
+      var m = h[i];
+      if (m && m.gameDay === d && !m.pending && (m.type || 'text') === 'text' && m.content) said.push((m.sender === 'USER' ? 'User' : e.t) + '：' + String(m.content).replace(/\s+/g, ' ').slice(0, 60));
+    }
+    said = said.slice(-4);
+    parts.push('User 和 ' + e.t + ' 聊得最多' + (said.length ? '（' + said.join(' / ') + '）' : (e.q ? '（' + e.t + '：' + e.q + '）' : '')));
+  }
+  if (e.g && e.g.length) parts.push('礼物：' + e.g.map(function (g) { return g[2] ? g[2] + ' 送了他 ' + g[0] : g[0] + (g[1] ? ' → ' + g[1] : ''); }).join('、'));
+  if (e.s) parts.push('他花了 ¥' + Number(e.s).toLocaleString());
+  if (e.p && e.p.length) parts.push('行程：' + e.p.join('；'));
+  if (e.b && e.b.length) parts.push(e.b.join('、') + ' 那天把他拉黑了');
+  var head = '【回忆·' + gameDayToMD(d, sb) + ' ' + gameDayToWeekday(d, sb) + '（第 ' + d + ' 天）】User 翻手机日历，翻到了这一天。';
+  var tail = forProse
+    ? '这一段正文里，和那天有关的人可以自然地提起、回想那天，或者让那天的事在今天有个回响；每个人只记得自己在场的部分，和那天无关的人照常。'
+    : '这一轮私信里，那天和他有来往的人可以提起那天：一句回想、一个旧梗、一点余温或余怒都行；和那天无关的人照常。';
+  return head + (parts.length ? '那天：' + parts.join('；') + '。' : '') + tail;
+}
+async function dayBookTick(floorId, consumeRecall) {
+  await updateVariablesWith(function (v) {
+    if (!v.sb) return v;
+    try { dayBookFold(v.sb, floorId); } catch (e) { console.warn('[SD-S v4] daybook fold failed', e); }
+    if (consumeRecall && v.sb.recall && v.sb.recall.id === _recallSeenP) {
+      v.sb.recall.p = 0;
+      if (!v.sb.recall.m) delete v.sb.recall;
+    }
+    return v;
+  }, { type: 'chat' });
+}
+
 function defaultState() {
   return {
     profile: {},
@@ -635,7 +746,7 @@ function pushThem(sb, name, type, content, zh, delay, who) {
     var gName = (gm ? gm[1] : String(content)).trim().slice(0, 40);
     var gPrice = gm ? (parseFloat(gm[2].replace(/,/g, '')) || 0) : 0;
     if (!Array.isArray(sb.closet)) sb.closet = [];
-    sb.closet.push({ name: gName, price: gPrice, from: name + ' 送的', img: '', time: t });
+    sb.closet.push({ name: gName, price: gPrice, from: name + ' 送的', img: '', time: t, gameDay: (sb.game && sb.game.day) || 1 });
     if (sb.closet.length > 60) sb.closet = sb.closet.slice(-60);
     try { if (typeof toastr !== 'undefined') toastr.success('👗 ' + name + ' 买下了「' + gName + '」→ 已入衣橱', 'SugarOS'); } catch (e) {}
     content = gName;   // 气泡只显示商品名，价格进衣橱记录
@@ -1698,6 +1809,8 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
       : '苏念|text|老师今天讲的东西我一点没听进去。在想周五§\n小鹿_大三|tag|学生·怯生生\n小鹿_大三|text|你好…是看了我的帖子吗§\n沈冰月|text|周五可以。地方我来定，你只要到。§\n♪|song|陈奕迅 — 富士山下');
   var sys2 = describeState(sb);
   var ordered = [{ role: 'system', content: sys1 }, { role: 'system', content: sys2 }];
+  var rcM = recallText(sb, false);   // 💭 玩家在日历上点了「让 TA 提起这天」
+  if (rcM) { ordered.push({ role: 'system', content: rcM }); _recallSeenM = sb.recall.id; }
   ordered.push({ role: 'system', content: '【表情包清单】sticker 行只能用这些名字，一字不差：\n' + STICKER_NAMES.join('、') });
   if (plot) ordered.push({ role: 'system', content: '【主线最近剧情，私信可呼应但不要复述】\n' + plot });
   // 体验池：女孩种草/User安排的场合从这里挑或仿（包厢/马术/滑雪/湖边别墅/私人动物园……想被带去哪=她是什么段位）
@@ -2078,6 +2191,7 @@ async function runOnce(req) {
   var anonDmName = '';   // 这一轮有人从匿名群里私下加了 User → 落账后开 TA 的私信线程
   await updateVariablesWith(function (v) {
     if (!v.sb) v.sb = defaultState();
+    if (v.sb.recall && _recallSeenM && v.sb.recall.id === _recallSeenM) { v.sb.recall.m = 0; if (!v.sb.recall.p) delete v.sb.recall; }   // 💭 私信这边用过了
     if (grows.length) anonDmName = landGroupRows(v.sb, gKeyReq, grows);
     // ⛔ 拉黑/解除先落账，再发这一批私信——同一批里 unblock 之后的话才发得出去；只对已在通讯录的人生效（陌生人没资格拉黑）
     for (var bi = 0; bi < blocks.length; bi++) {
@@ -2085,7 +2199,7 @@ async function runOnce(req) {
       if (!bn) continue;
       if (blocks[bi].type === 'block') {
         if (bn.blocked) continue;
-        bn.blocked = true; bn.blocked_at = nowTime();
+        bn.blocked = true; bn.blocked_at = nowTime(); bn.blocked_day = (v.sb.game && v.sb.game.day) || 1;
         pushThem(v.sb, bn.name, 'system', '⛔ ' + bn.name + ' 把你拉黑了' + (blocks[bi].content ? '：' + String(blocks[bi].content).slice(0, 80) : ''), '');
       } else {
         if (!bn.blocked) continue;
@@ -2685,8 +2799,10 @@ function buildDigest(sb) {
   var hasFake = (sb.closet || []).slice(-10).some(function (c) { return c.fake && c.to; });
   var toyD = toyDigest(sb);   // 🎛 遥控玩具（谁戴着 / 开着时按在不在身边分写法）
   var poorD2 = poorDigest(sb);   // 🎭🧂🧰 租借 / 白嫖榜 / 零活
-  if (!blocks.length && !closet.length && !toyD && !poorD2) return '';
+  var rcP = recallText(sb, true);   // 💭 玩家在日历上点了「让 TA 提起这天」：下一层正文带一次
+  if (!blocks.length && !closet.length && !toyD && !poorD2 && !rcP) return '';
   var out = '【User 手机上的时间：' + nowTime() + '（正文的时刻感尽量与之呼应）】\n';
+  if (rcP) { out += rcP + '\n'; _recallSeenP = sb.recall.id; }
   if (blocks.length) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
   }
@@ -3068,7 +3184,7 @@ async function onMainMessage(message_id) {
     var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // [TIME:14:30|4/16] 或 [TIME:14:30]
     var newTime = timeM ? timeM[1] : null;
     var newDate = (timeM && timeM[2]) ? timeM[2].trim() : null;
-    if (!found.length && !items.length && !newTime) { _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 }; trimMainEffects(_mainEffects); return; }
+    if (!found.length && !items.length && !newTime) { _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 }; trimMainEffects(_mainEffects); await dayBookTick(Number(message_id), !isSwipe); return; }
     var _daysThisPass = 0;   // 本轮真正推过的天数（重roll 时要原数退回去）
     var credited = [];   // 只有真入账的才进成功toast——被去重闸拦下的那笔有自己的⛔警告，别再报"已入账"
     var addedCloset = [];
@@ -3165,6 +3281,7 @@ async function onMainMessage(message_id) {
     trimMainEffects(_mainEffects);
     var stripped = text.replace(new RegExp(WALLET_RE_SRC, 'g'), '').replace(new RegExp(CLOSET_RE_SRC, 'g'), '').replace(/\[TIME:[^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '');
     await setChatMessages([{ message_id: m.message_id, message: stripped }], { refresh: 'affected' });
+    await dayBookTick(Number(message_id), !isSwipe);   // 📅 日记本：过了天就把前一天收进去
     try { eventEmit('sb_updated'); } catch (e) {}
     try {
       var toast = [];
@@ -4456,6 +4573,10 @@ eventOn('sb_request_ad_comments', handleAdComments);
 eventOn('sb_request_mag', function (p) { generateMagazine(!!(p && p.force), (p && p.sections) || null); });
 eventOn('sb_request_playlist', ensurePlaylist);
 eventOn('sb_request_dm', handleRequest);
+eventOn('sb_daybook', function () {   // 📅 手机打开日历 → 把今天和没收的旧日子重算一遍
+  dayBookTick(null, false).then(function () { try { eventEmit('sb_updated'); } catch (e) {} })
+    .catch(function (e) { console.warn('[SD-S v4] daybook refresh failed', e); });
+});
 eventOn('sb_request_dm', syncInject);                       // 玩家刚在手机里发了消息 → 立刻同步
 eventOn('sb_updated', syncInject);                          // NPC 回了消息 → 同步
 try { eventOn(tavern_events.GENERATION_AFTER_COMMANDS, syncInject); } catch (e) {}  // 每次主线生成前兜底刷新

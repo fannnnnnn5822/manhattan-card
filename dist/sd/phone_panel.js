@@ -1387,6 +1387,17 @@
     '#sbnyc-panel .sb-cal-day span{flex-shrink:0;line-height:1.2;}',
     '#sbnyc-panel .sb-cal-day:hover{filter:brightness(0.95);}',
     '#sbnyc-panel .sb-cal-day:active{transform:scale(0.95);}',
+    // 📅 日记本（10-15）：过去的日子按那天发生的事上色——底色深浅=私信多少，小圆点=花钱/礼物/行程/拉黑
+    '#sbnyc-panel .sb-cal-day{color:var(--ink);}',   // 夜间模式下日期数字以前是黑的
+    '#sbnyc-panel .sb-cal-day .cal-dots{display:flex;gap:2px;height:5px;margin-top:3px;}',
+    '#sbnyc-panel .sb-cal-day .cal-dots i,#sbnyc-panel .cal-legend i{display:inline-block;width:5px;height:5px;border-radius:50%;}',
+    '#sbnyc-panel .cal-legend{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:11px;color:var(--ink-sub);padding:8px 4px 0;}',
+    '#sbnyc-panel .cal-legend span{display:inline-flex;align-items:center;gap:4px;}',
+    '#sbnyc-panel .cal-dh{font-weight:600;font-size:13px;margin-bottom:8px;}',
+    '#sbnyc-panel .cal-dl{margin-bottom:6px;line-height:1.5;}',
+    '#sbnyc-panel .cal-q{margin:2px 0 0 20px;color:var(--ink-sub);font-style:italic;}',
+    '#sbnyc-panel .cal-btns{display:flex;gap:6px;margin-top:10px;}',
+    '#sbnyc-panel .cal-btns .sb-abtn{flex:1 1 0;font-size:12px;}',
     // 🖼️ 壁纸上传/清除按钮（UWU）
     '#sbnyc-panel .sb-wp-upload{display:inline-block;cursor:pointer;color:var(--gold);border:.5px dashed var(--gold);border-radius:999px;padding:3px 10px;font-size:11px;margin-left:6px;opacity:.85;}',
     '#sbnyc-panel .sb-wp-upload:hover{opacity:1;background:var(--gold);color:#fff;}',
@@ -2053,7 +2064,7 @@
       }
       else if (a === 'forum') openForum();
       else if (a === 'elite') openElite();
-      else if (a === 'calendar') openCalendar();
+      else if (a === 'calendar') { openCalendar(); SBemit('sb_daybook'); }   // 📅 生成器重算完会发 sb_updated，日历自己刷新
       else if (a === 'trans') openTransactions();
       else if (a === 'remote') openRemote();
     }); })(btns[j]); }
@@ -4264,27 +4275,32 @@
     var firstDay = new Date(viewYear, viewMonth, 1).getDay();
     var daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
     var cells = [];
+    var book = state.daybook || {}, todayGd = state.game.day || 1;
     for (var e0 = 0; e0 < firstDay; e0++) cells.push(null);
     for (var d0 = 1; d0 <= daysInMonth; d0++) {
       var date0 = new Date(viewYear, viewMonth, d0);
       var cellGd = Math.round((date0.getTime() - epoch.getTime()) / 86400000) + 1;   // 本地午夜相减，round 吃掉夏令时的±1小时
       var evs = (state.schedule || []).filter(function (s) { return (s.gameDay || 1) === cellGd; });
       var emoji = evs.length ? (evs.some(function (s) { return s.academic; }) ? '📚' : '🗓️') : '';
-      cells.push({ day: d0, emoji: emoji, gameDay: cellGd });
+      var dg = cellGd <= todayGd ? book[cellGd] : null;   // 过去和今天：看日记本；未来：照旧看行程
+      if (dg) emoji = '';
+      cells.push({ day: d0, emoji: emoji, gameDay: cellGd, dg: dg });
     }
     while (cells.length % 7 !== 0) cells.push(null);
     for (var ci = 0; ci < cells.length; ci++) {
       var c0 = cells[ci];
       if (!c0) { h += '<div style="aspect-ratio:1;background:var(--paper-3);border-radius:6px;"></div>'; continue; }
       var isToday = c0.gameDay === (state.game.day || 1);
-      h += '<div class="sb-cal-day" data-gd="' + c0.gameDay + '" style="background:' + (isToday ? 'var(--gold-soft)' : 'var(--paper)') + ';border-radius:6px;">' +
+      var bg = isToday ? 'var(--gold-soft)' : (c0.dg && c0.dg.n ? 'rgba(160,120,70,' + Math.min(0.32, 0.07 + c0.dg.n * 0.012).toFixed(2) + ')' : 'var(--paper)');
+      h += '<div class="sb-cal-day" data-gd="' + c0.gameDay + '" style="background:' + bg + ';border-radius:6px;">' +
         '<span style="font-weight:500;">' + c0.day + '</span>' +
-        (c0.emoji ? '<span style="font-size:14px;">' + c0.emoji + '</span>' : '') + '</div>';
+        (c0.emoji ? '<span style="font-size:14px;">' + c0.emoji + '</span>' : '') + calDots(c0.dg) + '</div>';
     }
     h += '</div>';
-    h += '<div id="sb-cal-detail" style="margin-top:10px;padding:10px;background:var(--paper-3);border-radius:12px;display:none;max-height:120px;overflow-y:auto;font-size:12px;color:var(--ink);"></div>';
+    h += '<div class="cal-legend"><span>格子越深＝那天私信越多</span>' + CAL_KINDS.map(function (k) { return '<span><i style="background:' + k[1] + '"></i>' + k[2] + '</span>'; }).join('') + '</div>';
+    h += '<div id="sb-cal-detail" style="margin-top:10px;padding:10px;background:var(--paper-3);border-radius:12px;display:none;max-height:240px;overflow-y:auto;font-size:12px;color:var(--ink);"></div>';
     h += '<button class="sb-abtn" id="sb-cal-jump" style="width:calc(100% - 8px);margin:12px 4px 2px;">⏱ 校准时间 / 跳到某天</button>';
-    h += '<div class="sb-empty" style="font-style:normal;padding:8px 4px 2px;">今天=金色格子（剧情第 ' + (state.game.day || 1) + ' 天）。点 ⏱ 校准时间或跳日期，点 📚 排课业。</div>';
+    h += '<div class="sb-empty" style="font-style:normal;padding:8px 4px 2px;">今天=金色格子（剧情第 ' + (state.game.day || 1) + ' 天）。点过去的日子能回看那天、让 TA 提起那天；点 ⏱ 校准时间或跳日期，点 📚 排日程。</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -4317,12 +4333,61 @@
       selectedDay = gd;
       var events = ((state && state.schedule) || []).filter(function (s) { return (s.gameDay || 1) === gd; });
       var html = '';
-      if (!events.length) html = '<div style="color:var(--ink-faint);text-align:center;">当天无安排</div>';
+      if (gd <= ((state && state.game && state.game.day) || 1)) html = dayDetailHtml(gd, (state.daybook || {})[gd], events);
+      else if (!events.length) html = '<div style="color:var(--ink-faint);text-align:center;">当天无安排</div>';
       else events.forEach(function (ev2) {
         html += '<div style="margin-bottom:6px;border-bottom:1px dashed var(--line);padding-bottom:4px;">' + (ev2.academic ? '📚' : '🗓️') + ' ' + esc(ev2.txt) + '</div>';
       });
       detailDiv.innerHTML = html; detailDiv.style.display = 'block';
     });
+    detailDiv.addEventListener('click', function (ev) {
+      var jb = ev.target.closest && ev.target.closest('[data-jump]');
+      var rb = ev.target.closest && ev.target.closest('[data-recall]');
+      if (jb) {   // 📖 回去看：收起手机，正文滚到那天的第一楼
+        var fl = parseInt(jb.getAttribute('data-jump'), 10);
+        panel.classList.remove('open');
+        var tell = function () { toast('info', '这天的正文从第 ' + fl + ' 楼开始'); };
+        try { if (typeof triggerSlash === 'function') triggerSlash('/chat-jump ' + fl).catch(tell); else tell(); } catch (e) { tell(); }
+      } else if (rb && !rb.disabled) {   // 💭 让 TA 提起这天：下一轮私信和正文各带一次（文字由生成器那边现拼，见 recallText）
+        var rd = parseInt(rb.getAttribute('data-recall'), 10);
+        var rec = { d: rd, id: Date.now(), p: 1, m: 1 };
+        SBupdate(function (v) { if (v.sb) v.sb.recall = rec; return v; });
+        if (state) state.recall = rec;
+        rb.disabled = true; rb.textContent = '💭 记下了，下一轮带上';
+        toast('success', '💭 下一轮私信和正文都会带上 ' + fmtMDWeekdayCN(rd) + ' 这一天（只带一次）');
+      }
+    });
+  }
+  // 📅 日记本的四种小圆点：[字段, 颜色, 图例]
+  var CAL_KINDS = [['s', '#c9a24a', '花钱'], ['g', '#8e2235', '礼物'], ['p', '#4a6fa5', '行程'], ['b', '#8a8a8a', '拉黑']];
+  function calDots(dg) {
+    if (!dg) return '';
+    var d = CAL_KINDS.filter(function (k) { var v = dg[k[0]]; return Array.isArray(v) ? v.length : v; })
+      .map(function (k) { return '<i style="background:' + k[1] + '"></i>'; }).join('');
+    return d ? '<span class="cal-dots">' + d + '</span>' : '';
+  }
+  // 过去某一天的详情：钱、礼物、私信、行程、拉黑，底下两个按钮
+  function dayDetailHtml(gd, dg, events) {
+    dg = dg || {};
+    var h = '<div class="cal-dh">' + esc(fmtMDWeekdayCN(gd)) + ' · 第 ' + gd + ' 天</div>', any = false;
+    function line(t) { h += '<div class="cal-dl">' + t + '</div>'; any = true; }
+    if (dg.s || dg.i) line('💸 ' + (dg.s ? '花了 ' + fmtCNY(dg.s) : '') + (dg.s && dg.i ? ' · ' : '') + (dg.i ? '进账 ' + fmtCNY(dg.i) : ''));
+    (dg.g || []).forEach(function (g) { line('🎁 ' + (g[2] ? esc(g[2]) + ' 送你 ' + esc(g[0]) : esc(g[0]) + (g[1] ? ' → ' + esc(g[1]) : ''))); });
+    if (dg.n) {
+      line('💬 私信 ' + dg.n + ' 条' + (dg.t ? '，聊得最多的是 ' + esc(dg.t) + '（' + dg.tn + ' 条）' : ''));
+      if (dg.q) h += '<div class="cal-q">「' + esc(dg.q) + '」</div>';
+    }
+    var plans = events.length ? events.map(function (e) { return e.txt; }) : (dg.p || []);
+    plans.forEach(function (t) { line('🗓️ ' + esc(t)); });
+    if (dg.b && dg.b.length) line('⛔ ' + esc(dg.b.join('、')) + ' 把你拉黑了');
+    if (!any) h += '<div class="cal-dl" style="color:var(--ink-faint);">这天手机上没什么动静</div>';
+    var btns = '';
+    if (dg.f) btns += '<button class="sb-abtn" data-jump="' + dg.f[0] + '">📖 回去看这天</button>';
+    if (any) {
+      var done = state && state.recall && state.recall.d === gd && (state.recall.p || state.recall.m);
+      btns += '<button class="sb-abtn" data-recall="' + gd + '"' + (done ? ' disabled' : '') + '>' + (done ? '💭 记下了，下一轮带上' : '💭 让 TA 提起这天') + '</button>';
+    }
+    return h + (btns ? '<div class="cal-btns">' + btns + '</div>' : '');
   }
 
   // ── 💳 流水（UWU 的功能）：全部交易带日期，🧾税务中心藏在右上角（设置里开了才出现）──
