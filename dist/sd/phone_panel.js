@@ -7442,7 +7442,18 @@ var SBLAB_CARD = "sd";
       model: { local: '模型/说话人名（留空走默认）', openai: '留空走 tts-1', gemini: '留空走 gemini-2.5-flash-preview-tts', minimax: '留空走 speech-02-turbo' },
       voice: { fish: '没单独配的人都用它' + (fishDefaultVoice() ? '；留空就用卡自带的那个' : '') + '。想换：去 <a href="https://fish.audio/zh-CN/discovery" target="_blank" rel="noopener" style="color:#b89968;">fish.audio 音色库</a> 点一个音色，网址末尾那串就是', openai: 'alloy / echo / nova 等（留空用 nova）', gemini: 'Kore / Puck 等（留空用 Kore）', minimax: '音色 ID，如 female-tianmei（留空用 female-shaonv）' },
     };
-    ov.innerHTML =
+    // 10-16 Fan 截图：酒馆主题会把输入框染成灰底浅字、小字提示和「关闭」淡到看不见——这里把颜色全钉死，只管这块面板
+    var CFG_CSS = '<style>' +
+      '#sblab-ttscfg,#sblab-ttscfg label,#sblab-ttscfg h3{color:#1a2a3a!important;}' +
+      '#sblab-ttscfg input,#sblab-ttscfg textarea,#sblab-ttscfg select{background:#fff!important;color:#1a2a3a!important;-webkit-text-fill-color:#1a2a3a;opacity:1!important;font-size:13px!important;}' +
+      '#sblab-ttscfg input::placeholder,#sblab-ttscfg textarea::placeholder{color:#8a8f96!important;-webkit-text-fill-color:#8a8f96;opacity:1!important;}' +
+      '#sblab-ttscfg small{color:#5b6570!important;opacity:1!important;}' +
+      '#sblab-ttscfg a{color:#8a6a3a!important;}' +
+      '#sblab-ttscfg ::selection{background:#e6d5b5!important;color:#1a2a3a!important;}' +
+      '#sblab-ttscfg input[type=checkbox]{display:inline-block!important;width:auto!important;height:auto!important;margin:0 6px 0 0!important;vertical-align:middle;}' +
+      '#sblab-ttscfg #lt-close{color:#1a2a3a!important;}' +
+      '</style>';
+    ov.innerHTML = CFG_CSS +
       '<h3 style="margin:4px 0 12px;">🎙 语音配置 <small style="font-weight:400;opacity:.6;">SB实验室</small></h3>' +
       '<label style="display:block;margin-bottom:10px;">后端<br><select id="lt-backend" ' + INP + '>' +
         opt('fish', 'Fish Audio（填官网 Key）') +
