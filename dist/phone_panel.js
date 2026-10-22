@@ -1839,6 +1839,7 @@
     if (!Object.keys(npcs).length) h += '<div class="sb-empty">No messages yet. Your story is about to begin.</div>';
     root.innerHTML = h;
     bindMain(npcs);
+    phoneRendered('list');   // 🔌 二创接口：消息列表画完，通知外挂
   }
 
   function renderWallet(w) {
@@ -1881,7 +1882,7 @@
       var avaH = seRow ? '✦' : (npc.isGroup ? sbIcon(npc.anon ? 'mask' : 'group', 18) : esc((npc.name.replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase()));
       var ur = npc.unread > 0 ? ' unread' : '';
       var quiet = !!(npc.isGroup && npc.dnd);
-      h += '<div class="sb-dmrow' + ur + (quiet ? ' quiet' : '') + (seRow ? ' se' : '') + (npc.pinned ? ' pinned' : '') + '" data-name="' + esc(npc.name) + '"><span class="sb-ava">' + avaH + '</span><div class="sb-dmbody"><div class="sb-dmtop"><b>' + esc(npc.name) + (npc.pinned ? ' <span class="sb-mk-pin">' + sbIcon('pin', 11) + '</span>' : '') + (quiet ? ' <span class="sb-dnd-ic">' + sbIcon('bellOff', 11) + '</span>' : '') + '</b><em>' + esc(npc.last_contact || '') + '</em></div>';
+      h += '<div class="sb-dmrow' + ur + (quiet ? ' quiet' : '') + (seRow ? ' se' : '') + (npc.pinned ? ' pinned' : '') + '" data-name="' + esc(npc.name) + '" data-npc="' + esc(npc.name) + '" data-kind="' + npcKind(npc.name, npc) + '"><span class="sb-ava">' + avaH + '</span><div class="sb-dmbody"><div class="sb-dmtop"><b>' + esc(npc.name) + (npc.pinned ? ' <span class="sb-mk-pin">' + sbIcon('pin', 11) + '</span>' : '') + (quiet ? ' <span class="sb-dnd-ic">' + sbIcon('bellOff', 11) + '</span>' : '') + '</b><em>' + esc(npc.last_contact || '') + '</em></div>';
       var tagsR = npc.isGroup
         ? (npc.anon ? '匿名' : ((npc.members || []).length + ' 人'))
         : (npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已拉黑你' : '');
@@ -4422,7 +4423,7 @@
     var subLine = isGrp
       ? '<span class="sb-gmem">' + ((npc.members || []).length) + ' 人 ›</span>' + (npc.anon ? ' 匿名 · 你是「' + esc(npc.myHandle || '？') + '」' : '')
       : esc(npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已把你拉黑' : '');
-    var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + (tkG ? '<span class="sb-tk-chip' + (tkB.wear.who === name ? ' on' : '') + '" data-tkchip="1">TOY·LINK · ' + (tkG.status === 'offered' ? '待你回应' : tkG.status === 'returned' ? '退回了' : tkB.wear.who === name ? (tkB.run.on && tkB.wear.told ? '开着' : '戴着') : '收下了') + ' ›</span>' : '') + '</small></div>' +
+    var h = '<div class="sb-ch" data-npc="' + esc(name) + '" data-kind="' + npcKind(name, npc) + '"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + (tkG ? '<span class="sb-tk-chip' + (tkB.wear.who === name ? ' on' : '') + '" data-tkchip="1">TOY·LINK · ' + (tkG.status === 'offered' ? '待你回应' : tkG.status === 'returned' ? '退回了' : tkB.wear.who === name ? (tkB.run.on && tkB.wear.told ? '开着' : '戴着') : '收下了') + ' ›</span>' : '') + '</small></div>' +
       (isGrp ? '<button class="sb-ch-dnd sb-ik' + (npc.dnd ? ' on' : '') + '" title="消息免打扰（照常收，只是不吵你）">' + sbIcon(npc.dnd ? 'bellOff' : 'bell') + '</button>' : '') +
       '<button class="sb-ch-pin sb-ik' + (npc.pinned ? ' on' : '') + '" title="置顶/取消置顶（置顶的联系人不会被自动清理）">' + sbIcon('pin') + '</button>' +
       '<button class="sb-ch-del sb-ik" title="' + (isGrp ? '退出并删除这个群' : '删除聊天记录') + '">' + sbIcon('trash') + '</button></div>';
@@ -4455,6 +4456,7 @@
     h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
 
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    phoneRendered('chat', name);   // 🔌 二创接口：聊天页画完，通知外挂
     chatEl.querySelectorAll('[data-cid]').forEach(function (b) { b.addEventListener('click', function (e) { if (_msel) return; e.stopPropagation(); reviewCall(name, b.getAttribute('data-cid')); }); });   // 📞 点通话灰泡回看
     if (!isGrp) sweepOrphanCalls(name);
     var tkChip = chatEl.querySelector('[data-tkchip]'); if (tkChip) tkChip.addEventListener('click', function (e) { e.stopPropagation(); openRemote(); });
@@ -5909,7 +5911,60 @@
       setStatus('✓ 新消息 ' + nowT());
     } catch (e) {}
   }, 60000);
+  // ── 🔌 二创接口（2026-10-22）：给别人写的外挂脚本一扇正门，不用再扒界面 ──
+  // 起因：玩家给一掷千金做的「好友个人主页」拿共用类名 .sb-ch-name 认聊天页，日历/流水/设置的页头全被插了头像。
+  // 只读：getContacts / getContact 给的都是拷贝，改了不影响手机和存档；唯一的动作是打开某人的聊天页。
+  // 界面标记：聊天页顶栏 .sb-ch[data-npc]（只有和人聊天的那页有，其他页的顶栏没有），消息列表每行 .sb-dmrow[data-npc]；
+  //           两处都带 data-kind：dm 个人 / group 群 / official 管家 S.。
+  // 通知：手机画完一页 → eventEmit('sb_phone_rendered', {view:'list'|'chat', name, kind})；数据变了 → 一直在发的 'sb_updated'。
+  // 说明书在发布仓库 manhattan-card/二创接口.md。改这里要同步那份说明书和另外两张卡的手机（三份手机各一份）。
+  function npcKind(name, npc) { return name === 'SugarElite™' ? 'official' : (npc && npc.isGroup ? 'group' : 'dm'); }
+  // 定时器表挂在函数自己身上：render 在脚本跑到这里之前就会被调用，var 那时还是 undefined
+  function phoneRendered(view, name) {
+    var t = phoneRendered._t || (phoneRendered._t = {});
+    if (t[view]) clearTimeout(t[view]);
+    t[view] = setTimeout(function () {   // 推到下一拍：这一页的绑定都做完了，外挂再来动 DOM；同一拍画了好几次只发一次
+      t[view] = null;
+      var d = { view: view };
+      if (name) { d.name = name; d.kind = npcKind(name, state && state.npcs && state.npcs[name]); }
+      try { eventEmit('sb_phone_rendered', d); } catch (e) {}
+    }, 0);
+  }
+  function apiNpcs() { try { var v = SBgetVars(); return (v && v.sb && v.sb.npcs) || {}; } catch (e) { return {}; } }
+  var sbPublicApi = {
+    apiVersion: 1,
+    card: 'nyc',
+    getContacts: function () {
+      var npcs = apiNpcs(), out = [];
+      for (var k in npcs) {
+        if (!npcs.hasOwnProperty(k) || !npcs[k]) continue;
+        var n = npcs[k];
+        out.push({ name: k, kind: npcKind(k, n), pinned: !!n.pinned, unread: n.unread || 0, archetype: n.archetype || '', lastMessage: n.last_message || '', lastTs: n.last_ts || 0 });
+      }
+      return out;
+    },
+    getContact: function (name) {
+      var n = apiNpcs()[String(name || '')];
+      if (!n) return null;
+      try { return JSON.parse(JSON.stringify(n)); } catch (e) { return null; }
+    },
+    getCurrentChat: function () {
+      return (panel.classList.contains('open') && chatEl.style.display !== 'none' && currentPage == null && currentChatName) ? currentChatName : null;
+    },
+    isOpen: function () { return panel.classList.contains('open'); },
+    openChat: function (name) {
+      name = String(name || '');
+      loadState();
+      if (!state || !state.npcs || !state.npcs[name]) return false;
+      if (!panel.classList.contains('open')) { panel.classList.add('open'); lockPanelHeight(); }
+      openChat(name, state.npcs[name]);
+      return true;
+    }
+  };
+  try { VIEW.SugarOS = sbPublicApi; } catch (e) {}
   function sbSelfCleanup() {
+    try { if (VIEW.SugarOS === sbPublicApi) delete VIEW.SugarOS; } catch (e) {}   // 🔌 二创接口：只摘自己挂的那个
+    try { var _rt = phoneRendered._t || {}; for (var _rk in _rt) clearTimeout(_rt[_rk]); } catch (e) {}
     try { clearInterval(_songTimer); } catch (e) {}
     try { clearInterval(_revealTimer); } catch (e) {}
     try { clearInterval(TK.timer); } catch (e) {}   // 🎛
