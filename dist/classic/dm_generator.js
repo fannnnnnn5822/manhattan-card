@@ -680,7 +680,8 @@ function pushThem(sb, name, type, content, zh, delay, who) {
   // 转账自动入账（钱包是系统账本，不靠玩家手动记）
   if ((type || '') === 'transfer') {
     var amt = parseFloat(String(content).replace(/[^0-9.]/g, '')) || 0;
-    if (amt > 0) creditWallet(sb, '+', amt, name, 'DM');
+    // credited/dk 记在这条消息上：被去重闸拦下的那笔没进账，删/重roll 这条时就不许再"退回"（10-25 白扣钱的 bug）
+    if (amt > 0) { rec.dk = 'd' + rec.ts + Math.random().toString(36).slice(2, 5); rec.credited = creditWallet(sb, '+', amt, name, 'DM', rec.dk); }
   }
   // 🎛 他嘴上说寄了/让助理送/签收了，她又刚提过玩具 → 东西真的到（模型爱把送礼演成现实里的物流，代码替他落账）
   if ((type || 'text') === 'text' && !who && TOY_GIVERS[name] && toyCanOffer(sb, name) && toyAsked(sb, name) && TOY_SENT_RE.test(String(content)) && !TOY_NOT_RE.test(String(content))) {
@@ -710,22 +711,44 @@ function pruneContacts(sb) {
 // 重复入账拦截：AI降智会把已经入账的钱下一轮再记一遍（典型：手机转账自动入账后，
 // 正文又补写一个同额 [WALLET:+] 标记）。规则：同方向+同金额，10分钟内第二次出现 = 判复读拦下。
 // 真有"10分钟内同额新一笔"的概率远小于AI复读的概率；误拦也不静默——toast 讲清楚怎么绕（换金额/过几分钟）。
+// 2026-10-25（SD 玩家报：两个人各给同额，第二笔被当重复拦）现在还要看「谁」：备注里认出是哪个联系人就按人分开，
+//   两边都写了名字但不是同一个人 → 两笔都收；有一边没写名字 → 照旧当同一笔拦。
+//   pass=这笔来自哪一楼/哪条私信：同一楼里两笔同额不互拦，重roll 回退时按它清闸。
 var WALLET_DEDUP_MS = 10 * 60 * 1000;
-function creditWallet(sb, dir, amount, counterparty, channel) {
+function walletWho(sb, counterparty) {
+  var s = String(counterparty || '').toLowerCase().replace(/[\s\d.,，。:：·\-—_~～¥￥$()（）【】\[\]"'“”‘’!！?？]+/g, '');
+  s = s.replace(/^(正文|转账|收款|入账|支出|红包)$/, '');
+  if (!s) return '';
+  var npcs = (sb && sb.npcs) || {}, best = '';
+  for (var k in npcs) {   // 认联系人：备注里含谁的名字就是谁（取最长的，"苏太太"不会被"苏"抢走）
+    if (!npcs.hasOwnProperty(k)) continue;
+    var nk = String(k).toLowerCase().replace(/\s+/g, '');
+    if (nk && s.indexOf(nk) !== -1 && nk.length > best.length) best = nk;
+  }
+  return best || s;
+}
+function walletSameWho(a, b) {
+  if (!a || !b) return true;
+  return a === b || a.indexOf(b) !== -1 || b.indexOf(a) !== -1;
+}
+function creditWallet(sb, dir, amount, counterparty, channel, pass) {
   if (!sb.wallet) sb.wallet = { balance: 0, bills: [], transactions: [] };
   var w = sb.wallet;
   var now = Date.now();
   if (!Array.isArray(w._dedup)) w._dedup = [];
   w._dedup = w._dedup.filter(function (d) { return now - (d.ts || 0) < WALLET_DEDUP_MS; });
   var key = dir + String(amount);
+  var who = walletWho(sb, counterparty);
   for (var di = 0; di < w._dedup.length; di++) {
-    if (w._dedup[di].k === key) {
-      try { if (typeof toastr !== 'undefined') toastr.warning('⛔ 拦下一笔疑似重复记账：' + dir + '$' + amount.toLocaleString() + (counterparty ? '（' + counterparty + '）' : '') + '——10分钟内已记过同方向同金额的一笔。真是新的一笔的话，过几分钟再转或换个金额。', 'SugarOS 钱包'); } catch (e) {}
-      console.warn('[SB-S v4] wallet dedup blocked: ' + key + ' ' + (counterparty || ''));
-      return false;
-    }
+    var dd = w._dedup[di];
+    if (dd.k !== key) continue;
+    if (pass && dd.pass === pass) continue;
+    if (!walletSameWho(dd.who || '', who)) continue;
+    try { if (typeof toastr !== 'undefined') toastr.warning('⛔ 拦下一笔疑似重复记账：' + dir + '$' + amount.toLocaleString() + (counterparty ? '（' + counterparty + '）' : '') + '——10分钟内已记过同方向同金额的一笔（同一个人，或没写是谁给的）。真是新的一笔的话，过几分钟再转或换个金额。', 'SugarOS 钱包'); } catch (e) {}
+    console.warn('[SB-S v4] wallet dedup blocked: ' + key + ' ' + (counterparty || ''));
+    return false;
   }
-  w._dedup.push({ k: key, ts: now });
+  w._dedup.push({ k: key, who: who, pass: pass || '', ts: now });
   w.balance = (w.balance || 0) + (dir === '-' ? -amount : amount);
   if (!w.transactions) w.transactions = [];
   w.transactions.push({ direction: dir, amount: amount, counterparty: counterparty || '', channel: channel || '', note: '', time: nowTime() });
@@ -2998,8 +3021,8 @@ async function onMainMessage(message_id) {
             if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
           }
           if (w && Array.isArray(w._dedup)) {
-            var dk = eff.dir + String(eff.amount);
-            w._dedup = w._dedup.filter(function (d) { return d.k !== dk; });
+            var dk = eff.dir + String(eff.amount), dpass = 'm' + msgIdStr;
+            w._dedup = w._dedup.filter(function (d) { return d.pass ? d.pass !== dpass : d.k !== dk; });   // 只清这一楼记的闸，别家同额的不动
           }
         }
         for (var rj = 0; rj < lastEff.closetAdds.length; rj++) {
@@ -3092,7 +3115,7 @@ async function onMainMessage(message_id) {
       addedCloset.length = 0;
       for (var i = 0; i < found.length; i++) {
         if (found[i].amount === 0) continue;   // WALLET=0=他人买单，User 没花钱，跳过入账
-        if (creditWallet(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', '正文')) credited.push(found[i]);
+        if (creditWallet(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', '正文', 'm' + msgIdStr)) credited.push(found[i]);
       }
       for (var j = 0; j < items.length; j++) { if (items[j].dir === '-') closetRemove(v.sb, items[j].name); else { if (closetAdd(v.sb, items[j].name, items[j].price || 0)) addedCloset.push(items[j]); } }
       if (newTime) {
