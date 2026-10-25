@@ -501,6 +501,11 @@ function schedTextGameDay(sb, txt) {
   }
   return today;
 }
+// 行程查重：同一句话，或同一天同一钟点已经有一条 = 重复（私信那边和正文各记一遍时措辞常常不一样）
+function schedDupe(list, txt, gd) {
+  var tm = (String(txt).match(/(\d{1,2}:\d{2})/) || [])[1];
+  return (list || []).some(function (s) { return s.txt === txt || (tm && s.gameDay === gd && String(s.txt).indexOf(tm) !== -1); });
+}
 function toMinutes(t) {
   var m = String(t || '').match(/^(\d{1,2}):(\d{2})$/);
   return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : -1;
@@ -998,6 +1003,7 @@ function cleanProse(s) {
     .replace(/```[\s\S]*?```/g, '')
     .replace(/<[^>\n]{1,300}>/g, '')
     .replace(/\[WALLET:[^\]]*\]/g, '')
+    .replace(/\[SCHED\s*[:：][^\]]*\]/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -2800,7 +2806,8 @@ function buildDigest(sb) {
     '- WALLET=0 时系统自动跳过扣款——不会从她余额里扣钱。两个标记缺一不可：有 CLOSET 就必有对应的 WALLET。\n' +
     '【重要】你必须在每次回复的最末尾输出当前剧情时间，格式为 [TIME:HH:MM|YYYY-MM-DD]，时间用24小时制。\n' +
     '- 例如 [TIME:14:30|2026-04-16]——必须带完整年月日，绝不用简写。\n' +
-    '- TIME 标记只在正文末尾输出**一次**——放在所有叙事文字、WALLET、CLOSET 之后，作为全文最后一行。正文中间绝不出现 TIME 标记。\n' +
+    '- SCHED：正文里 User **新敲定**了未来的约会/预约/安排（不是此刻正在发生的）→ 末尾写 [SCHED:M/D / HH:MM / 地点 / 和谁·干嘛]，日期必须是具体月/日，时间24小时制，系统会自动记进她的行程。【行程备忘】里已有的绝不重复写；没有新安排就不写。\n' +
+    '- TIME 标记只在正文末尾输出**一次**——放在所有叙事文字、WALLET、CLOSET、SCHED 之后，作为全文最后一行。正文中间绝不出现 TIME 标记。\n' +
     '- 时间以**正文结尾的时刻**为准（不是开头、不是中间）：如果一段剧情从中午写到傍晚，TIME 就写傍晚的时间。日期同理——跨天了就写新一天的日期。\n' +
     '日期是当前游戏内日期，从 ' + (sb.game && sb.game.epoch ? sb.game.epoch : GAME_EPOCH_STR) + ' 起算（剧情第1天=' + (sb.game && sb.game.epoch ? sb.game.epoch : GAME_EPOCH_STR) + '，今天是第 ' + (sb.game ? (sb.game.day || 1) : 1) + ' 天=' + gameDayToMD((sb.game ? (sb.game.day || 1) : 1), sb) + '）。这是强制要求，不可遗漏——日期和时间都必须基于已有的时间推进逻辑，绝不凭空编造。';   // UWU 的时间修复：注入层每轮都盯着，比世界书更贴脸
   return out;
@@ -3002,7 +3009,7 @@ function lastMainEffectsOf(msgIdStr) {
     var v0 = getVariables({ type: 'chat' });
     var le = v0 && v0.sb && v0.sb.last_effects;
     var e0 = le && le[msgIdStr];
-    if (e0) return { walletOps: Array.isArray(e0.walletOps) ? e0.walletOps : [], closetAdds: Array.isArray(e0.closetAdds) ? e0.closetAdds : [], days: e0.days || 0 };
+    if (e0) return { walletOps: Array.isArray(e0.walletOps) ? e0.walletOps : [], closetAdds: Array.isArray(e0.closetAdds) ? e0.closetAdds : [], days: e0.days || 0, scheds: Array.isArray(e0.scheds) ? e0.scheds : [] };
   } catch (e) {}
   return null;
 }
@@ -3022,7 +3029,7 @@ async function onMainMessage(message_id) {
       try { await maybeAutoStranger(); } catch (e) { console.warn('[SB-NYC v4] auto-stranger check failed', e); }
     }
     // ── swipe 检测：同一 message_id 第二次进来 = 玩家重新生成了，先回退上一版的财务影响 ──
-    if (isSwipe && (lastEff.walletOps.length || lastEff.closetAdds.length || lastEff.days)) {
+    if (isSwipe && (lastEff.walletOps.length || lastEff.closetAdds.length || lastEff.days || (lastEff.scheds && lastEff.scheds.length))) {
       _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 };   // 先清内存这份：回退只许发生一次
       await updateVariablesWith(function (v) {
         if (!v.sb) return v;
@@ -3053,6 +3060,10 @@ async function onMainMessage(message_id) {
             var ck = String(lastEff.closetAdds[rj].name).toLowerCase().trim().slice(0, 30);
             v.sb._closetDedup = v.sb._closetDedup.filter(function (d) { return d.k !== ck; });
           }
+        }
+        // 上一版正文记进行程的那几条一起撤掉（10-25 正文 SCHED 标记）
+        if (lastEff.scheds && lastEff.scheds.length && Array.isArray(v.sb.schedule)) {
+          v.sb.schedule = v.sb.schedule.filter(function (s) { return lastEff.scheds.indexOf(s.txt) === -1; });
         }
         // 回退过天（玩家报的 bug）：上一版正文推过的天数重roll 后必须退回去——
         // 否则反复重roll 一楼，房租倒计时会一次次往前跑，advanceDays 本身是可逆的
@@ -3127,14 +3138,19 @@ async function onMainMessage(message_id) {
     var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // [TIME:14:30|4/16] 或 [TIME:14:30]
     var newTime = timeM ? timeM[1] : null;
     var newDate = (timeM && timeM[2]) ? timeM[2].trim() : null;
-    if (!found.length && !items.length && !newTime) { _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 }; trimMainEffects(_mainEffects); return; }
+    // ④ 行程标记 [SCHED:M/D / HH:MM / 地点 / 和谁·干嘛]（10-25 玩家报：正文里约好的事不进行程——以前只靠私信那轮顺便收，光推正文时就漏）
+    var scheds = [], sre = /\[SCHED\s*[:：]\s*([^\]]+)\]/g, smk;
+    while ((smk = sre.exec(text)) !== null) { var st0 = smk[1].trim(); if (st0) scheds.push(st0); }
+    if (!found.length && !items.length && !newTime && !scheds.length) { _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 }; trimMainEffects(_mainEffects); return; }
     var _daysThisPass = 0;   // 本轮真正推过的天数（重roll 时要原数退回去）
     var credited = [];   // 只有真入账的才进成功toast——被去重闸拦下的那笔有自己的⛔警告，别再报"已入账"
     var addedCloset = [];
+    var addedSched = [];
     await updateVariablesWith(function (v) {
       if (!v.sb) return v;
       credited.length = 0;
       addedCloset.length = 0;
+      addedSched.length = 0;
       for (var i = 0; i < found.length; i++) {
         if (found[i].amount === 0) continue;   // WALLET=0=他人买单，User 没花钱，跳过入账
         if (creditWallet(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', '正文', 'm' + msgIdStr)) credited.push(found[i]);
@@ -3204,11 +3220,22 @@ async function onMainMessage(message_id) {
         g.time = newTime;
         if (newDate) g.date = newDate;
       }
+      if (scheds.length) {
+        if (!Array.isArray(v.sb.schedule)) v.sb.schedule = [];
+        var today0 = (v.sb.game && v.sb.game.day) || 1;
+        for (var sk = 0; sk < scheds.length; sk++) {
+          var sgd = schedTextGameDay(v.sb, scheds[sk]);
+          if (sgd < today0 || schedDupe(v.sb.schedule, scheds[sk], sgd)) continue;   // 过去的/已经记过的不再记
+          v.sb.schedule.push({ txt: scheds[sk], ts: Date.now(), gameDay: sgd });
+          addedSched.push(scheds[sk]);
+        }
+        if (v.sb.schedule.length > 20) v.sb.schedule = v.sb.schedule.slice(-20);
+      }
       // 记住本轮的财务影响，下次同 message_id 进来时回退这些——和入账在同一笔写里落存档（刷新后也找得到）
       if (!v.sb.last_effects || typeof v.sb.last_effects !== 'object') v.sb.last_effects = {};
       v.sb.last_effects[msgIdStr] = {
         walletOps: credited.map(function (f) { return { dir: f.dir, amount: f.amount }; }),
-        closetAdds: addedCloset.map(function (x) { return { name: x.name }; }),
+        closetAdds: addedCloset.map(function (x) { return { name: x.name }; }), scheds: addedSched.slice(),
         days: _daysThisPass
       };
       trimMainEffects(v.sb.last_effects);
@@ -3216,16 +3243,17 @@ async function onMainMessage(message_id) {
     }, { type: 'chat' });
     _mainEffects[msgIdStr] = {
       walletOps: credited.map(function (f) { return { dir: f.dir, amount: f.amount }; }),
-      closetAdds: addedCloset.map(function (x) { return { name: x.name }; }),
+      closetAdds: addedCloset.map(function (x) { return { name: x.name }; }), scheds: addedSched.slice(),
       days: _daysThisPass
     };
     trimMainEffects(_mainEffects);
-    var stripped = text.replace(new RegExp(WALLET_RE_SRC, 'g'), '').replace(new RegExp(CLOSET_RE_SRC, 'g'), '').replace(/\[TIME:[^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '');
+    var stripped = text.replace(new RegExp(WALLET_RE_SRC, 'g'), '').replace(/\[SCHED\s*[:：][^\]]*\]/g, '').replace(new RegExp(CLOSET_RE_SRC, 'g'), '').replace(/\[TIME:[^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '');
     await setChatMessages([{ message_id: m.message_id, message: stripped }], { refresh: 'affected' });
     try { eventEmit('sb_updated'); } catch (e) {}
     try {
       var toast = [];
       if (credited.length) toast.push('💳 ' + credited.map(function (f) { return f.dir + '$' + f.amount.toLocaleString() + ' ' + f.note; }).join('，'));
+      if (addedSched.length) toast.push('📅 记进行程 ' + addedSched.join('；'));
       var into = addedCloset;
       if (into.length) toast.push('👗 入橱 ' + into.map(function (x) { return x.name; }).join('、'));
       if (toast.length && typeof toastr !== 'undefined') toastr.success(toast.join(' ｜ '), 'SugarOS');
@@ -3645,18 +3673,24 @@ function seedDMs() {
 // ── 📚 学业日程生成（UWU 的功能：日历页手动触发，给 NYU 学生 User 排下周的课业）──
 // 上限 3 条学业日程：日历不是课表软件，有两三条"论文deadline逼近"的味道就够了
 eventOn('sb_request_academic', async function () {
+  // 10-25 玩家报「生成的日程不符合正文里 User 的日常」：以前提示词说"根据上下文"，实际一个字正文都没喂（max_chat_history:0）=瞎编。
+  // 现在喂最近正文 + 已有行程，先把正文里敲定了但没记上的安排补记进来（这才是玩家真正要的），名额有空再按正文补日常。
   try {
     var vars = getVariables({ type: 'chat' });
     var sb = vars && vars.sb;
     if (!sb) return;
-    var currentAcademic = (sb.schedule || []).filter(function (s) { return s.academic; });
-    if (currentAcademic.length >= 3) {
-      try { eventEmit('sb_status', '📚 学业日程已达上限'); } catch (e) {}
-      return;
-    }
-    var instr = '请为纽约大学的学生生成2-3条下周的学业日程（如作业截止、考试、小组讨论），每条格式严格为：📚|sched|+天数 / 时间 / 地点 / 内容描述\n' +
-      '例如：📚|sched|+2 / 14:00 / 图书馆 / 论文初稿提交\n注意：天数必须是 1 到 7 之间的整数，内容用中文（日期和星期由系统自动附加，你不用写）。只输出这些行，不要其他文字。';
-    var sys = '你是一个游戏日程生成器。只输出指定格式，不要解释。';
+    var sch0 = sb.schedule || [];
+    var room = Math.max(0, 3 - sch0.filter(function (s) { return s.academic && !s.done; }).length);
+    var today = (sb.game && sb.game.day) || 1;
+    var todayLabel = gameDayToMD(today, sb) + ' ' + gameDayToWeekday(today, sb) + (sb.game && sb.game.time ? ' ' + sb.game.time : '');
+    var have = sch0.filter(function (s) { return !s.done; }).slice(-12).map(function (s) { return s.txt; }).join('\n') || '（空）';
+    var plot = await recentPlot();
+    var instr = '今天是剧情里的 ' + todayLabel + '。\n【最近正文】\n' + (plot || '（暂无）') + '\n【行程表里已有的】\n' + have + '\n\n' +
+      '任务一（最重要）：从最近正文里找出 User 已经**敲定、但行程表里还没有**的未来安排（约会、预约、见面、出行、付款期限……），一条一行：记|M/D / HH:MM / 地点 / 和谁·干嘛\n' +
+      '  日期必须写成具体的 月/日（正文说"下周日""后天"就按今天换算）；没说钟点按场合补常识时间（晚餐20:00/午餐13:00/brunch 11:00）；没说地点写"待定"。行程表里已有的、已经过去的，都不要写。\n' +
+      (room > 0 ? '任务二：再按 User 在正文里已知的生活，补 ' + Math.min(2, room) + ' 条接下来一周她自己的日常安排（她在纽约读书，课业/deadline 也算日常，但别只写课业）——必须贴着正文里写过的事，正文没提过的身份/职业/爱好绝不编。一条一行：补|+天数 / HH:MM / 地点 / 内容（天数 1~7 的整数）\n' : '') +
+      '只输出这些行，不要其他文字。正文里没有新安排就不写「记」行。';
+    var sys = '你是一个游戏行程整理器。只输出指定格式，不要解释。';
     var raw = null;
     var cfg = getApiCfg();
     if (cfg) { try { raw = await callIndependent(cfg, [{ role: 'system', content: sys }], instr); } catch (e) { raw = null; } }
@@ -3664,45 +3698,53 @@ eventOn('sb_request_academic', async function () {
       await waitForSlot();
       raw = await generateRaw({ user_input: instr, should_silence: true, max_chat_history: 0, ordered_prompts: [{ role: 'system', content: sys }] });
     }
-    var text = typeof raw === 'string' ? raw : (raw && raw.content) || '';
+    var text = stripThink(typeof raw === 'string' ? raw : (raw && raw.content) || '');
     var lines = text.split('\n');
-    var added = [];
+    var picked = [], made = [];
     for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (!line || line.charAt(0) === '<') continue;
-      var parts = line.split('|');
-      if (parts.length < 3 || parts[1] !== 'sched') continue;
-      var content = parts.slice(2).join('|').trim();
-      var meta = content.split('/');
-      var dayOffset = parseInt((meta[0] || '').replace(/[^0-9]/g, ''), 10) || 0;
-      var time = (meta[1] || '').trim();
-      var location = (meta[2] || '').trim();
-      var desc = (meta.slice(3).join('/') || '').trim();
-      if (!dayOffset || dayOffset < 1 || dayOffset > 7) continue;
-      var gameDay = (sb.game.day || 1) + dayOffset;   // gameDay=事件发生的剧情日（日历按它落格子）
-      var dateLabel = gameDayToMD(gameDay, sb) + ' ' + gameDayToWeekday(gameDay, sb);   // "4/18 周五"
-      var schedTxt = '学业 / ' + dateLabel + (time ? ' ' + time : '') + ' / ' + location + ' / ' + desc;
-      var dup = (sb.schedule || []).some(function (s) { return s.txt === schedTxt; });
-      if (dup) continue;
-      added.push({ txt: schedTxt, ts: Date.now(), gameDay: gameDay, academic: true });
+      var lm = lines[i].trim().match(/^[^记补|｜]{0,4}(记|补)\s*[|｜]\s*(.+)$/);
+      if (!lm) continue;
+      var content = lm[2].replace(/^sched\s*[|｜]\s*/i, '').trim();
+      if (!content) continue;
+      if (lm[1] === '记') {
+        var gd = schedTextGameDay(sb, content);
+        if (gd < today) continue;
+        if (schedDupe(sch0.concat(picked), content, gd)) continue;
+        picked.push({ txt: content, ts: Date.now(), gameDay: gd });
+      } else {
+        if (made.length >= room) continue;
+        var meta = content.split('/');
+        var dayOffset = parseInt((meta[0] || '').replace(/[^0-9]/g, ''), 10) || 0;
+        if (!dayOffset || dayOffset < 1 || dayOffset > 7) continue;
+        var time = (meta[1] || '').trim();
+        var location = (meta[2] || '').trim();
+        var desc = (meta.slice(3).join('/') || '').trim();
+        var gameDay = today + dayOffset;   // gameDay=事件发生的剧情日（日历按它落格子）
+        var schedTxt = '个人 / ' + gameDayToMD(gameDay, sb) + ' ' + gameDayToWeekday(gameDay, sb) + (time ? ' ' + time : '') + ' / ' + location + ' / ' + desc;
+        if (schedDupe(sch0.concat(picked, made), schedTxt, gameDay)) continue;
+        made.push({ txt: schedTxt, ts: Date.now(), gameDay: gameDay, academic: true });
+      }
     }
+    var added = picked.concat(made);
     if (added.length > 0) {
-      var newTotal = currentAcademic.length + added.length;
-      if (newTotal > 3) added = added.slice(0, 3 - currentAcademic.length);
       await updateVariablesWith(function (v) {
-        if (!v.sb.schedule) v.sb.schedule = [];
+        if (!Array.isArray(v.sb.schedule)) v.sb.schedule = [];
         v.sb.schedule = v.sb.schedule.concat(added);
+        if (v.sb.schedule.length > 20) v.sb.schedule = v.sb.schedule.slice(-20);
         return v;
       }, { type: 'chat' });
       try { eventEmit('sb_updated'); } catch (e) {}
-      try { if (typeof toastr !== 'undefined') toastr.success('📚 新增 ' + added.length + ' 条学业日程', 'SugarOS'); } catch (e) {}
-      console.log('[SB-NYC v4] generated ' + added.length + ' academic schedules');
+      var msg = [];
+      if (picked.length) msg.push('从正文补记 ' + picked.length + ' 条');
+      if (made.length) msg.push('按日常新排 ' + made.length + ' 条');
+      try { if (typeof toastr !== 'undefined') toastr.success('📅 ' + msg.join('，'), 'SugarOS'); } catch (e) {}
+      console.log('[SB-NYC v4] schedule gen: picked ' + picked.length + ', made ' + made.length);
     } else {
-      try { eventEmit('sb_status', '📚 这次没生成出合规日程——再点一次试试'); } catch (e) {}
+      try { eventEmit('sb_status', '📅 正文里没找到还没记的安排' + (room ? '，也没排出新的——再点一次试试' : '（日常安排已满 3 条）')); } catch (e) {}
     }
   } catch (e) {
-    console.warn('[SB-NYC v4] academic schedule gen failed', e);
-    try { eventEmit('sb_dm_failed', '学业日程生成失败'); } catch (e2) {}
+    console.warn('[SB-NYC v4] schedule gen failed', e);
+    try { eventEmit('sb_dm_failed', '行程生成失败'); } catch (e2) {}
   }
 });
 

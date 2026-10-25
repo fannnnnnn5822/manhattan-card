@@ -3774,7 +3774,7 @@
     var displayDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + _calMonthOffset, 1);
     var viewYear = displayDate.getFullYear(), viewMonth = displayDate.getMonth();
     var h = '<div class="sb-ch"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b>日历</b><small>' + viewYear + '年 ' + (viewMonth + 1) + '月</small></div>' +
-      '<button class="sb-ch-del" id="sb-cal-academic" title="生成本周日程（医美/健身/工作/账单，按你的生活来）" style="opacity:.8;">📚</button></div>';
+      '<button class="sb-ch-del" id="sb-cal-academic" title="把正文里约好但没记上的安排补进行程（顺带按你的日常排几条）" style="opacity:.8;">📚</button></div>';
     h += '<div class="sb-msgs" id="sb-cal-wrap" style="display:block;padding:10px;">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
       '<button class="sb-abtn cal-prev" style="flex:0 0 auto;">◀</button>' +
@@ -3817,10 +3817,8 @@
     if (jumpBtn) jumpBtn.addEventListener('click', function () { calibrateTime(); });   // 顶栏时间被拖动handle吞了点击，改从这个按钮进
     var acadBtn = chatEl.querySelector('#sb-cal-academic');
     if (acadBtn) acadBtn.addEventListener('click', function () {
-      var academicCount = ((state && state.schedule) || []).filter(function (s) { return s.academic; }).length;
-      if (academicCount >= 3) { toast('info', '📚 学业日程已经排满了（最多3条）——先把手头的deadline熬过去'); return; }
       SBemit('sb_request_academic');
-      toast('info', '📚 正在生成学业日程…（一次AI调用）');
+      toast('info', '📅 正在从正文里找还没记进行程的安排…（一次AI调用）');
       acadBtn.textContent = '⏳';
       setTimeout(function () { acadBtn.textContent = '📚'; }, 3000);
     });
