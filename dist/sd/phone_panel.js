@@ -428,8 +428,11 @@
       var m = msgs[i];
       if (m.sender === 'THEM') {
         if (m.type === 'transfer') {
+          // 被去重闸拦下的转账当初就没进账（credited===false），退它=白扣钱（10-25 玩家白丢 30 万）；老存档没这个字段照旧退
+          if (m.credited === false) continue;
           var amt = parseFloat(String(m.content).replace(/[^0-9.]/g, '')) || 0;
           if (amt > 0) { walletObj.balance = Math.max(0, (walletObj.balance || 0) - amt); reversedAmt += amt; }
+          if (m.dk && Array.isArray(walletObj._dedup)) walletObj._dedup = walletObj._dedup.filter(function (d) { return d.pass !== m.dk; });   // 退了就放闸，重roll 出来的同一笔能正常进账
         } else if (m.type === 'skin') {
           if (!silent) {   // 调用方会再用 v.sb 静默跑一遍，皮肤这边一次管两头（镜像 + 变量）
             var skk = String(m.content || '');
@@ -1925,7 +1928,7 @@
 
   function renderWallet(w) {
     var bal = w.balance != null ? w.balance : 0; var bills = w.bills || []; var txs = w.transactions || [];
-    var h = '<div class="sb-wallet"><div class="sb-wt">💳 Wallet</div><div class="sb-wbal">' + fmtCNY(bal) + '</div>';
+    var h = '<div class="sb-wallet"><div class="sb-wt">💳 Wallet</div><div class="sb-wbal">' + fmtCNY(bal) + ' <span class="sb-paybill" id="sbnyc-wfix" title="账对不上？直接改成正确余额，差额记一笔流水">校正</span></div>';
     if (bills.length) {
       h += '<div class="sb-wsec">Bills Due</div>';
       for (var i = 0; i < bills.length; i++) {
@@ -2010,8 +2013,35 @@
     if (sa) sa.addEventListener('click', function () { flushOutbox(); render(); });
     var nd = root.querySelector('#sbnyc-new-dm');
     if (nd) nd.addEventListener('click', openContacts);
+    // 🔧 校正余额（10-25：账被重复拦截/回退搞乱了，管家改不了，玩家得有个自己动手的口子）——差额记一笔流水，账永远对得上
+    var wfix = root.querySelector('#sbnyc-wfix');
+    if (wfix) wfix.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      var cur = Math.round((state && state.wallet && state.wallet.balance) || 0);
+      panelPrompt('把余额改成多少？只填数字（现在 ' + fmtCNY(cur) + '，差额会记一笔「手动校正」流水）', String(cur)).then(function (s) {
+        if (s == null) return;
+        var nv = parseFloat(String(s).replace(/[,，\s¥￥$]/g, ''));
+        if (!isFinite(nv)) { toast('warning', '没看懂这个数字'); return; }
+        SBupdate(function (v) {
+          if (!v.sb) return v;
+          if (!v.sb.wallet) v.sb.wallet = { balance: 0, bills: [], transactions: [] };
+          var w = v.sb.wallet, diff = nv - (w.balance || 0);
+          if (!diff) return v;
+          w.balance = nv;
+          var tx = { direction: diff > 0 ? '+' : '-', amount: Math.abs(diff), counterparty: '手动校正', channel: '校正', note: '', time: nowT() };
+          if (!w.transactions) w.transactions = [];
+          w.transactions.push(tx);
+          if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+          if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
+          w.allTransactions.push(Object.assign({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), gameDay: (v.sb.game && v.sb.game.day) || 1 }, tx));
+          if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
+          w._dedup = [];   // 账都手动对过了，去重闸清空，免得接下来的正常进账再被旧记录拦
+          return v;
+        }).then(function () { toast('success', '🔧 余额已校正为 ' + fmtCNY(nv)); SBemit('sb_updated'); });
+      });
+    });
     // 💸 付账单：扣款 + 倒计时重置下期30天（余额不够 debit 自己会拦并提示）
-    var pbs = root.querySelectorAll('.sb-paybill');
+    var pbs = root.querySelectorAll('.sb-paybill[data-bi]');
     for (var pb = 0; pb < pbs.length; pb++) {
       (function (el) {
         el.addEventListener('click', function (ev) {
