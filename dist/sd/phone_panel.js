@@ -1131,6 +1131,7 @@
     '#sbnyc-panel .sb-tx-w{flex:1;padding:0 6px;color:var(--ink);font-weight:500;}',
     '#sbnyc-panel .sb-tx-n{color:var(--ink-sub);font-size:11px;}',
     '#sbnyc-panel .sb-actions{display:flex;gap:6px;padding:0 12px 8px;}',
+    '#sbnyc-panel .sb-slot{padding:0 12px 8px;}#sbnyc-panel .sb-slot:empty{display:none;}',
     '#sbnyc-panel .sb-abtn{flex:1;background:var(--paper-2);border:.5px solid var(--line);color:var(--ink);font-family:var(--font-cn);font-size:12px;padding:7px 6px;border-radius:999px;cursor:pointer;text-align:center;letter-spacing:1px;}',
     '#sbnyc-panel .sb-abtn:hover{background:var(--ink);color:var(--paper-2);}',
     '#sbnyc-panel .sb-sec{font-family:var(--font-en);font-size:9px;letter-spacing:4px;text-transform:uppercase;color:var(--gold);margin:10px 20px 6px;font-weight:600;display:flex;align-items:center;gap:10px;}',
@@ -1893,6 +1894,7 @@
     fetchBanned();   // 封禁名单顺手保鲜（5分钟节流；本机被封则当场落锁）
     if (!state) {
       root.innerHTML = '<div class="sb-wait">⏳ 等待游戏数据<br>先在开场消息里填表并提交<br><span style="font-size:10px">（提交后金主们的第一批私信会自动进来）</span></div>';
+      phoneRendered('wait');   // 🔌 二创接口：等待屏也通知（外挂好知道主屏插槽没了）
       return;
     }
     if (chatEl.style.display !== 'none' && currentChatName && state.npcs && state.npcs[currentChatName]) {
@@ -1923,6 +1925,7 @@
     if (!Object.keys(npcs).length) h += '<div class="sb-empty">No messages yet. Your story is about to begin.</div>';
     root.innerHTML = h;
     bindMain(npcs);
+    fillHomeSlots();         // 🔌 主屏插槽：同一拍里填上，不闪
     phoneRendered('list');   // 🔌 二创接口：消息列表画完，通知外挂
   }
 
@@ -1944,7 +1947,8 @@
   }
   function renderActions() {
     return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">' + sbIcon('refresh', 14) + ' 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button></div>' +
-      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn' + ((TK.live && TK.live.on) ? ' tk-on' : '') + '" data-act="remote">' + sbIcon('toy', 14) + ' 遥控</button></div>';   // 第二行（UWU 的两个新页面）
+      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn' + ((TK.live && TK.live.on) ? ' tk-on' : '') + '" data-act="remote">' + sbIcon('toy', 14) + ' 遥控</button></div>' +   // 第二行（UWU 的两个新页面）
+      '<div class="sb-slot" data-sb-slot="home"></div>';   // 🔌 主屏插槽（SugarOS.onHomeSlot），空着就不占地方
   }
   function renderDMList(npcs) {
     var entries = []; for (var n in npcs) { if (!npcs.hasOwnProperty(n)) continue; var npc = npcs[n]; if (!npc.unlocked && !npc.persistent && (npc.unread || 0) <= 0 && !npc.engaged) continue; if (npc.muted && !(npc.dm_history && npc.dm_history.length) && (npc.unread || 0) <= 0 && !npc.engaged) continue; entries.push(npc); }
@@ -4082,6 +4086,9 @@
       if (!w.transactions) w.transactions = [];
       w.transactions.push({ direction: '+', amount: offer, counterparty: '二奢回收 · ' + it.name, channel: '二手', note: '', time: nowT() });
       if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+      if (!Array.isArray(w.allTransactions)) w.allTransactions = [];   // 10-28：总账也记一笔，流水页才看得到回收进账
+      w.allTransactions.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), direction: '+', amount: offer, counterparty: '二奢回收 · ' + it.name, channel: '二手', note: '', time: nowT(), gameDay: (v.sb.game && v.sb.game.day) || 1 });
+      if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
       return v;
     });
     if (state) {
@@ -4709,7 +4716,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">' + sbIcon('refresh', 14) + ' 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师<br>🎙 真人语音通话 —— 流式播放、逐句朗读、酒馆代理等参考并移植自常夜灯老师的《镜译》（MirrorTranslate）与 Yoren 老师的《通用通讯终端 V4》，感谢两位老师授权<br>🎚 自动来消息的三路开关（冷清/活跃/按轮数/按分钟）—— 来自凌keke老师的二创《私信生成器控制版》，感谢凌keke老师</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师<br>🎙 真人语音通话 —— 流式播放、逐句朗读、酒馆代理等参考并移植自常夜灯老师的《镜译》（MirrorTranslate）与 Yoren 老师的《通用通讯终端 V4》，感谢两位老师授权<br>🎚 自动来消息的三路开关（冷清/活跃/按轮数/按分钟）—— 来自凌keke老师的二创《私信生成器控制版》<br>👤 个人主页（房产/车/公司/收藏，点主屏「个人主页」进）—— 来自凌keke老师的二创《一掷千金 · 用户个人主页》，感谢凌keke老师</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -4957,11 +4964,15 @@
           // 执行初始化——保留 profile，其余回档
           var savedProfile = (state && state.profile) ? JSON.parse(JSON.stringify(state.profile)) : {};
           SBupdate(function (v) {
+            // 档案以变量里的为准：个人主页刚存的、镜像还没刷新的那份不能被回档冲掉（10-28）
+            var keepProfile = (v && v.sb && v.sb.profile) ? JSON.parse(JSON.stringify(v.sb.profile)) : savedProfile;
+            if (keepProfile.userHome && typeof keepProfile.userHome === 'object') keepProfile.userHome.assets = [];   // 👤 资产是钱买的，跟钱包一起回档；头像和资料留着
+            savedProfile = keepProfile;
             var fresh = {
               // 开场白那段初始化脚本靠 _opened 判断"已经开过场"——回档必须把它带着，
               // 否则下次重新渲染第0楼，开场脚本会以为是新局，把钱包重置成50万并再 /send 一次开场提示词
               _opened: !!(v && v.sb && v.sb._opened),
-              profile: savedProfile,
+              profile: keepProfile,
               wallet: { balance: 0, bills: [], transactions: [], allTransactions: [] },
               npcs: {},
               beauty: { charm: 50, treatments: [] },
@@ -6290,9 +6301,26 @@
     }, 0);
   }
   function apiNpcs() { try { var v = SBgetVars(); return (v && v.sb && v.sb.npcs) || {}; } catch (e) { return {}; } }
+  // 主屏插槽（10-28 给内置的「个人主页」开的；新增不算不兼容，apiVersion 还是 1，外挂用 typeof onHomeSlot 判断）：render() 画完同一拍同步调用，外挂往 slotEl 里放东西，不会被下一次重画闪掉。
+  // 函数表挂在 fillHomeSlots 自己身上：render 在脚本跑到这里之前就会被调用（同 phoneRendered._t）
+  function fillHomeSlots() {
+    var fns = fillHomeSlots._f || [];
+    if (!fns.length) return;
+    var el = root.querySelector('[data-sb-slot="home"]');
+    if (!el) return;
+    for (var i = 0; i < fns.length; i++) { try { fns[i](el); } catch (e) { console.warn('[SB phone] home slot filler failed', e); } }
+  }
   var sbPublicApi = {
     apiVersion: 1,
     card: 'sd',
+    onHomeSlot: function (fn) {
+      if (typeof fn !== 'function') return { stop: function () {} };
+      var fns = fillHomeSlots._f || (fillHomeSlots._f = []);
+      fns.push(fn);
+      var el = root.querySelector('[data-sb-slot="home"]');
+      if (el) { try { fn(el); } catch (e) { console.warn('[SB phone] home slot filler failed', e); } }
+      return { stop: function () { var i = fns.indexOf(fn); if (i !== -1) fns.splice(i, 1); } };
+    },
     getContacts: function () {
       var npcs = apiNpcs(), out = [];
       for (var k in npcs) {
@@ -7939,4 +7967,3362 @@ var SBLAB_CARD = "sd";
     } catch (e) { console.warn('[SB wb_sync]', e); }
   }
   setTimeout(run, 1500);
+})();
+
+;
+// 一掷千金 · 用户个人主页
+// 独立 Tavern Helper 角色脚本，基于 fannnnnnn《手机二创接口（SugarOS）》。
+// 接口：https://github.com/fannnnnnn5822/manhattan-card/blob/main/二创接口.md
+// 原帖：https://discord.com/channels/1380075940285124724/1533079819942891530
+// 本脚本不修改好友主页、原手机脚本或角色卡。
+//
+// ── 2026-10-28 合进一掷千金手机时的改动（作者：凌keke老师；合入：fannnnnnn）──
+// 这份是凌老师 v0.2.2 的内置版，打包时原样接在 phone_panel.js 后面，和手机跑在同一个脚本里。
+// 结构和写法尽量没动，方便对照；改到的地方都带「SD 内置」注释。
+//  1. 世界书只在玩家亲手点「同步并写入世界书」以后才建书、写条目；点过一次记在 userHome.worldbookConsent。
+//     之后资料、资产有变化（包括手机「初始化聊天」清空资产）只更新这一条已有条目，绝不新建书或条目。
+//     旧版自动写过的条目（userHome.worldbook.bookName 有值）也只更新、不新建。
+//  2. 钱包认资产更严：
+//     · 跳过不算「买到手」的频道：一日租借 / 账单 / SugarElite体验 / SugarElite代订 / 税务 / 转账 / 回退 / 二手 / 校正 / 莆田直发
+//       （高仿走衣橱那条路，衣橱条目带 fake:true）；名字像体验（补调 isExperiencePurchase）或费用（物业费、月费、保养……）的也跳过。
+//     · 退了款的不算：手机新记法是原记录 reversed:true、退款记录 reverses:原id；老存档按「同金额、方向相反、
+//       counterparty 是 正文重roll回退 / 消息回退 · X」往前配对。之前按这类记录建出来的资产会被清掉（玩家手改过金额的不动）。
+//     · 认定过是礼物的流水记进 userHome.giftKeys，衣橱那条被挤出 60 件或被回退删掉以后也不会翻成自己的资产。
+//     · 高仿照算资产，带 fake:true，界面挂「高仿」角标，世界书写「（高仿）」。
+//     · 分类补了常见英文品牌（Hermès/Rolex/Cartier/Patek/AP/Richard Mille/Porsche/Ferrari/Lamborghini/
+//       Rolls-Royce/Bentley/Maybach/Chanel/LV/Dior/Van Cleef/Tiffany/Bvlgari 等）。
+//     · 钱包卡片上的最近 20 笔和总账对得上的算同一笔（以前最近那本没有 gameDay，同一笔会被算两次）。
+//  3. 流水滚出 500 笔总账不再算「已转出」。只有明确证据才转出：衣橱里送给了别人、二奢回收（「二奢回收 · 品名」）、玩家自己删。
+//     合并重复项时佐证取最强的（衣橱 > 正文 ASSET 注释 > 钱包）。
+//  4. 编辑资料不再改手机的 sb.profile.name_cn / age / job：改的值存 userHome.identity，显示时先用它、没有再用 sb.profile。
+//     年龄留空就不写（以前会存成 18）。开场表单没交（没有 sb，或 sb 没有 _opened）时什么都不写，免得手机跳过「等待游戏数据」
+//     （很老的存档可能没有 _opened，但有钱包和游戏日，也算交过表）。
+//  5. 手机入口改走 SugarOS.onHomeSlot 插槽：手机每次重画同一拍就填上，不再找「遥控」按钮、不再等 60ms，重画时入口不闪。
+//     手机太老没有插槽就不放入口。入口和主页的配色跟手机主题（含夜间）走，入口宽度和按钮行对齐；入口右侧字改成「个人主页 ›」。
+//  6. 世界书条目措辞按本卡规则改：送礼照常写 WALLET + CLOSET（只是不算 User 的资产）；开场设定里本来就有的可以提；
+//     ASSET 注释放在 TIME 前面，TIME 仍是最后一行。ASSET 金额认「万 / 千 / w / k」（6800万 = 68000000）。空字段不写。
+//  7. 正在同步时又来同步请求：记一笔，跑完用最新数据再跑一遍（以前直接丢掉，手动同步还会误报「正文同步失败」）。
+//  8. 小修：backdrop-filter 补 -webkit- 前缀；dvh 加 vh 回退；本地图片还没处理完就点保存，会等处理完再存；
+//     分支聊天会复制父聊天的变量，换头像时不再删不是本聊天建的那张图（以前会把父聊天的头像删掉）；
+//     主页和手机入口共用一份头像 objectURL，重画时不再互相 revoke。
+//  9. 内置身份：VERSION '0.2.2-sd1'，全局对象带 builtin:true。发现独立版（同一个 __SD_USER_HOME_V1__）就关掉它并提示一次；
+//     独立版后加载把内置版顶掉时，内置版会重新起来再关掉它。最后只剩内置版一份在跑。
+(function suhMain() {
+  'use strict';
+
+  var VERSION = '0.2.2-sd1';
+  var BUILTIN = true;   // SD 内置：打包进一掷千金手机的这份
+  var DUP_WARN_KEY = '__SD_USER_HOME_DUP_WARNED__';
+  var SCHEMA = 4;
+  var DETAIL_FIELDS = ['location', 'exterior', 'scale', 'floors', 'rooms', 'share', 'role', 'interior'];
+  var ROOT_ID = 'suh-root';
+  var STYLE_ID = 'suh-style';
+  var ENTRY_ID = 'suh-phone-entry';
+  var RUNTIME_KEY = '__SD_USER_HOME_V1__';
+  var OPEN_EVENT = 'sdsim:user-home-open';
+  var STORE_EVENT = 'sdsim:user-home-saved';
+  var CATEGORIES = {
+    property: '房产',
+    vehicle: '车辆',
+    company: '公司',
+    luxury: '奢侈品',
+    other: '其他'
+  };
+  var CATEGORY_ORDER = ['property', 'vehicle', 'company', 'luxury', 'other'];
+  var CATEGORY_ALIASES = {
+    '房产': 'property',
+    '不动产': 'property',
+    '住宅': 'property',
+    '股权': 'company',
+    '股份': 'company',
+    '股票': 'company',
+    'equity': 'company',
+    '公司': 'company',
+    '企业': 'company',
+    '奢侈品': 'luxury',
+    '名包': 'luxury',
+    '包袋': 'luxury',
+    '高定': 'luxury',
+    '腕表': 'luxury',
+    '手表': 'luxury',
+    '珠宝': 'luxury',
+    '首饰': 'luxury',
+    'watch': 'luxury',
+    'jewelry': 'luxury',
+    '车辆': 'vehicle',
+    '汽车': 'vehicle',
+    '其他': 'other'
+  };
+  var ASSET_FIELD_CONFIG = {
+    property: [
+      { key: 'location', label: '详细位置', placeholder: '城市、区域、小区与详细地址' },
+      { key: 'scale', label: '占地与建筑面积', placeholder: '占地面积、建筑面积和庭院范围' },
+      { key: 'exterior', label: '外观', placeholder: '建筑风格、立面与景观' },
+      { key: 'floors', label: '楼层', placeholder: '所在楼层、总层数与地下空间' },
+      { key: 'rooms', label: '房间格局', placeholder: '几室几厅、房间数量与功能' },
+      { key: 'interior', label: '内部概况', placeholder: '装修、家具、设施与车位' }
+    ],
+    vehicle: [
+      { key: 'scale', label: '车型与性能', placeholder: '品牌型号、动力、性能与选装' },
+      { key: 'exterior', label: '外观与颜色', placeholder: '车漆颜色、套件与车身状态' },
+      { key: 'interior', label: '内饰', placeholder: '材质、配色、座椅与随车配置' }
+    ],
+    company: [
+      { key: 'location', label: '公司位置', placeholder: '注册地址、办公楼与详细位置' },
+      { key: 'floors', label: '楼宇与办公空间', placeholder: '哪栋楼、第几层、实际使用空间；整栋楼可写明' },
+      { key: 'share', label: '股权比例', placeholder: 'User 持有多少股份或权益' },
+      { key: 'role', label: '公司职位', placeholder: '董事长、CEO、股东或其他职位' },
+      { key: 'scale', label: '经营规模', placeholder: '注册资本、员工数量与业务体量' },
+      { key: 'exterior', label: '公司外观', placeholder: '办公楼、门店或品牌形象' },
+      { key: 'interior', label: '经营状况', placeholder: '主营业务、现金流、管理层与状态' }
+    ],
+    luxury: [
+      { key: 'scale', label: '型号与规格', placeholder: '腕表型号、服装尺码、包袋规格或限量信息' },
+      { key: 'exterior', label: '外观', placeholder: '材质、颜色、工艺、镶嵌与成色' },
+      { key: 'interior', label: '附件与状态', placeholder: '机芯、证书、包装、保养与使用状态' }
+    ],
+    other: [
+      { key: 'exterior', label: '外观与状态', placeholder: '外观、材质或当前状态' },
+      { key: 'scale', label: '规格', placeholder: '数量、型号或规格' },
+      { key: 'interior', label: '详情', placeholder: '用途、权属或其他信息' }
+    ]
+  };
+
+  function hostWindow() {
+    try {
+      if (window.parent && window.parent !== window && window.parent.document) return window.parent;
+    } catch (_) {}
+    return window;
+  }
+
+  function hostDocument() {
+    try {
+      return hostWindow().document || document;
+    } catch (_) {
+      return document;
+    }
+  }
+
+  var HOST = hostWindow();
+  var DOC = hostDocument();
+  if (HOST[RUNTIME_KEY] && typeof HOST[RUNTIME_KEY].destroy === 'function') {
+    // SD 内置：宿主上挂着的如果是独立版（脚本库里的「一掷千金 · 用户个人主页」），关掉它并提示一次
+    var previousRuntime = HOST[RUNTIME_KEY];
+    try { previousRuntime.destroy(); } catch (_) {}
+    if (!previousRuntime.builtin) warnStandaloneDuplicate();
+  }
+
+  function warnStandaloneDuplicate() {
+    try {
+      if (HOST[DUP_WARN_KEY]) return;
+      HOST[DUP_WARN_KEY] = true;
+    } catch (_) {}
+    var message = '个人主页已经内置进手机了（来自凌keke老师）。请到酒馆助手的脚本库里关掉「一掷千金 · 用户个人主页」这个独立脚本。';
+    try {
+      if (typeof toastr !== 'undefined') toastr.info(message, 'SugarOS', { timeOut: 12000 });
+    } catch (_) {}
+    try { console.info('[SD 个人主页] ' + message); } catch (_) {}
+  }
+
+  var root = null;
+  var bodyEl = null;
+  var statusEl = null;
+  var activeTab = 'assets';
+  var profileEditing = false;
+  var assetEditingId = '';
+  var assetGroupOpen = Object.create(null);
+  var open = false;
+  var busy = false;
+  var destroyed = false;
+  var assetSyncTimer = null;
+  var profileSyncRunning = false;
+  var lastFocus = null;
+  var disposers = [];
+  var avatarObjectUrl = '';
+  var avatarObjectKey = '';        // SD 内置：avatarObjectUrl 对应哪张头像（key|updatedAt），主页和入口共用这一份
+  var pendingAvatarBlob = null;
+  var pendingAvatarJob = null;     // SD 内置：本地图片还在压缩时点保存，等它处理完
+  var pendingAvatarPreviewUrl = '';
+  var avatarBusy = false;
+  var homeSlotHandle = null;       // SD 内置：SugarOS.onHomeSlot 的句柄
+  var homeSlotOwner = null;
+  var autoWorldbookSkipHash = '';  // SD 内置：这份内容自动同步时没找到可更新的条目，内容没变之前不再去读世界书
+  var lastWorldbookError = '';
+
+  function listen(target, eventName, listener, options) {
+    target.addEventListener(eventName, listener, options);
+    disposers.push(function () {
+      try { target.removeEventListener(eventName, listener, options); } catch (_) {}
+    });
+  }
+
+  function stopAll() {
+    while (disposers.length) {
+      try { disposers.pop()(); } catch (_) {}
+    }
+  }
+
+  // SD 内置：同一件事同一时间只跑一轮。跑的时候又来请求，不丢掉，记一笔；
+  // 这一轮跑完再用最新数据补跑一次（排队的只留一个，标记取并集）。
+  function serialTask(run) {
+    var running = false;
+    var queued = null;
+    function task(options) {
+      options = options || {};
+      if (destroyed) return Promise.resolve(false);
+      if (running) {
+        if (!queued) {
+          queued = { options: {} };
+          queued.promise = new Promise(function (resolve) { queued.resolve = resolve; });
+        }
+        Object.keys(options).forEach(function (key) {
+          if (options[key]) queued.options[key] = true;
+        });
+        return queued.promise;
+      }
+      running = true;
+      return Promise.resolve().then(function () {
+        return run(options);
+      }).catch(function () {
+        return false;
+      }).then(function (result) {
+        running = false;
+        var next = queued;
+        queued = null;
+        if (next) task(next.options).then(next.resolve, function () { next.resolve(false); });
+        return result;
+      });
+    }
+    task.isRunning = function () { return running; };
+    return task;
+  }
+
+  // SD 内置：开场表单交了没有。phone_panel 只在有 sb 时画主屏；first_mes 交表时写 sb._opened = true，
+  // 「初始化聊天」会把 _opened 带着。很老的存档可能没有 _opened，但有 wallet 和 game，也算开过场。
+  function gameOpened(sb) {
+    if (!sb || typeof sb !== 'object') return false;
+    return !!(sb._opened || (sb.wallet && typeof sb.wallet === 'object' && sb.game && typeof sb.game === 'object'));
+  }
+
+  function text(value, fallback) {
+    if (value === null || value === undefined) return fallback || '';
+    var out = String(value).replace(/\r\n/g, '\n').trim();
+    return out || fallback || '';
+  }
+
+  function clampText(value, max) {
+    return text(value).slice(0, max);
+  }
+
+  function asList(value, limit) {
+    var rows = Array.isArray(value) ? value : (typeof value === 'string' ? value.split(/[,，、\n]/) : []);
+    var out = [];
+    for (var i = 0; i < rows.length && out.length < (limit || 10); i++) {
+      var item = clampText(rows[i], 60);
+      if (item && out.indexOf(item) === -1) out.push(item);
+    }
+    return out;
+  }
+
+  function formatMoney(value) {
+    var number = Number(value);
+    if (!isFinite(number)) return '¥0';
+    try {
+      return '¥' + Math.round(number).toLocaleString('zh-CN');
+    } catch (_) {
+      return '¥' + Math.round(number);
+    }
+  }
+
+  function formatLocalDateTime(value) {
+    var raw = text(value);
+    if (!raw) return '';
+    var date = new Date(raw);
+    if (!isFinite(date.getTime())) return raw;
+    try {
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  function normalizeName(value) {
+    return text(value).toLowerCase().replace(/[^\u3400-\u9fffa-z0-9]/g, '');
+  }
+
+  function normalizeGiftText(value) {
+    return text(value)
+      .toLowerCase()
+      .replace(/^(?:高仿|租借|礼物|赠品)\s*[·:：-]?\s*/, '')
+      .replace(/[与和及]/g, '')
+      .replace(/[^\u3400-\u9fffa-z0-9]/g, '');
+  }
+
+  function giftNameSimilarity(leftValue, rightValue) {
+    var left = normalizeGiftText(leftValue);
+    var right = normalizeGiftText(rightValue);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+    if (left.indexOf(right) !== -1 || right.indexOf(left) !== -1) return 0.86;
+    var counts = Object.create(null);
+    for (var i = 0; i < left.length; i++) {
+      var leftChar = left.charAt(i);
+      counts[leftChar] = (counts[leftChar] || 0) + 1;
+    }
+    var overlap = 0;
+    for (var j = 0; j < right.length; j++) {
+      var rightChar = right.charAt(j);
+      if (!counts[rightChar]) continue;
+      overlap++;
+      counts[rightChar]--;
+    }
+    return overlap / Math.max(left.length, right.length);
+  }
+
+  function readChatVariables() {
+    try {
+      if (typeof getVariables === 'function') return getVariables({ type: 'chat' }) || {};
+    } catch (_) {}
+    return {};
+  }
+
+  function mutateChatVariables(updater) {
+    try {
+      if (typeof updateVariablesWith === 'function') {
+        return Promise.resolve(updateVariablesWith(updater, { type: 'chat' }));
+      }
+      var vars = readChatVariables();
+      updater(vars);
+      if (typeof replaceVariables !== 'function') throw new Error('酒馆变量接口不可用');
+      replaceVariables(vars, { type: 'chat' });
+      return Promise.resolve(true);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  function personaName() {
+    try {
+      var context = HOST.SillyTavern && HOST.SillyTavern.getContext ? HOST.SillyTavern.getContext() : null;
+      return text(context && context.name1);
+    } catch (_) {}
+    return '';
+  }
+
+  // SD 内置：开场表单那份档案（手机的 sb.profile，只读）。表单没填的项会写「（没填——…）」，当没填处理。
+  function profileBaseIdentity(vars) {
+    var sb = vars && vars.sb && typeof vars.sb === 'object' ? vars.sb : {};
+    var profile = sb.profile && typeof sb.profile === 'object' ? sb.profile : {};
+    function filled(value) {
+      var out = text(value);
+      return /^[（(]没填/.test(out) ? '' : out;
+    }
+    var age = Number(filled(profile.age));
+    return {
+      name: filled(profile.name_cn) || filled(profile.name_en) || personaName() || 'User',
+      age: isFinite(age) && age > 0 ? Math.round(age) : 0,
+      job: filled(profile.job)
+    };
+  }
+
+  function userIdentity(vars) {
+    var sb = vars && vars.sb && typeof vars.sb === 'object' ? vars.sb : {};
+    var profile = sb.profile && typeof sb.profile === 'object' ? sb.profile : {};
+    var home = profile.userHome && typeof profile.userHome === 'object' ? profile.userHome : {};
+    var identity = home.identity && typeof home.identity === 'object' ? home.identity : {};
+    // SD 内置：主页里改过的姓名/年龄/职业存在 userHome.identity，先用它；没有再用手机的 sb.profile（开场表单）
+    var base = profileBaseIdentity(vars);
+    var name = text(identity.name, base.name);
+    var age = Number(text(identity.age)) || base.age;
+    return {
+      name: clampText(name, 60),
+      age: isFinite(age) && age > 0 ? Math.round(age) : 0,
+      job: clampText(text(identity.job, base.job), 120),
+      figure: clampText(identity.figure, 500),
+      appearance: clampText(identity.appearance, 500),
+      personality: clampText(identity.personality, 500),
+      kinks: asList(identity.kinks, 20),
+      penisShape: clampText(identity.penisShape, 500)
+    };
+  }
+
+  function inferCategory(name) {
+    var value = text(name);
+    if (/股权|股份|持股|投资份额|股票|证券|基金|债券|有限公司|集团|企业|工作室|事务所|控股|实业|买下.*公司|收购.*公司|注册.*公司|成立.*公司/.test(value)) return 'company';
+    if (/房产|公寓|别墅|豪宅|庄园|平层|洋房|写字楼|商铺|住宅|物业|买下.*酒店|产权|汤臣一品|翠湖天地|深圳湾|侨鑫汇悦台|壹号院|檀宫|佘山/.test(value)) return 'property';
+    if (/汽车|轿车|跑车|豪车|越野|SUV|MPV|摩托|机车|游艇|游船|直升机|车辆|保时捷|法拉利|兰博基尼|劳斯莱斯|宾利|迈巴赫|奔驰|宝马|奥迪|路虎|特斯拉|阿斯顿马丁|迈凯伦|布加迪|帕加尼|科尼赛克/.test(value)) return 'vehicle';
+    if (/腕表|手表|怀表|百达翡丽|劳力士|江诗丹顿|爱彼|理查德米勒|积家|宝珀|朗格|欧米茄|珠宝|钻石|项链|手链|戒指|耳环|耳坠|胸针|翡翠|玉石|祖母绿|红宝石|蓝宝石|珍珠|奢侈品|限量|高定|名包|包袋|爱马仕|香奈儿|路易威登|古驰|普拉达|迪奥|芬迪|思琳|圣罗兰|鳄鱼皮/.test(value)) return 'luxury';
+    // SD 内置：手机商城和模型都爱写英文品牌（Hermès / Rolex / Cartier / Porsche…），以前全落进「其他」
+    if (ENGLISH_VEHICLE_RE.test(value)) return 'vehicle';
+    if (ENGLISH_LUXURY_RE.test(value)) return 'luxury';
+    return 'other';
+  }
+
+  var ENGLISH_VEHICLE_RE = /porsche|ferrari|lamborghini|rolls[\s-]*royce|bentley|maybach|mercedes|\bbenz\b|\bamg\b|\bbmw\b|\baudi\b|land\s*rover|range\s*rover|tesla|aston\s*martin|mclaren|bugatti|pagani|koenigsegg|maserati|lexus|cadillac|\byacht\b/i;
+  var ENGLISH_LUXURY_RE = /herm[eè]s|birkin|\bkelly\b|rolex|cartier|patek|philippe|audemars|piguet|\bAP\b|richard\s*mille|\bRM\s?\d|vacheron|constantin|jaeger|blancpain|lange|omega|chanel|louis\s*vuitton|\bLV\b|\bdior\b|gucci|prada|fendi|celine|saint\s*laurent|\bysl\b|van\s*cleef|\bvca\b|tiffany|bvlgari|bulgari|\bgraff\b|harry\s*winston|chaumet|boucheron|chopard|loewe|bottega|goyard|brioni|zegna|loro\s*piana/i;
+
+  function normalizeCategory(value, name) {
+    var raw = text(value);
+    if (CATEGORIES[raw]) return raw;
+    if (CATEGORY_ALIASES[raw]) return CATEGORY_ALIASES[raw];
+    return inferCategory(name);
+  }
+
+  function assetFieldConfig(category) {
+    return ASSET_FIELD_CONFIG[category] || ASSET_FIELD_CONFIG.other;
+  }
+
+  function emptyAssetDetails() {
+    return {
+      location: '',
+      exterior: '',
+      scale: '',
+      floors: '',
+      rooms: '',
+      share: '',
+      role: '',
+      interior: ''
+    };
+  }
+
+  function isPlaceholderDetail(value) {
+    var detail = text(value);
+    return !detail || /待补充|待确认|具体(?:地址|楼层|车位|位置|面积|配置|信息)?待|以实际档案为准|通常为|不适用/.test(detail);
+  }
+
+  function cleanDetail(value) {
+    var detail = text(value);
+    return isPlaceholderDetail(detail) ? '' : detail;
+  }
+
+  function normalizeManualFields(value) {
+    return asList(value, DETAIL_FIELDS.length).filter(function (field) {
+      return DETAIL_FIELDS.indexOf(field) !== -1;
+    });
+  }
+
+  function manualFieldSet(asset) {
+    var fields = normalizeManualFields(asset && asset.manualFields);
+    if (asset && asset.detailsSource === 'manual' && !fields.length) {
+      DETAIL_FIELDS.forEach(function (field) {
+        if (text(asset[field])) fields.push(field);
+      });
+    }
+    return fields;
+  }
+
+  function assetDetailEntries(asset) {
+    if (!asset) return [];
+    return assetFieldConfig(asset.category).map(function (config) {
+      return {
+        key: config.key,
+        label: config.label,
+        value: cleanDetail(asset[config.key])
+      };
+    }).filter(function (entry) {
+      return !!entry.value;
+    });
+  }
+
+  function assetDetailParts(asset) {
+    return assetDetailEntries(asset).map(function (entry) {
+      return entry.label + '：' + entry.value;
+    });
+  }
+
+  function assetNeedsDetails(asset) {
+    if (!asset || asset.status === 'transferred') return false;
+    var manualFields = manualFieldSet(asset);
+    return assetFieldConfig(asset.category).some(function (config) {
+      return manualFields.indexOf(config.key) === -1 && !cleanDetail(asset[config.key]);
+    });
+  }
+
+  function isExperiencePurchase(name) {
+    return /晚餐|午餐|早午餐|晚宴|下午茶|餐厅|酒店入住|套房|民宿|机票|头等舱|航班|旅行|之旅|行程|度假|spa|护理|按摩|理疗|医美|热玛吉|课程|私教|门票|演出|音乐会|包厢|体验|预演|预展|派对|包场|试驾|租借|租赁|一晚|一夜|短期/.test(text(name));
+  }
+
+  // SD 内置：钱包里这些频道的钱不是「买到手一件东西」（频道名照 phone_panel / dm_generator 的实际写法）。
+  // 莆田直发（高仿）也跳过：高仿走衣橱那条路，衣橱条目带 fake:true。
+  var NON_ASSET_CHANNELS = ['一日租借', '账单', 'SugarElite体验', 'SugarElite代订', '税务', '转账', '回退', '二手', '校正', '莆田直发', '日结', 'DM'];
+
+  function isNonAssetChannel(channel) {
+    return NON_ASSET_CHANNELS.indexOf(text(channel)) !== -1;
+  }
+
+  // SD 内置：名字一看就是花销不是资产（物业费、房租、月费、保养……）。「翠湖天地物业费」以前会被认成房产
+  function isFeeLikePurchase(name) {
+    return /物业费|管理费|服务费|停车费|车位费|租金|房租|月租|日租|押金|保证金|会员费|会费|月费|年费|订阅|水电|燃气|网费|话费|保养|维修|洗车|加油|油费|过路费|罚款|罚单|税费|个税|关税|手续费|佣金|小费|账单|^气泡皮肤|SugarElite\s*月费/i.test(text(name));
+  }
+
+  function isUserRecipient(value, userName) {
+    var target = normalizeGiftText(value);
+    if (!target) return true;
+    var candidates = ['user', '自己', '本人', '我', userName].map(normalizeGiftText).filter(Boolean);
+    return candidates.some(function (candidate) {
+      return target === candidate;
+    });
+  }
+
+  function closetSourceKey(item, occurrence) {
+    if (!item || typeof item !== 'object') return '';
+    if (text(item.assetId)) return 'asset:' + normalizeGiftText(item.assetId);
+    if (text(item.id)) return 'closet:' + normalizeGiftText(item.id);
+    return 'closet:' + [
+      normalizeGiftText(item.name),
+      timeKey(item.time),
+      Number(item.gameDay) || 0,
+      normalizeGiftText(item.from)
+    ].join('|') + '#' + (occurrence || 0);
+  }
+
+  function legacyClosetSourceKey(item, index) {
+    if (!item || typeof item !== 'object') return '';
+    if (text(item.assetId)) return 'asset:' + text(item.assetId);
+    if (text(item.id)) return 'closet:' + text(item.id);
+    return 'closet:' + [
+      normalizeName(item.name),
+      text(item.time),
+      Number(item.gameDay) || 0,
+      normalizeName(item.from)
+    ].join('|') + ':' + index;
+  }
+
+  function closetRows(vars) {
+    var closet = vars && vars.sb && Array.isArray(vars.sb.closet) ? vars.sb.closet : [];
+    var occurrences = Object.create(null);
+    return closet.map(function (item, index) {
+      var base = closetSourceKey(item, 0).replace(/#0$/, '');
+      var occurrence = occurrences[base] || 0;
+      occurrences[base] = occurrence + 1;
+      return {
+        item: item,
+        index: index,
+        key: closetSourceKey(item, occurrence),
+        legacyKey: legacyClosetSourceKey(item, index)
+      };
+    });
+  }
+
+  // SD 内置：把总账（allTransactions，带 id）和钱包卡片上的最近 20 笔（transactions，没 id、没 gameDay）合成一本账。
+  // 最近那本基本是总账的镜像：对得上的算同一笔（一对一消掉），对不上的（老存档没有总账）才单独记。
+  // 然后标出哪些钱被退了：
+  //   · 新记法：原记录 reversed:true；退款记录 reverses:'原 id'
+  //   · 老存档两种都没有：退款记录（channel 回退 / counterparty 是「正文重roll回退」「消息回退 · X」）
+  //     往前找同金额、方向相反的一笔配对
+  function sameLedgerItem(left, right) {
+    return !!left && !!right &&
+      left.direction === right.direction &&
+      (Number(left.amount) || 0) === (Number(right.amount) || 0) &&
+      text(left.counterparty) === text(right.counterparty) &&
+      text(left.channel) === text(right.channel) &&
+      text(left.note) === text(right.note) &&
+      text(left.time) === text(right.time);
+  }
+
+  function isRefundLedgerItem(item) {
+    return text(item.channel) === '回退' || /^(正文重roll回退|消息回退\s*[·•])/.test(text(item.counterparty));
+  }
+
+  function refundPairsWith(refund, candidate) {
+    var who = text(refund.counterparty);
+    var dm = who.match(/^消息回退\s*[·•]\s*(.+)$/);
+    if (dm) return text(candidate.counterparty).indexOf(text(dm[1])) !== -1;
+    if (/^正文重roll回退/.test(who)) return !candidate.channel || candidate.channel === '正文';
+    return true;
+  }
+
+  function walletLedger(vars) {
+    var wallet = vars && vars.sb && vars.sb.wallet;
+    var all = wallet && Array.isArray(wallet.allTransactions) ? wallet.allTransactions : [];
+    var recent = wallet && Array.isArray(wallet.transactions) ? wallet.transactions : [];
+    var rows = [];
+    var seenComposite = Object.create(null);
+    function addRow(item) {
+      var amount = Number(item.amount) || 0;
+      var channel = text(item.channel);
+      var raw = text(item.note || item.counterparty);
+      var rawId = text(item.id);
+      var composite = [
+        amount,
+        text(item.time),
+        Number(item.gameDay) || 0,
+        normalizeGiftText(raw),
+        normalizeGiftText(channel)
+      ].join('|');
+      if (!rawId) {
+        var seen = seenComposite[composite] || 0;
+        seenComposite[composite] = seen + 1;
+        if (seen) composite += '#' + seen;
+      }
+      rows.push({
+        item: item,
+        rawId: rawId,
+        id: rawId || composite,
+        recordKey: rawId ? 'id:' + rawId : 'tx:' + composite,
+        direction: item.direction === '+' ? '+' : (item.direction === '-' ? '-' : ''),
+        name: raw,
+        note: text(item.note),
+        counterparty: text(item.counterparty),
+        amount: amount,
+        time: text(item.time),
+        gameDay: Number(item.gameDay) || 0,
+        channel: channel,
+        refund: isRefundLedgerItem(item),
+        reversed: item.reversed === true,
+        mirrored: false
+      });
+    }
+    all.forEach(function (item) {
+      if (item && typeof item === 'object') addRow(item);
+    });
+    var allCount = rows.length;
+    recent.forEach(function (item) {
+      if (!item || typeof item !== 'object') return;
+      for (var i = 0; i < allCount; i++) {
+        if (rows[i].mirrored || !sameLedgerItem(rows[i].item, item)) continue;
+        rows[i].mirrored = true;
+        return;
+      }
+      addRow(item);
+    });
+    var byId = Object.create(null);
+    rows.forEach(function (row) { byId[row.id] = row; });
+    rows.forEach(function (row) {
+      var target = text(row.item.reverses);
+      if (!row.refund || !target) return;
+      row.paired = true;
+      if (byId[target]) byId[target].reversed = true;
+    });
+    rows.forEach(function (row, index) {
+      if (!row.refund || row.paired || !row.amount) return;
+      for (var k = index - 1; k >= 0; k--) {
+        var candidate = rows[k];
+        if (candidate.refund || candidate.reversed || candidate.direction === row.direction) continue;
+        if (candidate.amount !== row.amount || !refundPairsWith(row, candidate)) continue;
+        candidate.reversed = true;
+        row.paired = true;
+        break;
+      }
+    });
+    return { rows: rows, byId: byId };
+  }
+
+  // SD 内置：这一笔是不是「花钱买到手一件东西」
+  function isAssetPurchaseRow(row) {
+    if (!row || row.direction !== '-' || !row.amount || !row.name) return false;
+    if (row.refund || row.reversed) return false;
+    if (isNonAssetChannel(row.channel)) return false;
+    if (/^(转给|消息回退|正文重roll回退|租借|高仿)/.test(row.name)) return false;
+    if (isExperiencePurchase(row.name) || isFeeLikePurchase(row.name)) return false;
+    return true;
+  }
+
+  function walletPurchaseRecords(vars, ledger) {
+    ledger = ledger || walletLedger(vars);
+    var out = [];
+    ledger.rows.forEach(function (row) {
+      if (!isAssetPurchaseRow(row)) return;
+      out.push({
+        id: row.id,
+        recordKey: row.recordKey,
+        name: row.name,
+        note: row.note,
+        counterparty: row.counterparty,
+        amount: row.amount,
+        time: row.time,
+        gameDay: row.gameDay,
+        channel: row.channel,
+        index: out.length
+      });
+    });
+    return out;
+  }
+
+  function timeKey(value) {
+    var match = text(value).match(/(\d{1,2}:\d{2})/);
+    return match ? match[1] : '';
+  }
+
+  function timeScore(item, record) {
+    if (item.gameDay && record.gameDay && Number(item.gameDay) !== Number(record.gameDay)) return -1;
+    var left = timeKey(item.time);
+    var right = timeKey(record.time);
+    if (left && right && left !== right) return -1;
+    return (left && right && left === right ? 35 : 0) +
+      (Number(item.gameDay) && Number(record.gameDay) &&
+        Number(item.gameDay) === Number(record.gameDay) ? 10 : 0);
+  }
+
+  function fillPurchaseValue(item, walletRecords) {
+    var price = Number(item.price) || 0;
+    if (price > 0) return { value: price, record: null, source: 'closet' };
+    var best = null;
+    walletRecords.forEach(function (record) {
+      var similarity = giftNameSimilarity(item.name, record.name);
+      if (similarity < 0.55) return;
+      var timing = timeScore(item, record);
+      if (timing < 0) return;
+      var score = similarity * 100 + timing;
+      if (!best || score > best.score) best = { score: score, record: record };
+    });
+    return best
+      ? { value: best.record.amount, record: best.record, source: 'wallet' }
+      : { value: 0, record: null, source: 'unknown' };
+  }
+
+  function knownRecipientNames(vars) {
+    var names = [];
+    var npcs = vars && vars.sb && vars.sb.npcs;
+    if (npcs && typeof npcs === 'object') names = names.concat(Object.keys(npcs));
+    var closet = vars && vars.sb && Array.isArray(vars.sb.closet) ? vars.sb.closet : [];
+    closet.forEach(function (item) {
+      var target = text(item && item.to);
+      if (target) names.push(target);
+    });
+    var seen = Object.create(null);
+    return names.map(normalizeGiftText).filter(function (name) {
+      if (!name || seen[name]) return false;
+      seen[name] = true;
+      return true;
+    });
+  }
+
+  function walletRecordLooksGifted(record, vars, userName) {
+    var raw = text(record && record.name);
+    if (/送给|赠给|买给/.test(raw)) return true;
+    var parts = raw.split(/\s*(?:[·•]|→)\s*/).map(function (part) {
+      return text(part);
+    }).filter(Boolean);
+    if (parts.length < 2) return false;
+    var suffix = normalizeGiftText(parts[parts.length - 1]);
+    if (!suffix) return false;
+    if (suffix === normalizeGiftText(userName) || /^(user|自己|本人|我)$/.test(suffix)) return false;
+    return knownRecipientNames(vars).some(function (name) {
+      return name === suffix || name.indexOf(suffix) !== -1 || suffix.indexOf(name) !== -1;
+    });
+  }
+
+  function walletRecordMatchesCloset(record, rows) {
+    return rows.some(function (row) {
+      var item = row.item || {};
+      var similarity = giftNameSimilarity(record.name, item.name);
+      if (similarity < 0.55) return false;
+      var itemPrice = Number(item.price) || 0;
+      if (itemPrice > 0 && itemPrice !== record.amount) return false;
+      if (item.gameDay && record.gameDay && Number(item.gameDay) !== Number(record.gameDay)) return false;
+      var left = timeKey(item.time);
+      var right = timeKey(record.time);
+      if (left && right && left !== right && itemPrice <= 0) return false;
+      return true;
+    });
+  }
+
+  function hasWalletAssetSignal(name) {
+    return inferCategory(name) !== 'other' ||
+      /艺术品|名画|古董|收藏品|金条|黄金|地皮|地块|土地|有限公司|集团|企业|工作室|事务所|控股|实业/.test(text(name));
+  }
+
+  // SD 内置：giftSet = 认定过是礼物的流水（userHome.giftKeys）；这一轮新认出来的礼物推进 newGifts，由调用方存档。
+  // 衣橱只留 60 件、私信回退也会删衣橱那条——衣橱那条一没，钱包那笔以前就被当成自购。
+  function walletAssetCandidates(vars, userName, giftSet, newGifts, ledger) {
+    var rows = closetRows(vars);
+    var occurrences = Object.create(null);
+    giftSet = giftSet || Object.create(null);
+    return walletPurchaseRecords(vars, ledger).filter(function (record) {
+      if (giftSet[record.recordKey]) return false;
+      if (!hasWalletAssetSignal(record.name)) return false;
+      if (walletRecordLooksGifted(record, vars, userName) ||
+        walletRecordMatchesForeignCloset(record, rows, userName)) {
+        giftSet[record.recordKey] = true;
+        if (newGifts) newGifts.push(record.recordKey);
+        return false;
+      }
+      return !walletRecordMatchesCloset(record, rows);
+    }).map(function (record) {
+      var base = 'wallet:' + record.recordKey;
+      var occurrence = occurrences[base] || 0;
+      occurrences[base] = occurrence + 1;
+      var category = inferCategory(record.name);
+      var details = emptyAssetDetails();
+      return Object.assign({
+        id: 'asset-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+        sourceKey: base + '#' + occurrence,
+        category: category,
+        name: clampText(record.name, 120),
+        value: record.amount,
+        valueSource: 'wallet',
+        ownershipProof: 'wallet',
+        walletRecordId: record.id,
+        currency: 'CNY',
+        acquiredGameDay: record.gameDay,
+        acquiredTime: record.time,
+        source: text(record.channel, '正文或手机购买'),
+        note: '',
+        detailsSource: 'auto',
+        hidden: false,
+        status: 'owned',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, details);
+    });
+  }
+
+  function hashText(value) {
+    var hash = 2166136261;
+    var input = text(value);
+    for (var i = 0; i < input.length; i++) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  async function assetChatMessages() {
+    try {
+      var context = HOST.SillyTavern && HOST.SillyTavern.getContext ? HOST.SillyTavern.getContext() : null;
+      var chat = context && Array.isArray(context.chat) ? context.chat : [];
+      if (chat.length) {
+        return chat.map(function (message, index) {
+          return {
+            id: text(message && (message.message_id || message.id), index),
+            index: index,
+            isUser: !!(message && message.is_user),
+            text: text(message && (message.mes || message.message))
+          };
+        }).filter(function (message) { return message.text; });
+      }
+    } catch (_) {}
+    try {
+      if (typeof getChatMessages === 'function') {
+        var rows = await getChatMessages('0-{{lastMessageId}}');
+        return (rows || []).map(function (message, index) {
+          return {
+            id: text(message && (message.message_id || message.id), index),
+            index: index,
+            isUser: !!(message && (message.is_user || message.role === 'user')),
+            text: text(message && (message.message || message.mes))
+          };
+        }).filter(function (message) { return message.text; });
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  // SD 内置：注释里的金额认「万 / 千 / w / k」（还有亿）。以前「6800万」读成 6800，对不上钱包，整条注释被丢掉
+  function parseMarkerAmount(value) {
+    var raw = text(value).replace(/[,，\s¥￥$]|RMB|元|块/gi, '');
+    var match = raw.match(/(\d+(?:\.\d+)?)\s*(亿|万|萬|千|[wWkK])?/);
+    if (!match) return 0;
+    var number = Number(match[1]) || 0;
+    var unit = match[2] || '';
+    if (unit === '亿') number *= 100000000;
+    else if (unit === '万' || unit === '萬' || unit === 'w' || unit === 'W') number *= 10000;
+    else if (unit === '千' || unit === 'k' || unit === 'K') number *= 1000;
+    return Math.max(0, Math.round(number));
+  }
+
+  function assetMarkersInText(value) {
+    var markers = [];
+    var source = text(value);
+    var regex = /<!--\s*ASSET\s*:\s*([\s\S]*?)-->/gi;
+    var match;
+    while ((match = regex.exec(source))) {
+      var parts = text(match[1]).split(/\s*[|｜]\s*/);
+      var name = clampText(parts[0], 120);
+      if (!name) continue;
+      markers.push({
+        name: name,
+        category: normalizeCategory(parts[1], name),
+        value: parseMarkerAmount(parts[2]),
+        location: clampText(parts[3], 500),
+        exterior: clampText(parts[4], 800),
+        scale: clampText(parts[5], 500),
+        floors: clampText(parts[6], 300),
+        interior: clampText(parts[7], 1200),
+        note: clampText(parts[8], 800),
+        raw: match[0]
+      });
+    }
+    return markers;
+  }
+
+  function walletRecordMatchesForeignCloset(record, rows, userName) {
+    return rows.some(function (row) {
+      var item = row.item || {};
+      if (isUserRecipient(item.to, userName)) return false;
+      var similarity = giftNameSimilarity(record.name, item.name);
+      if (similarity < 0.55) return false;
+      var itemPrice = Number(item.price) || 0;
+      if (item.gameDay && record.gameDay && Number(item.gameDay) !== Number(record.gameDay)) return false;
+      var left = timeKey(item.time);
+      var right = timeKey(record.time);
+      if (left && right && left !== right) return false;
+      return itemPrice <= 0 || itemPrice === record.amount;
+    });
+  }
+
+  function walletRecordForAssetMarker(marker, vars, userName, giftSet, ledger) {
+    var records = walletPurchaseRecords(vars, ledger);
+    var rows = closetRows(vars);
+    var best = null;
+    records.forEach(function (record) {
+      if (giftSet && giftSet[record.recordKey]) return;   // SD 内置：认定过是礼物的不算
+      if (marker.value > 0 && record.amount !== marker.value) return;
+      var similarity = giftNameSimilarity(marker.name, record.name);
+      if (similarity < 0.55) return;
+      if (walletRecordLooksGifted(record, vars, userName)) return;
+      if (walletRecordMatchesForeignCloset(record, rows, userName)) return;
+      var score = similarity * 100 + (marker.value > 0 && record.amount === marker.value ? 20 : 0);
+      if (!best || score > best.score) best = { score: score, record: record };
+    });
+    return best ? best.record : null;
+  }
+
+  async function messageAssetCandidates(vars, userName, giftSet, ledger) {
+    var messages = await assetChatMessages();
+    var out = [];
+    messages.forEach(function (message) {
+      assetMarkersInText(message.text).forEach(function (marker, markerIndex) {
+        var record = walletRecordForAssetMarker(marker, vars, userName, giftSet, ledger);
+        if (!record) return;
+        var details = emptyAssetDetails();
+        var mergedDetails = {};
+        DETAIL_FIELDS.forEach(function (key) {
+          mergedDetails[key] = cleanDetail(marker[key]) || details[key];
+        });
+        out.push(Object.assign({
+          id: 'asset-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+          sourceKey: 'chat:' + message.id + ':' + markerIndex + ':' + hashText(marker.raw),
+          category: marker.category,
+          name: marker.name,
+          value: record.amount,
+          valueSource: 'wallet',
+          ownershipProof: 'message',
+          walletRecordId: record.id,
+          currency: 'CNY',
+          acquiredGameDay: record.gameDay,
+          acquiredTime: record.time,
+          source: text(record.channel, '正文自购'),
+          note: marker.note,
+          detailsSource: 'message',
+          detailsUpdatedAt: new Date().toISOString(),
+          hidden: false,
+          status: 'owned',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }, mergedDetails));
+      });
+    });
+    return out;
+  }
+
+  function aiAssetContext(messages) {
+    var rows = messages.slice(-80);
+    var selected = [];
+    var total = 0;
+    for (var i = rows.length - 1; i >= 0; i--) {
+      var body = clampText(rows[i].text, 4000);
+      if (!body) continue;
+      var label = rows[i].isUser ? 'USER' : 'NPC';
+      var chunk = label + '：' + body;
+      if (selected.length && total + chunk.length > 48000) break;
+      selected.unshift(chunk);
+      total += chunk.length;
+    }
+    return selected.join('\n\n');
+  }
+
+  function aiAssetFieldGuide() {
+    return Object.keys(ASSET_FIELD_CONFIG).map(function (category) {
+      return CATEGORIES[category] + '：' + ASSET_FIELD_CONFIG[category].map(function (field) {
+        return field.key + '=' + field.label;
+      }).join('；');
+    }).join('\n');
+  }
+
+  function buildAssetEnrichmentPrompt(assets, messages) {
+    var assetPayload = assets.map(function (asset) {
+      return {
+        id: asset.id,
+        name: asset.name,
+        category: CATEGORIES[asset.category] || CATEGORIES.other,
+        value: asset.value,
+        acquired: [asset.acquiredGameDay ? '第' + asset.acquiredGameDay + '天' : '', asset.acquiredTime]
+          .filter(Boolean).join(' '),
+        current: DETAIL_FIELDS.reduce(function (details, key) {
+          details[key] = cleanDetail(asset[key]);
+          return details;
+        }, {})
+      };
+    });
+    return [
+      '你要为 User 的个人资产档案补全叙事细节。',
+      '优先采用正文里明确出现的信息；正文没有写到的部分，请根据资产名称、价格、User 的财力与生活风格，主动推测出具体、合理、可继续用于叙事的细节。',
+      '不要写“待补充”“未知”“不适用”，也不要重复模板套话。',
+      '车辆重点补车型性能、外观颜色和内饰；房产重点补详细位置、占地/建筑面积、外观、楼层、房间格局和内部；公司重点补位置、楼宇与办公空间、股权比例、职位和经营状况。腕表、珠宝、高定等统一按奢侈品补全。',
+      '所有字段都用简短但具体的中文描述，单字段不超过 120 字。不要修改资产名称、分类、金额、来源或归属。',
+      '字段定义：',
+      aiAssetFieldGuide(),
+      '只输出一个 JSON 对象，格式：',
+      '{"assets":[{"id":"原样返回资产 id","location":"","exterior":"","scale":"","floors":"","rooms":"","share":"","role":"","interior":""}]}',
+      '不属于该资产分类的字段返回空字符串。',
+      '',
+      '需要补全的资产：',
+      JSON.stringify(assetPayload, null, 2),
+      '',
+      '聊天正文上下文：',
+      aiAssetContext(messages)
+    ].join('\n');
+  }
+
+  function parseAssetEnrichmentOutput(value) {
+    var output = text(value);
+    if (!output) return [];
+    output = output.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    var start = output.indexOf('{');
+    var end = output.lastIndexOf('}');
+    if (start === -1 || end <= start) return [];
+    var parsed;
+    try {
+      parsed = JSON.parse(output.slice(start, end + 1));
+    } catch (_) {
+      return [];
+    }
+    var rows = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.assets) ? parsed.assets : []);
+    return rows.filter(function (row) {
+      return row && typeof row === 'object' && text(row.id);
+    });
+  }
+
+  async function requestAssetEnrichment(assets) {
+    var generator = typeof generateRaw === 'function'
+      ? generateRaw
+      : (typeof HOST.generateRaw === 'function' ? HOST.generateRaw : null);
+    if (!generator) throw new Error('当前酒馆助手不支持 AI 资产补全');
+    var messages = await assetChatMessages();
+    var result = await generator({
+      generation_id: 'suh-enrich-' + Date.now().toString(36),
+      should_stream: false,
+      should_silence: true,
+      ordered_prompts: [
+        {
+          role: 'system',
+          content: '你是角色卡资产档案整理器。只输出合法 JSON，不输出解释、Markdown 或代码块。'
+        },
+        {
+          role: 'user',
+          content: buildAssetEnrichmentPrompt(assets, messages)
+        }
+      ]
+    });
+    var output = typeof result === 'string'
+      ? result
+      : (result && typeof result.content === 'string' ? result.content : '');
+    var rows = parseAssetEnrichmentOutput(output);
+    if (!rows.length) throw new Error('模型没有返回可用的资产补全结果');
+    return rows;
+  }
+
+  function aiFieldValue(row, key, label) {
+    var aliases = [key, label];
+    if (key === 'location') aliases = aliases.concat(['位置', '注册与办公地', '公司位置']);
+    if (key === 'exterior') aliases = aliases.concat(['外观', '颜色', '车漆', '材质', '建筑外观']);
+    if (key === 'scale') aliases = aliases.concat(['规模', '规格', '配置', '面积', '建筑面积', '车型', '型号']);
+    if (key === 'floors') aliases = aliases.concat(['楼层', '所在楼层']);
+    if (key === 'rooms') aliases = aliases.concat(['房间格局', '户型', '几室几厅', '房间数量']);
+    if (key === 'share') aliases = aliases.concat(['股权比例', '股份', '持股比例']);
+    if (key === 'role') aliases = aliases.concat(['公司职位', '职位', '职务']);
+    if (key === 'interior') aliases = aliases.concat(['内部', '内部概况', '内饰', '内饰配置']);
+    for (var i = 0; i < aliases.length; i++) {
+      var raw = row && row[aliases[i]];
+      if (typeof raw !== 'string' && typeof raw !== 'number') continue;
+      var value = cleanDetail(raw);
+      if (value) return clampText(value, 700);
+    }
+    return '';
+  }
+
+  async function enrichAssetsFromContext(showStatus) {
+    var vars = readChatVariables();
+    var data = readHomeData(vars);
+    var targets = ownedAssets(data).filter(assetNeedsDetails).slice(0, 16);
+    if (!targets.length) return { changed: false, count: 0 };
+    if (showStatus) setStatus('正在读取聊天上下文并补全资产…', 'info');
+    var rows = await requestAssetEnrichment(targets);
+    var byId = Object.create(null);
+    rows.forEach(function (row) { byId[text(row.id)] = row; });
+    var applied = 0;
+    await mutateChatVariables(function (next) {
+      var list = next && next.sb && next.sb.profile && next.sb.profile.userHome &&
+        Array.isArray(next.sb.profile.userHome.assets) ? next.sb.profile.userHome.assets : [];
+      targets.forEach(function (target) {
+        var aiRow = byId[target.id];
+        if (!aiRow) return;
+        for (var i = 0; i < list.length; i++) {
+          var asset = list[i];
+          if (!asset || text(asset.id) !== target.id) continue;
+          var category = normalizeCategory(asset.category, asset.name);
+          var manualFields = manualFieldSet(asset);
+          var changed = false;
+          assetFieldConfig(category).forEach(function (field) {
+            if (manualFields.indexOf(field.key) !== -1) return;
+            var value = aiFieldValue(aiRow, field.key, field.label);
+            if (value && cleanDetail(asset[field.key]) !== value) {
+              asset[field.key] = value;
+              changed = true;
+            }
+          });
+          if (changed) {
+            asset.manualFields = manualFields;
+            asset.detailsSource = manualFields.length ? 'mixed' : 'ai';
+            asset.detailsUpdatedAt = new Date().toISOString();
+            asset.updatedAt = new Date().toISOString();
+            applied++;
+          }
+          break;
+        }
+      });
+      return next;
+    });
+    if (applied) {
+      if (open) render();
+      return { changed: true, count: applied };
+    }
+    return { changed: false, count: 0 };
+  }
+
+  function enrichAssetFromCandidate(existing, candidate) {
+    if (!existing || !candidate) return false;
+    var changed = false;
+    var manualFields = manualFieldSet(existing);
+    var detailsChanged = false;
+    if ((!existing.category || existing.category === 'other') &&
+      candidate.category && candidate.category !== 'other') {
+      existing.category = candidate.category;
+      changed = true;
+    }
+    var fieldKeys = assetFieldConfig(existing.category).map(function (field) { return field.key; });
+    DETAIL_FIELDS.forEach(function (key) {
+      if (fieldKeys.indexOf(key) === -1) return;
+      if (manualFields.indexOf(key) !== -1) return;
+      var nextValue = cleanDetail(candidate[key]);
+      if (nextValue && cleanDetail(existing[key]) !== nextValue) {
+        existing[key] = nextValue;
+        detailsChanged = true;
+      }
+    });
+    if (candidate.note && !existing.note) {
+      existing.note = candidate.note;
+      changed = true;
+    }
+    if (detailsChanged && /^(message|ai)$/.test(text(candidate.detailsSource))) {
+      existing.detailsSource = manualFields.length ? 'mixed' : candidate.detailsSource;
+      existing.detailsUpdatedAt = new Date().toISOString();
+      changed = true;
+    }
+    if (!existing.walletRecordId && candidate.walletRecordId) {
+      existing.walletRecordId = candidate.walletRecordId;
+      changed = true;
+    }
+    // SD 内置：A3 —— 佐证升级（钱包 → 正文 ASSET 注释 → 衣橱）
+    if ((PROOF_RANK[candidate.ownershipProof] || 0) > (PROOF_RANK[existing.ownershipProof] || 0)) {
+      existing.ownershipProof = candidate.ownershipProof;
+      changed = true;
+    }
+    if (detailsChanged) changed = true;
+    if (changed) existing.updatedAt = new Date().toISOString();
+    return changed;
+  }
+
+  function assetFromCloset(row, vars, userName, ledger) {
+    var item = row && row.item;
+    if (!item || typeof item !== 'object' || !text(item.name)) return null;
+    if (!isUserRecipient(item.to, userName)) return null;
+    if (isExperiencePurchase(item.name)) return null;
+    var sourceKey = text(row.key);
+    if (!sourceKey) return null;
+    var resolved = fillPurchaseValue(item, walletPurchaseRecords(vars, ledger));
+    var category = inferCategory(item.name);
+    var details = emptyAssetDetails();
+    return Object.assign({
+      id: 'asset-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+      sourceKey: sourceKey,
+      category: category,
+      name: clampText(item.name, 120),
+      value: resolved.value,
+      valueSource: resolved.source,
+      ownershipProof: 'closet',
+      walletRecordId: resolved.record ? resolved.record.id : '',
+      currency: 'CNY',
+      acquiredGameDay: Number(item.gameDay) || 0,
+      acquiredTime: text(item.time),
+      source: text(item.from, '正文或手机购买'),
+      note: '',
+      fake: !!item.fake,   // SD 内置：莆田直发的高仿，照算资产，界面和世界书标「高仿」
+      detailsSource: 'auto',
+      hidden: false,
+      status: 'owned',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }, details);
+  }
+
+  function normalizeAsset(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    var id = text(raw.id);
+    var sourceKey = text(raw.sourceKey);
+    if (!id || !sourceKey) return null;
+    var rawCategory = text(raw.category);
+    var category = normalizeCategory(raw.category, raw.name);
+    var legacyEquity = /^(equity|股权|股份|股票)$/.test(rawCategory);
+    var fieldValues = Object.assign({}, raw);
+    if (legacyEquity && category === 'company') {
+      fieldValues.share = text(raw.share, raw.scale);
+      fieldValues.scale = '';
+      fieldValues.exterior = '';
+      if (!text(raw.note) && text(raw.interior)) fieldValues.note = clampText(raw.interior, 800);
+      fieldValues.interior = '';
+    }
+    var manualFields = manualFieldSet(raw);
+    var detailsSource = /^(auto|message|manual|ai|mixed)$/.test(text(raw.detailsSource))
+      ? text(raw.detailsSource)
+      : 'auto';
+    var asset = {
+      id: id,
+      sourceKey: sourceKey,
+      category: category,
+      name: clampText(raw.name, 120),
+      value: Math.max(0, Number(raw.value) || 0),
+      valueSource: /^(closet|wallet|manual|unknown)$/.test(text(raw.valueSource))
+        ? text(raw.valueSource)
+        : (Number(raw.value) > 0 ? 'unknown' : 'unknown'),
+      ownershipProof: /^(closet|wallet|message)$/.test(text(raw.ownershipProof))
+        ? text(raw.ownershipProof)
+        : 'closet',
+      walletRecordId: text(raw.walletRecordId),
+      manualFields: manualFields,
+      detailsSource: detailsSource,
+      detailsUpdatedAt: text(raw.detailsUpdatedAt),
+      currency: 'CNY',
+      acquiredGameDay: Number(raw.acquiredGameDay) || 0,
+      acquiredTime: text(raw.acquiredTime),
+      source: clampText(raw.source, 120),
+      note: clampText(fieldValues.note, 800),
+      fake: !!raw.fake,
+      hidden: !!raw.hidden,
+      status: raw.status === 'transferred' ? 'transferred' : 'owned',
+      transferredBy: text(raw.transferredBy),     // SD 内置：哪一笔流水证明它转出去了（二奢回收）
+      transferReason: clampText(raw.transferReason, 20),
+      createdAt: text(raw.createdAt),
+      updatedAt: text(raw.updatedAt)
+    };
+    var fieldKeys = assetFieldConfig(category).map(function (field) { return field.key; });
+    DETAIL_FIELDS.forEach(function (key) {
+      var max = key === 'exterior' ? 800 : (key === 'interior' ? 1200 : 500);
+      if (fieldKeys.indexOf(key) === -1) {
+        asset[key] = '';
+      } else {
+        asset[key] = manualFields.indexOf(key) === -1
+          ? cleanDetail(clampText(fieldValues[key], max))
+          : clampText(fieldValues[key], max);
+      }
+    });
+    return asset;
+  }
+
+  function sameAssetRecord(left, right) {
+    if (!left || !right) return false;
+    if (left.id && right.id && left.id === right.id) return true;
+    if (left.sourceKey && right.sourceKey && left.sourceKey === right.sourceKey) return true;
+    if (left.walletRecordId && right.walletRecordId && left.walletRecordId === right.walletRecordId) return true;
+    var similarity = giftNameSimilarity(left.name, right.name);
+    if (similarity < 0.82) return false;
+    var leftTime = timeKey(left.acquiredTime);
+    var rightTime = timeKey(right.acquiredTime);
+    if (leftTime && rightTime && leftTime !== rightTime) return false;
+    if (left.acquiredGameDay && right.acquiredGameDay &&
+      Number(left.acquiredGameDay) !== Number(right.acquiredGameDay)) return false;
+    var leftValue = Number(left.value) || 0;
+    var rightValue = Number(right.value) || 0;
+    if (leftValue > 0 && rightValue > 0 && leftValue !== rightValue) return false;
+    return !!(
+      (leftTime && rightTime && leftTime === rightTime) ||
+      (left.acquiredGameDay && right.acquiredGameDay &&
+        Number(left.acquiredGameDay) === Number(right.acquiredGameDay)) ||
+      (leftValue > 0 && leftValue === rightValue) ||
+      (left.walletRecordId && right.walletRecordId)
+    );
+  }
+
+  var PROOF_RANK = { wallet: 1, message: 2, closet: 3 };
+
+  function mergeDuplicateAsset(target, incoming) {
+    if (!target || !incoming) return target;
+    if (target.category === 'other' && incoming.category !== 'other') target.category = incoming.category;
+    // SD 内置：佐证取最强的那份（衣橱 > 正文 ASSET 注释 > 钱包）。以前有注释佐证的也还按钱包算
+    if ((PROOF_RANK[incoming.ownershipProof] || 0) > (PROOF_RANK[target.ownershipProof] || 0)) {
+      target.ownershipProof = incoming.ownershipProof;
+      if (incoming.ownershipProof === 'closet') target.sourceKey = incoming.sourceKey || target.sourceKey;
+    }
+    if (incoming.fake) target.fake = true;
+    if (!target.transferredBy && incoming.transferredBy) {
+      target.transferredBy = incoming.transferredBy;
+      target.transferReason = incoming.transferReason;
+    }
+    if (!target.walletRecordId && incoming.walletRecordId) target.walletRecordId = incoming.walletRecordId;
+    if ((Number(target.value) || 0) <= 0 && Number(incoming.value) > 0) {
+      target.value = Number(incoming.value);
+      target.valueSource = incoming.valueSource;
+    }
+    if (!target.acquiredGameDay && incoming.acquiredGameDay) target.acquiredGameDay = incoming.acquiredGameDay;
+    if (!target.acquiredTime && incoming.acquiredTime) target.acquiredTime = incoming.acquiredTime;
+    if (!target.source && incoming.source) target.source = incoming.source;
+    if (!target.note && incoming.note) target.note = incoming.note;
+    target.status = target.status === 'owned' || incoming.status === 'owned' ? 'owned' : 'transferred';
+    if (!target.hidden || !incoming.hidden) target.hidden = false;
+
+    var targetManual = manualFieldSet(target);
+    var incomingManual = manualFieldSet(incoming);
+    DETAIL_FIELDS.forEach(function (key) {
+      var incomingIsManual = incomingManual.indexOf(key) !== -1;
+      if (incomingIsManual && targetManual.indexOf(key) === -1) {
+        target[key] = incoming[key];
+        targetManual.push(key);
+        return;
+      }
+      if (text(incoming[key]).length > text(target[key]).length) target[key] = incoming[key];
+    });
+    target.manualFields = targetManual;
+    if (targetManual.length) {
+      var hasAutoFields = DETAIL_FIELDS.some(function (key) {
+        return targetManual.indexOf(key) === -1 && !!cleanDetail(target[key]);
+      });
+      target.detailsSource = hasAutoFields ? 'mixed' : 'manual';
+    } else if (incoming.detailsSource === 'ai' || target.detailsSource === 'ai') {
+      target.detailsSource = 'ai';
+    } else if (incoming.detailsSource === 'message' || target.detailsSource === 'message') {
+      target.detailsSource = 'message';
+    }
+    if (incoming.detailsUpdatedAt && (!target.detailsUpdatedAt ||
+      incoming.detailsUpdatedAt > target.detailsUpdatedAt)) {
+      target.detailsUpdatedAt = incoming.detailsUpdatedAt;
+    }
+    target.updatedAt = new Date().toISOString();
+    return target;
+  }
+
+  function dedupeAssets(assets) {
+    var out = [];
+    (Array.isArray(assets) ? assets : []).forEach(function (asset) {
+      if (!asset) return;
+      for (var i = 0; i < out.length; i++) {
+        if (sameAssetRecord(out[i], asset)) {
+          mergeDuplicateAsset(out[i], asset);
+          return;
+        }
+      }
+      out.push(asset);
+    });
+    return out;
+  }
+
+  function readHomeData(vars) {
+    var sb = vars && vars.sb && typeof vars.sb === 'object' ? vars.sb : {};
+    var profile = sb.profile && typeof sb.profile === 'object' ? sb.profile : {};
+    var home = profile.userHome && typeof profile.userHome === 'object' ? profile.userHome : {};
+    var assets = Array.isArray(home.assets)
+      ? dedupeAssets(home.assets.map(normalizeAsset).filter(Boolean))
+      : [];
+    return {
+      identity: userIdentity(vars),
+      avatar: home.avatar && typeof home.avatar === 'object' ? home.avatar : {},
+      assets: assets,
+      cash: Math.max(0, Number(sb.wallet && sb.wallet.balance) || 0),
+      worldbook: home.worldbook && typeof home.worldbook === 'object' ? home.worldbook : {},
+      worldbookConsent: !!home.worldbookConsent,   // SD 内置：玩家亲手点过「同步并写入世界书」
+      giftKeys: Array.isArray(home.giftKeys) ? home.giftKeys.filter(function (key) {
+        return typeof key === 'string' && !!key;
+      }) : [],                                      // SD 内置：认定过是送出去（或卖掉）的流水
+      opened: gameOpened(sb),
+      updatedAt: text(home.updatedAt)
+    };
+  }
+
+  function allOwnedAssets(data) {
+    return data.assets.filter(function (asset) { return asset.status !== 'transferred'; });
+  }
+
+  function ownedAssets(data) {
+    return allOwnedAssets(data).filter(function (asset) { return !asset.hidden; });
+  }
+
+  function assetTotal(data) {
+    return ownedAssets(data).reduce(function (sum, asset) { return sum + (Number(asset.value) || 0); }, 0);
+  }
+
+  function totalWealth(data) {
+    return data.cash + assetTotal(data);
+  }
+
+  function findMatchingAsset(assets, candidate, legacyKey) {
+    if (!candidate) return null;
+    for (var i = 0; i < assets.length; i++) {
+      var asset = assets[i];
+      if (legacyKey && asset.sourceKey === legacyKey) return asset;
+      if (sameAssetRecord(asset, candidate)) return asset;
+    }
+    return null;
+  }
+
+  // SD 内置：A2 —— 这项资产当初的来源已经站不住了，就作废（从清单里拿掉）：
+  //   · 对应的那笔流水被退了款（正文重 roll / 消息回退）
+  //   · 钱包/注释建的资产，对应流水其实不是「买到手」（一日租借、账单、体验、费用…）或认定是礼物
+  //   · 衣橱建的资产，衣橱那件已经没了，而且能找到同名同价、被退了款的那笔
+  // 玩家亲手改过金额的（valueSource manual）不动；流水只是滚出了总账（找不到）的也不动。
+  function assetPurchaseVoided(asset, ledger, giftSet, currentBySource) {
+    if (!asset || asset.valueSource === 'manual') return false;
+    var closetAlive = asset.ownershipProof === 'closet' && !!currentBySource[asset.sourceKey];
+    if (closetAlive) return false;
+    var record = asset.walletRecordId ? ledger.byId[asset.walletRecordId] : null;
+    if (record) {
+      if (record.reversed) return true;
+      if (asset.ownershipProof !== 'closet' && (!isAssetPurchaseRow(record) || giftSet[record.recordKey])) return true;
+      return false;
+    }
+    if (asset.ownershipProof !== 'closet') return false;
+    return ledger.rows.some(function (row) {
+      if (!row.reversed || row.direction !== '-') return false;
+      if (giftNameSimilarity(row.name, asset.name) < 0.82) return false;
+      if (Number(asset.value) > 0 && row.amount !== Number(asset.value)) return false;
+      if (asset.acquiredGameDay && row.gameDay && Number(asset.acquiredGameDay) !== row.gameDay) return false;
+      return true;
+    });
+  }
+
+  // SD 内置：A3 —— 二奢回收（phone_panel 记「二奢回收 · 品名」，channel 二手）是明确的「卖掉了」。
+  // 每笔回收只转出一项（记在 asset.transferredBy），同时把当初买它的那笔流水记进 giftKeys，免得以后又从钱包翻回来。
+  function applyRecycleTransfers(assets, ledger, giftSet, newGifts) {
+    var used = Object.create(null);
+    var changed = false;
+    assets.forEach(function (asset) {
+      if (asset.transferredBy) used[asset.transferredBy] = true;
+    });
+    ledger.rows.forEach(function (row) {
+      if (row.direction !== '+' || row.reversed || used[row.id]) return;
+      var match = row.counterparty.match(/^二奢回收\s*[·•]\s*(.+)$/);
+      if (!match && row.channel !== '二手') return;
+      var soldName = match ? text(match[1]) : row.name.replace(/^.*?[·•]\s*/, '');
+      if (!soldName) return;
+      var best = null;
+      assets.forEach(function (asset) {
+        if (asset.status === 'transferred') return;
+        if (row.gameDay && asset.acquiredGameDay && Number(asset.acquiredGameDay) > row.gameDay) return;
+        var similarity = giftNameSimilarity(asset.name, soldName);
+        if (similarity < 0.82) return;
+        if (!best || similarity > best.similarity) best = { asset: asset, similarity: similarity };
+      });
+      if (!best) return;
+      used[row.id] = true;
+      best.asset.status = 'transferred';
+      best.asset.transferredBy = row.id;
+      best.asset.transferReason = '回收';
+      best.asset.updatedAt = new Date().toISOString();
+      changed = true;
+      ledger.rows.forEach(function (purchase) {
+        if (!isAssetPurchaseRow(purchase) || giftSet[purchase.recordKey]) return;
+        if (giftNameSimilarity(purchase.name, soldName) < 0.82) return;
+        if (Number(best.asset.value) > 0 && purchase.amount !== Number(best.asset.value)) return;
+        giftSet[purchase.recordKey] = true;
+        newGifts.push(purchase.recordKey);
+      });
+    });
+    return changed;
+  }
+
+  function mergeKeyList(current, additions, limit) {
+    var out = Array.isArray(current) ? current.filter(function (key) { return typeof key === 'string' && !!key; }) : [];
+    additions.forEach(function (key) {
+      if (out.indexOf(key) === -1) out.push(key);
+    });
+    return out.slice(-limit);
+  }
+
+  // SD 内置：A7 —— 排队跑，不再「正在跑就丢掉」
+  var assetSyncTask = serialTask(function (options) {
+    return runAssetSync(!!options.showStatus, !options.worldbook);
+  });
+
+  function syncPurchasedAssets(showStatus, skipWorldbook) {
+    return assetSyncTask({ showStatus: !!showStatus, worldbook: !skipWorldbook });
+  }
+
+  async function runAssetSync(showStatus, skipWorldbook) {
+    if (destroyed) return false;
+    try {
+      var changed = false;
+      var vars = readChatVariables();
+      // SD 内置：开场表单没交就什么都不建（不然会凭空造出 sb，手机跳过「等待游戏数据」直接显示 ¥0）
+      if (!gameOpened(vars && vars.sb)) return false;
+      var storedAssets = vars && vars.sb && vars.sb.profile && vars.sb.profile.userHome &&
+        Array.isArray(vars.sb.profile.userHome.assets) ? vars.sb.profile.userHome.assets : [];
+      var originalAssetJson = JSON.stringify(storedAssets);
+      var data = readHomeData(vars);
+      var ledger = walletLedger(vars);
+      var giftSet = Object.create(null);
+      data.giftKeys.forEach(function (key) { giftSet[key] = true; });
+      var newGifts = [];
+      var rows = closetRows(vars);
+      var currentBySource = Object.create(null);
+      rows.forEach(function (row) {
+        if (row.key) currentBySource[row.key] = row.item;
+      });
+      var existingBySource = Object.create(null);
+      var existingByLegacy = Object.create(null);
+      data.assets.forEach(function (asset) {
+        existingBySource[asset.sourceKey] = asset;
+      });
+      rows.forEach(function (row) {
+        if (row.legacyKey) existingByLegacy[row.legacyKey] = existingBySource[row.legacyKey];
+      });
+
+      rows.forEach(function (row) {
+        var candidate = assetFromCloset(row, vars, data.identity.name, ledger);
+        if (!candidate) return;
+        var existing = existingBySource[candidate.sourceKey] ||
+          existingByLegacy[row.legacyKey] ||
+          findMatchingAsset(data.assets, candidate);
+        if (existing) {
+          if (existing.sourceKey !== candidate.sourceKey) {
+            existing.sourceKey = candidate.sourceKey;
+            changed = true;
+          }
+          if ((Number(existing.value) || 0) <= 0 && candidate.value > 0 &&
+            existing.valueSource !== 'manual') {
+            existing.value = candidate.value;
+            existing.valueSource = candidate.valueSource;
+            existing.walletRecordId = candidate.walletRecordId;
+            existing.updatedAt = new Date().toISOString();
+            changed = true;
+          }
+          if ((!existing.category || existing.category === 'other') &&
+            candidate.category !== 'other') {
+            existing.category = candidate.category;
+            changed = true;
+          }
+          if (!existing.acquiredGameDay && candidate.acquiredGameDay) {
+            existing.acquiredGameDay = candidate.acquiredGameDay;
+            changed = true;
+          }
+          if (!existing.acquiredTime && candidate.acquiredTime) {
+            existing.acquiredTime = candidate.acquiredTime;
+            changed = true;
+          }
+          if (!existing.walletRecordId && candidate.walletRecordId) {
+            existing.walletRecordId = candidate.walletRecordId;
+            changed = true;
+          }
+          if (candidate.fake && !existing.fake) {
+            existing.fake = true;
+            changed = true;
+          }
+          enrichAssetFromCandidate(existing, candidate);
+          return;
+        }
+        data.assets.push(candidate);
+        existingBySource[candidate.sourceKey] = candidate;
+        changed = true;
+      });
+
+      var walletCandidates = walletAssetCandidates(vars, data.identity.name, giftSet, newGifts, ledger);
+      walletCandidates.forEach(function (candidate) {
+        var existing = existingBySource[candidate.sourceKey] || findMatchingAsset(data.assets, candidate);
+        if (!existing) {
+          data.assets.push(candidate);
+          existingBySource[candidate.sourceKey] = candidate;
+          changed = true;
+          return;
+        }
+        if ((Number(existing.value) || 0) <= 0 && candidate.value > 0 &&
+          existing.valueSource !== 'manual') {
+          existing.value = candidate.value;
+          existing.valueSource = candidate.valueSource;
+          existing.walletRecordId = candidate.walletRecordId;
+          existing.updatedAt = new Date().toISOString();
+          changed = true;
+        }
+        enrichAssetFromCandidate(existing, candidate);
+      });
+
+      var richCandidates = await messageAssetCandidates(vars, data.identity.name, giftSet, ledger);
+      richCandidates.forEach(function (candidate) {
+        var existing = findMatchingAsset(data.assets, candidate);
+        if (existing) {
+          if (enrichAssetFromCandidate(existing, candidate)) changed = true;
+          return;
+        }
+        data.assets.push(candidate);
+        existingBySource[candidate.sourceKey] = candidate;
+        changed = true;
+      });
+
+      data.assets.forEach(function (asset) {
+        if (asset.status === 'transferred') return;
+        var sourceItem = currentBySource[asset.sourceKey];
+        if (sourceItem && text(sourceItem.to) && !isUserRecipient(sourceItem.to, data.identity.name)) {
+          asset.status = 'transferred';
+          asset.transferReason = '送出';
+          asset.updatedAt = new Date().toISOString();
+          changed = true;
+        }
+        // SD 内置：A3 —— 以前钱包那笔滚出 500 笔总账，这项就被标成「已转出」，主线从此提不到它。
+        // 现在只认明确证据：衣橱里送给了别人（上面）、二奢回收（下面）、玩家自己删（hidden）。
+      });
+      // SD 内置：A2 —— 退了款的、其实不是买到手的、认定是礼物的，按它们建出来的资产作废
+      var keptAssets = data.assets.filter(function (asset) {
+        return !assetPurchaseVoided(asset, ledger, giftSet, currentBySource);
+      });
+      if (keptAssets.length !== data.assets.length) {
+        data.assets = keptAssets;
+        changed = true;
+      }
+      if (applyRecycleTransfers(data.assets, ledger, giftSet, newGifts)) changed = true;
+
+      data.assets = dedupeAssets(data.assets);
+      if (JSON.stringify(data.assets) !== originalAssetJson) changed = true;
+      if (newGifts.length) changed = true;
+
+      if (!changed) {
+        // SD 内置：资产没变，但资料改了、或手机「初始化聊天」清空了资产，条目也可能过期；
+        // 自动同步会先比对内容，没变就不碰世界书，也绝不新建
+        if (!skipWorldbook && !destroyed) syncWorldbook(false, 'auto');
+        return false;
+      }
+
+      await mutateChatVariables(function (next) {
+        if (!next || !gameOpened(next.sb)) return next;   // SD 内置：不凭空建 sb
+        if (!next.sb.profile || typeof next.sb.profile !== 'object') next.sb.profile = {};
+        if (!next.sb.profile.userHome || typeof next.sb.profile.userHome !== 'object') {
+          next.sb.profile.userHome = {};
+        }
+        var state = next.sb.profile.userHome;
+        state.schemaVersion = SCHEMA;
+        state.assets = data.assets;
+        if (newGifts.length) state.giftKeys = mergeKeyList(state.giftKeys, newGifts, 400);
+        state.updatedAt = new Date().toISOString();
+        return next;
+      });
+      if (destroyed) return true;
+      if (showStatus) setStatus('已从购买记录同步资产', 'ok');
+      if (open) render();
+      if (!skipWorldbook) syncWorldbook(false, 'auto');   // SD 内置：自动同步只更新已有条目
+      return true;
+    } catch (error) {
+      if (showStatus) setStatus('资产同步失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+      return false;
+    }
+  }
+
+  function newChatWorldbookName() {
+    var base = '一掷千金 · 聊天档案';
+    var names = [];
+    try {
+      if (typeof getWorldbookNames === 'function') names = getWorldbookNames() || [];
+    } catch (_) {}
+    var candidate = base;
+    var index = 2;
+    while (names.indexOf(candidate) !== -1) {
+      candidate = base + ' ' + index;
+      index++;
+    }
+    return candidate;
+  }
+
+  async function ensureChatWorldbookTarget() {
+    var current = '';
+    try {
+      if (typeof getChatWorldbookName === 'function') current = text(getChatWorldbookName('current'));
+    } catch (_) {}
+    if (current) return { name: current, source: 'existing' };
+    if (typeof getOrCreateChatWorldbook !== 'function') throw new Error('当前酒馆助手不支持创建聊天世界书');
+    return {
+      name: text(await getOrCreateChatWorldbook('current', newChatWorldbookName())),
+      source: 'created'
+    };
+  }
+
+  function buildWorldbookContent(data) {
+    var identity = data.identity;
+    var owned = ownedAssets(data);
+    // SD 内置：A8 —— 空字段不写（以前写「未记录」「无已记录资产」，模型会当成设定）
+    var lines = [
+      '【用户档案·叙事参考】',
+      '以下资料由 User 在个人主页填写，或来自开场设定；描写 User 时应优先保持这些设定与生活状态一致。'
+    ];
+    [
+      ['姓名', identity.name],
+      ['年龄', identity.age ? String(identity.age) : ''],
+      ['职业', identity.job],
+      ['身材', identity.figure],
+      ['容貌', identity.appearance],
+      ['性格', identity.personality],
+      ['性癖', identity.kinks.join('、')],
+      ['阴茎形状', identity.penisShape]
+    ].forEach(function (pair) {
+      if (text(pair[1])) lines.push(pair[0] + '：' + text(pair[1]));
+    });
+    lines.push('');
+    if (owned.length) {
+      CATEGORY_ORDER.forEach(function (category) {
+        var assets = owned.filter(function (asset) { return asset.category === category; });
+        if (!assets.length) return;
+        lines.push((CATEGORIES[category] || CATEGORIES.other) + '：');
+        assets.forEach(function (asset) {
+          var header = asset.name + (asset.fake ? '（高仿）' : '') +
+            (asset.value > 0 ? '（' + formatMoney(asset.value) + '）' : '');
+          var details = assetDetailParts(asset);
+          if (text(asset.note)) details.push('备注：' + text(asset.note));
+          lines.push(details.length ? header + '\n  ' + details.join('；') : header);
+        });
+      });
+      lines.push('资产总值：' + formatMoney(assetTotal(data)));
+      lines.push('');
+    }
+    return lines.concat([
+      '资产记录规则：',
+      '- 这里只列 User 自己买下、现在仍归 User 所有或使用的资产；开场设定里本来就有的房、车、表等照常可以提。',
+      '- 标「高仿」的是仿品，User 自己知道；NPC 看不看得出，看她见没见过真货。',
+      '- User 送给 NPC 的礼物照常记账：[WALLET:-¥金额:礼物·收礼人] + [CLOSET:礼物|收礼人]，有 CLOSET 就必有对应的 WALLET；礼物只是不算 User 的资产。',
+      '- User 给自己买资产时照常写 [WALLET:-¥金额:资产名]；没有送人就不写 CLOSET。',
+      '- User 实际买下资产时，再加一条不可见的 HTML 注释供主页建档，放在 WALLET 之后、TIME 标记之前（TIME 仍然是全文最后一行）：',
+      '  <!--ASSET:资产名|分类|金额|位置|外观或车漆|建筑面积或车型配置|楼层|内部或内饰|备注-->',
+      '- 金额写数字，可以带万或千（如 6800万）。分类只能使用：房产、车辆、公司、奢侈品、其他。腕表、珠宝和高定服装等统一归入奢侈品；股权归入公司。',
+      '- 一日租借的东西、吃饭旅行之类的体验、物业费房租这类账单都不是资产，不写 ASSET。',
+      '- 位置属于房产与公司；房产需要详细位置、占地/建筑面积、外观、楼层和房间格局，公司需要位置、楼宇与办公空间、股权比例和职位。',
+      '- 注档只填该分类有意义的字段；无关字段留空并保留分隔符，不要写“待补充”“未知”或“不适用”。',
+      '- 用户在主页删掉的资产不在本清单中，后续不得自行恢复或重新加入。',
+      '- 刚购得的资产可以只写名称；用户点击个人主页的“同步并写入世界书”后，主页会读取聊天上下文补全房产面积、车辆配色与内饰等细节。',
+      '- 正文叙述 User 的资产时，归属和金额要与这里一致；不要凭空新增没买过的资产。',
+      '',
+      '使用规则：',
+      '- 用于保持 User 的身份、财力与生活状态一致。',
+      '- 正文涉及 User 的年龄、职业、身材、容貌、性格、性癖、身体资料或资产详情时，优先读取并使用本条目。',
+      '- NPC 只能知道剧情中已公开、亲眼看到或被告知的内容，不能无理由全知。',
+      '- 性癖和身体私密资料只在剧情合理知情时使用。'
+    ]).join('\n');
+  }
+
+  function buildWorldbookPatch(data) {
+    return {
+      name: '用户主页-' + text(data.identity.name, '用户'),
+      content: buildWorldbookContent(data),
+      enabled: true,
+      strategy: {
+        type: 'constant',
+        keys: []
+      },
+      position: {
+        type: 'after_character_definition',
+        role: 'system',
+        depth: 4,
+        order: 120
+      },
+      extra: {
+        sb_user_home: true,
+        schemaVersion: SCHEMA
+      }
+    };
+  }
+
+  function worldbookApiReady() {
+    return typeof getWorldbook === 'function' &&
+      typeof createWorldbookEntries === 'function' &&
+      typeof updateWorldbookWith === 'function';
+  }
+
+  function currentChatWorldbookName() {
+    try {
+      if (typeof getChatWorldbookName === 'function') return text(getChatWorldbookName('current'));
+    } catch (_) {}
+    return '';
+  }
+
+  // SD 内置：A1 —— 自动同步能不能动世界书：玩家亲手点过一次同步（worldbookConsent），
+  // 或者旧版已经写过条目（userHome.worldbook.bookName 有值）。自动同步只更新已有条目，绝不建书、建条目。
+  function autoWorldbookAllowed(data) {
+    return !!(data.worldbookConsent || text(data.worldbook && data.worldbook.bookName));
+  }
+
+  // SD 内置：mode 'manual' = 玩家点了「同步并写入世界书」：没有聊天世界书就建一本，没有条目就建一条，并记下同意；
+  //          mode 'auto'   = 资料/资产变了顺手更新：只改已有的那一条，内容没变就什么都不做。
+  // A7：正在写的时候又来请求，排队，写完用最新数据再写一次；手动的那次一定会跑到，不会被误报失败。
+  var worldbookTask = serialTask(function (options) {
+    return runWorldbookSync(!!options.showStatus, options.manual ? 'manual' : 'auto');
+  });
+
+  function syncWorldbook(showStatus, mode) {
+    return worldbookTask({ showStatus: !!showStatus, manual: mode === 'manual' });
+  }
+
+  function runWorldbookSync(showStatus, mode) {
+    var manual = mode === 'manual';
+    var skipped = manual ? false : 'skip';
+    lastWorldbookError = '';
+    if (destroyed) return Promise.resolve(false);
+    if (!worldbookApiReady()) {
+      lastWorldbookError = '当前酒馆助手不支持聊天世界书写入';
+      if (showStatus) setStatus(lastWorldbookError, 'error');
+      return Promise.resolve(skipped);
+    }
+    var vars = readChatVariables();
+    if (!gameOpened(vars && vars.sb)) {
+      lastWorldbookError = '开场表单提交以后才能同步';
+      if (showStatus) setStatus(lastWorldbookError, 'error');
+      return Promise.resolve(skipped);
+    }
+    var data = readHomeData(vars);
+    if (!manual && !autoWorldbookAllowed(data)) return Promise.resolve('skip');
+    var patch = buildWorldbookPatch(data);
+    var contentHash = hashText(patch.name + '\n' + patch.content);
+    if (!manual && (text(data.worldbook.contentHash) === contentHash || autoWorldbookSkipHash === contentHash)) {
+      return Promise.resolve('skip');
+    }
+    var currentBook = currentChatWorldbookName();
+    if (!manual && !currentBook) {
+      autoWorldbookSkipHash = contentHash;
+      return Promise.resolve('skip');
+    }
+    var bookName = '';
+    if (showStatus) setStatus('正在同步用户档案到正文…', 'info');
+    var targetPromise = manual
+      ? ensureChatWorldbookTarget()
+      : Promise.resolve({ name: currentBook, source: 'existing' });
+    return targetPromise.then(function (target) {
+      bookName = target.name;
+      return getWorldbook(bookName).then(function (entries) {
+        var existing = (entries || []).filter(function (entry) {
+          return !!(entry && entry.extra && entry.extra.sb_user_home);
+        });
+        if (existing.length) {
+          var uids = existing.map(function (entry) { return entry.uid; });
+          return updateWorldbookWith(bookName, function (currentEntries) {
+            return currentEntries.map(function (entry) {
+              if (uids.indexOf(entry.uid) === -1) return entry;
+              return Object.assign({}, entry, patch, {
+                uid: entry.uid,
+                extra: Object.assign({}, entry.extra || {}, patch.extra)
+              });
+            });
+          }).then(function () { return 'written'; });
+        }
+        if (!manual) return 'skip';   // 自动同步：条目被玩家删了就算了，绝不新建
+        return createWorldbookEntries(bookName, [patch]).then(function () { return 'written'; });
+      }).then(function (result) {
+        if (result !== 'written') {
+          autoWorldbookSkipHash = contentHash;
+          return 'skip';
+        }
+        autoWorldbookSkipHash = '';
+        return mutateChatVariables(function (next) {
+          if (!next || !gameOpened(next.sb)) return next;
+          if (!next.sb.profile || typeof next.sb.profile !== 'object') next.sb.profile = {};
+          if (!next.sb.profile.userHome || typeof next.sb.profile.userHome !== 'object') {
+            next.sb.profile.userHome = {};
+          }
+          var home = next.sb.profile.userHome;
+          var previous = home.worldbook && typeof home.worldbook === 'object' ? home.worldbook : {};
+          home.worldbook = {
+            bookName: bookName,
+            entryName: patch.name,
+            lastSyncedAt: new Date().toISOString(),
+            source: manual ? target.source : text(previous.source, 'existing'),
+            contentHash: contentHash
+          };
+          if (manual) {
+            home.worldbookConsent = true;
+            home.worldbookConsentAt = text(home.worldbookConsentAt, new Date().toISOString());
+          }
+          return next;
+        }).then(function () { return true; });
+      });
+    }).then(function (result) {
+      if (destroyed) return result;
+      if (result === true && open) render();
+      if (showStatus && result === true) setStatus('用户档案已同步到正文：' + bookName, 'ok');
+      return result;
+    }).catch(function (error) {
+      lastWorldbookError = error && error.message ? error.message : '未知错误';
+      if (showStatus) setStatus('正文同步失败：' + lastWorldbookError, 'error');
+      return manual ? false : 'skip';
+    });
+  }
+
+  async function syncProfileToContext(showStatus) {
+    if (profileSyncRunning || destroyed) return false;
+    if (!gameOpened(readChatVariables().sb)) {
+      if (showStatus) setStatus('开场表单提交以后才能同步', 'error');
+      return false;
+    }
+    profileSyncRunning = true;
+    var enrichmentError = '';
+    if (showStatus) {
+      setStatus('正在整理购买记录与资产档案…', 'info');
+      if (open) render();
+    }
+    try {
+      await syncPurchasedAssets(false, true);
+      try {
+        await enrichAssetsFromContext(false);
+      } catch (error) {
+        enrichmentError = error && error.message ? error.message : 'AI 资产补全失败';
+      }
+      var synced = await syncWorldbook(false, 'manual');
+      profileSyncRunning = false;
+      if (open) render();
+      if (showStatus) {
+        if (synced !== true) {
+          setStatus('正文同步失败：' + (lastWorldbookError || '请检查聊天世界书权限'), 'error');
+        } else if (enrichmentError) {
+          setStatus('档案已同步；资产补全未完成：' + enrichmentError, 'error');
+        } else {
+          setStatus('档案与资产详情已同步到正文', 'ok');
+        }
+      }
+      return synced === true;
+    } catch (error) {
+      profileSyncRunning = false;
+      if (open) render();
+      if (showStatus) {
+        setStatus('同步失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+      }
+      return false;
+    }
+  }
+
+  function avatarStorageKey() {
+    var identity = '';
+    try {
+      var context = HOST.SillyTavern && HOST.SillyTavern.getContext ? HOST.SillyTavern.getContext() : null;
+      identity = [
+        context && context.characterId,
+        context && context.chatId,
+        context && context.chatMetadata && context.chatMetadata.id,
+        context && context.name1
+      ].filter(Boolean).join('|');
+    } catch (_) {}
+    return 'suh-avatar:' + hashText(identity || 'default');
+  }
+
+  function openAvatarDatabase() {
+    return new Promise(function (resolve, reject) {
+      try {
+        if (!window.indexedDB) throw new Error('当前浏览器不支持 IndexedDB');
+        var request = window.indexedDB.open('suh-user-profile-media', 1);
+        request.onupgradeneeded = function () {
+          var db = request.result;
+          if (!db.objectStoreNames.contains('avatars')) db.createObjectStore('avatars');
+        };
+        request.onsuccess = function () { resolve(request.result); };
+        request.onerror = function () { reject(request.error || new Error('头像数据库打开失败')); };
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  async function saveAvatarBlob(key, blob) {
+    var db = await openAvatarDatabase();
+    return new Promise(function (resolve, reject) {
+      var transaction = db.transaction('avatars', 'readwrite');
+      transaction.objectStore('avatars').put(blob, key);
+      transaction.oncomplete = function () { db.close(); resolve(true); };
+      transaction.onerror = function () { db.close(); reject(transaction.error || new Error('头像保存失败')); };
+    });
+  }
+
+  async function readAvatarBlob(key) {
+    var db = await openAvatarDatabase();
+    return new Promise(function (resolve, reject) {
+      var transaction = db.transaction('avatars', 'readonly');
+      var request = transaction.objectStore('avatars').get(key);
+      request.onsuccess = function () { resolve(request.result || null); };
+      request.onerror = function () { reject(request.error || new Error('头像读取失败')); };
+      transaction.oncomplete = function () { db.close(); };
+    });
+  }
+
+  async function deleteAvatarBlob(key) {
+    if (!key) return true;
+    var db = await openAvatarDatabase();
+    return new Promise(function (resolve, reject) {
+      var transaction = db.transaction('avatars', 'readwrite');
+      transaction.objectStore('avatars').delete(key);
+      transaction.oncomplete = function () { db.close(); resolve(true); };
+      transaction.onerror = function () { db.close(); reject(transaction.error || new Error('头像删除失败')); };
+    });
+  }
+
+  function validAvatarUrl(value) {
+    var url = text(value);
+    if (!url) return '';
+    if (/^https?:\/\/[^\s]+$/i.test(url)) return url;
+    return '';
+  }
+
+  function releaseAvatarPreviewUrl() {
+    if (!pendingAvatarPreviewUrl) return;
+    try { URL.revokeObjectURL(pendingAvatarPreviewUrl); } catch (_) {}
+    pendingAvatarPreviewUrl = '';
+  }
+
+  function releaseAvatarObjectUrl() {
+    avatarObjectKey = '';
+    if (!avatarObjectUrl) return;
+    try { URL.revokeObjectURL(avatarObjectUrl); } catch (_) {}
+    avatarObjectUrl = '';
+  }
+
+  // SD 内置：主页头像和手机入口头像共用一份 objectURL，按「key|updatedAt」缓存。
+  // 以前每画一处就新建一个、顺手 revoke 上一个，两处会互相把对方的图废掉；入口每次重画也要等 IndexedDB。
+  function avatarCacheId(avatar) {
+    if (!avatar || avatar.kind !== 'idb' || !text(avatar.key)) return '';
+    return text(avatar.key) + '|' + text(avatar.updatedAt);
+  }
+
+  function cachedAvatarSource(avatar) {
+    if (!avatar || typeof avatar !== 'object') return '';
+    if (avatar.kind === 'url') return validAvatarUrl(avatar.value);
+    var cacheId = avatarCacheId(avatar);
+    return cacheId && avatarObjectUrl && avatarObjectKey === cacheId ? avatarObjectUrl : '';
+  }
+
+  async function resolveAvatarSource(avatar) {
+    if (!avatar || typeof avatar !== 'object') return '';
+    if (avatar.kind === 'url') return validAvatarUrl(avatar.value);
+    if (avatar.kind === 'idb' && text(avatar.key)) {
+      var cached = cachedAvatarSource(avatar);
+      if (cached) return cached;
+      var blob = await readAvatarBlob(text(avatar.key));
+      if (!blob) return '';
+      cached = cachedAvatarSource(avatar);
+      if (cached) return cached;
+      releaseAvatarObjectUrl();
+      avatarObjectUrl = URL.createObjectURL(blob);
+      avatarObjectKey = avatarCacheId(avatar);
+      return avatarObjectUrl;
+    }
+    return '';
+  }
+
+  async function applyAvatarImage(image, avatar) {
+    if (!image) return;
+    var token = Date.now() + ':' + Math.random();
+    image.dataset.avatarToken = token;
+    var quick = cachedAvatarSource(avatar);
+    if (quick) {   // SD 内置：缓存里有就同一拍放上，手机重画时入口头像不闪
+      image.src = quick;
+      image.hidden = false;
+      image.onerror = function () { image.hidden = true; };
+      return;
+    }
+    try {
+      var src = await resolveAvatarSource(avatar);
+      if (image.dataset.avatarToken !== token) return;
+      if (src) {
+        image.src = src;
+        image.hidden = false;
+        image.onerror = function () {
+          image.hidden = true;
+        };
+      } else {
+        image.removeAttribute('src');
+        image.hidden = true;
+      }
+    } catch (_) {
+      image.removeAttribute('src');
+      image.hidden = true;
+    }
+  }
+
+  function compressAvatarFile(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file || !/^image\//i.test(file.type || '')) {
+        reject(new Error('请选择图片文件'));
+        return;
+      }
+      if (file.size > 12 * 1024 * 1024) {
+        reject(new Error('图片不能超过 12MB'));
+        return;
+      }
+      var objectUrl = URL.createObjectURL(file);
+      var image = new Image();
+      image.onload = function () {
+        try {
+          var maxSide = 720;
+          var ratio = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+          var canvas = DOC.createElement('canvas');
+          canvas.width = Math.max(1, Math.round((image.naturalWidth || 1) * ratio));
+          canvas.height = Math.max(1, Math.round((image.naturalHeight || 1) * ratio));
+          var ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('浏览器无法处理这张图片');
+          ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob(function (blob) {
+            URL.revokeObjectURL(objectUrl);
+            if (blob) resolve(blob);
+            else reject(new Error('头像压缩失败'));
+          }, 'image/webp', 0.86);
+        } catch (error) {
+          URL.revokeObjectURL(objectUrl);
+          reject(error);
+        }
+      };
+      image.onerror = function () {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('无法读取这张图片'));
+      };
+      image.src = objectUrl;
+    });
+  }
+
+  function avatarDialog() {
+    return root && root.querySelector('.suh-submodal');
+  }
+
+  function openAvatarDialog() {
+    createShell();
+    var dialog = avatarDialog();
+    if (!dialog) return;
+    pendingAvatarBlob = null;
+    pendingAvatarJob = null;
+    releaseAvatarPreviewUrl();
+    var fileInput = dialog.querySelector('.suh-avatar-file');
+    var urlInput = dialog.querySelector('.suh-avatar-url');
+    var preview = dialog.querySelector('.suh-avatar-preview img');
+    var status = dialog.querySelector('.suh-avatar-status');
+    if (fileInput) fileInput.value = '';
+    if (urlInput) urlInput.value = '';
+    if (status) status.textContent = '';
+    dialog.hidden = false;
+    applyAvatarImage(preview, readHomeData(readChatVariables()).avatar);
+    HOST.setTimeout(function () {
+      try { urlInput.focus(); } catch (_) {}
+    }, 0);
+  }
+
+  function closeAvatarDialog() {
+    var dialog = avatarDialog();
+    if (!dialog) return;
+    dialog.hidden = true;
+    pendingAvatarBlob = null;
+    pendingAvatarJob = null;
+    releaseAvatarPreviewUrl();
+  }
+
+  function setAvatarStatus(message, kind) {
+    var dialog = avatarDialog();
+    var status = dialog && dialog.querySelector('.suh-avatar-status');
+    if (!status) return;
+    status.textContent = text(message);
+    status.dataset.kind = kind || 'info';
+  }
+
+  async function saveAvatar() {
+    if (avatarBusy) return;
+    var dialog = avatarDialog();
+    if (!dialog) return;
+    if (!gameOpened(readChatVariables().sb)) {   // SD 内置：开场表单没交不写变量
+      setAvatarStatus('开场表单提交以后才能保存头像', 'error');
+      return;
+    }
+    if (pendingAvatarJob) {   // SD 内置：A8 —— 本地图片还在压缩，等它好了再存（以前会报「请选择本地图片」）
+      setAvatarStatus('图片还在处理，处理完就保存…', 'info');
+      try { await pendingAvatarJob; } catch (_) {}
+      if (destroyed || dialog.hidden) return;
+    }
+    var urlInput = dialog.querySelector('.suh-avatar-url');
+    var url = validAvatarUrl(urlInput && urlInput.value);
+    var current = readHomeData(readChatVariables()).avatar || {};
+    if (!pendingAvatarBlob && !url) {
+      setAvatarStatus('请选择本地图片或填写有效的图片 URL', 'error');
+      return;
+    }
+    avatarBusy = true;
+    var save = dialog.querySelector('.suh-avatar-save');
+    if (save) save.disabled = true;
+    setAvatarStatus('正在保存头像…', 'info');
+    try {
+      var nextAvatar;
+      var key = avatarStorageKey();
+      var usedBlob = !!pendingAvatarBlob;
+      if (pendingAvatarBlob) {
+        await saveAvatarBlob(key, pendingAvatarBlob);
+        nextAvatar = { kind: 'idb', key: key, updatedAt: new Date().toISOString() };
+      } else {
+        nextAvatar = { kind: 'url', value: url, updatedAt: new Date().toISOString() };
+      }
+      await mutateChatVariables(function (vars) {
+        if (!vars || !gameOpened(vars.sb)) return vars;
+        if (!vars.sb.profile || typeof vars.sb.profile !== 'object') vars.sb.profile = {};
+        if (!vars.sb.profile.userHome || typeof vars.sb.profile.userHome !== 'object') {
+          vars.sb.profile.userHome = {};
+        }
+        vars.sb.profile.userHome.avatar = nextAvatar;
+        vars.sb.profile.userHome.updatedAt = new Date().toISOString();
+        return vars;
+      });
+      // SD 内置：A8 —— 只删本聊天自己建的那张图。分支/存档点会复制父聊天的变量，avatar.key 指的是父聊天的图，
+      // 以前在分支里换头像会把父聊天的头像一起删掉。换成同一个 key 的新图本来就是覆盖，也不用删。
+      if (current.kind === 'idb' && current.key && current.key === key && !usedBlob) {
+        try { await deleteAvatarBlob(current.key); } catch (_) {}
+      }
+      avatarBusy = false;
+      if (save) save.disabled = false;
+      closeAvatarDialog();
+      setStatus('头像已保存', 'ok');
+      render();
+      refreshEntry();
+    } catch (error) {
+      avatarBusy = false;
+      if (save) save.disabled = false;
+      setAvatarStatus('头像保存失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    }
+  }
+
+  async function removeAvatar() {
+    if (avatarBusy) return;
+    avatarBusy = true;
+    try {
+      var current = readHomeData(readChatVariables()).avatar || {};
+      await mutateChatVariables(function (vars) {
+        if (vars.sb && vars.sb.profile && vars.sb.profile.userHome) {
+          vars.sb.profile.userHome.avatar = null;
+          vars.sb.profile.userHome.updatedAt = new Date().toISOString();
+        }
+        return vars;
+      });
+      if (current.kind === 'idb' && current.key && current.key === avatarStorageKey()) {   // SD 内置：同上，只删本聊天的
+        try { await deleteAvatarBlob(current.key); } catch (_) {}
+      }
+      releaseAvatarObjectUrl();
+      avatarBusy = false;
+      closeAvatarDialog();
+      setStatus('头像已移除', 'ok');
+      render();
+      refreshEntry();
+    } catch (error) {
+      avatarBusy = false;
+      setAvatarStatus('头像移除失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    }
+  }
+
+  function el(tag, className, value) {
+    var node = DOC.createElement(tag);
+    if (className) node.className = className;
+    if (value !== undefined && value !== null) node.textContent = String(value);
+    return node;
+  }
+
+  function append(parent) {
+    for (var i = 1; i < arguments.length; i++) {
+      var child = arguments[i];
+      if (child) parent.appendChild(child);
+    }
+    return parent;
+  }
+
+  function setStatus(message, kind) {
+    if (!statusEl) return;
+    statusEl.textContent = text(message);
+    statusEl.dataset.kind = kind || 'info';
+  }
+
+  function makeStat(label, value, sub) {
+    var node = el('div', 'suh-stat');
+    node.appendChild(el('span', '', label));
+    node.appendChild(el('b', '', value));
+    if (sub) node.appendChild(el('small', '', sub));
+    return node;
+  }
+
+  function installStyle() {
+    var existing = DOC.getElementById(STYLE_ID);
+    if (existing && existing.dataset.version === VERSION) return;
+    if (existing) existing.remove();
+    var style = DOC.createElement('style');
+    style.id = STYLE_ID;
+    style.dataset.version = VERSION;
+    style.textContent = [
+      // SD 内置：配色改成变量，跟手机主题走。--suh-ink 等 10 个在打开主页时从 #sbnyc-panel 抄（含夜间）；
+      // 下面是抄不到时的默认值（= 手机白天配色），.suh-night 那组是夜间默认值和几样派生色。
+      '#suh-root{--suh-ink:#1f2937;--suh-ink-sub:#6b7280;--suh-ink-faint:#a8acb3;--suh-paper:#f5f3ee;--suh-paper-2:#fbf9f4;--suh-paper-3:#ece8dd;--suh-line:rgba(26,42,58,.14);--suh-gold:#b89968;--suh-red:#9a1b29;--suh-green:#4f6b5c;',
+      '  --suh-head:#1f2937;--suh-head-ink:#f5f0e6;--suh-field:#fffdf8;--suh-primary:#1f2937;--suh-primary-ink:#fbf9f4;--suh-edge:rgba(177,148,97,.55);--suh-gold-ink:#7d6438;--suh-money:#8b5c2e;}',
+      '#suh-root.suh-night{--suh-ink:#ece7db;--suh-ink-sub:#9a968c;--suh-ink-faint:#615e57;--suh-paper:#16181e;--suh-paper-2:#1e212a;--suh-paper-3:#262a34;--suh-line:rgba(212,184,138,.16);--suh-gold:#cba86a;--suh-red:#c65a63;--suh-green:#79a68c;',
+      '  --suh-head:#0e1015;--suh-head-ink:#ece7db;--suh-field:#262a34;--suh-primary:#cba86a;--suh-primary-ink:#16181e;--suh-edge:rgba(203,168,106,.38);--suh-gold-ink:#d9c08a;--suh-money:#d9c08a;}',
+      '#suh-root{position:fixed;inset:0;z-index:2147483645;display:grid;place-items:center;padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));box-sizing:border-box;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI","Noto Sans SC",sans-serif;color:var(--suh-ink);}',
+      '#suh-root[hidden]{display:none!important;}',
+      '#suh-root [hidden]{display:none!important;}',
+      '#suh-root .suh-backdrop{position:absolute;inset:0;background:rgba(7,11,17,.7);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);}',
+      '#suh-root .suh-dialog{position:relative;display:flex;flex-direction:column;width:min(900px,calc(100vw - 20px));max-height:min(90vh,820px);max-height:min(90dvh,820px);overflow:hidden;border:1px solid var(--suh-edge);border-radius:8px;background:var(--suh-paper);box-shadow:0 24px 90px rgba(0,0,0,.48);}',
+      '#suh-root .suh-head{display:flex;align-items:center;gap:12px;min-height:56px;padding:10px 14px;background:var(--suh-head);color:var(--suh-head-ink);flex:none;}',
+      '#suh-root .suh-brand{min-width:0;flex:1;}',
+      '#suh-root .suh-kicker{display:block;color:var(--suh-gold);font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;}',
+      '#suh-root .suh-title{margin:2px 0 0;font:600 18px/1.2 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#suh-root .suh-close{width:34px;height:34px;border:1px solid rgba(255,255,255,.22);border-radius:6px;background:rgba(255,255,255,.07);color:var(--suh-head-ink);font-size:21px;cursor:pointer;}',
+      '#suh-root .suh-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;background:var(--suh-line);border-bottom:1px solid var(--suh-line);flex:none;}',
+      '#suh-root .suh-stat{min-width:0;padding:12px 14px;background:var(--suh-paper-3);}',
+      '#suh-root .suh-stat span{display:block;color:var(--suh-ink-sub);font-size:10px;}',
+      '#suh-root .suh-stat b{display:block;margin-top:4px;color:var(--suh-ink);font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '#suh-root .suh-stat small{display:block;margin-top:2px;color:var(--suh-ink-faint);font-size:9px;}',
+      '#suh-root .suh-identity{display:grid;grid-template-columns:64px minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 16px;background:var(--suh-paper-2);border-bottom:1px solid var(--suh-line);flex:none;}',
+      '#suh-root .suh-avatar-button{position:relative;width:58px;height:58px;padding:0;overflow:hidden;border:1px solid var(--suh-gold);border-radius:50%;background:var(--suh-head);color:var(--suh-head-ink);font:700 20px/1 ui-serif,Georgia,serif;cursor:pointer;}',
+      '#suh-root .suh-avatar-button img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}',
+      '#suh-root .suh-avatar-fallback{display:grid;place-items:center;width:100%;height:100%;}',
+      '#suh-root .suh-identity-copy{min-width:0;}',
+      '#suh-root .suh-identity-name{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;color:var(--suh-ink);font:700 16px/1.3 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#suh-root .suh-identity-name small{color:var(--suh-ink-faint);font:500 10px/1.4 system-ui,sans-serif;}',
+      '#suh-root .suh-identity-meta{margin-top:3px;color:var(--suh-ink-sub);font-size:10px;line-height:1.6;overflow-wrap:anywhere;}',
+      '#suh-root .suh-identity-actions{display:flex;gap:6px;align-items:center;}',
+      '#suh-root .suh-identity-actions button{min-height:32px;padding:0 10px;border:1px solid var(--suh-line);border-radius:5px;background:var(--suh-field);color:var(--suh-ink-sub);font:700 10px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#suh-root .suh-profile-editor{max-height:44vh;max-height:44dvh;overflow:auto;padding:0 16px 14px;background:var(--suh-paper-2);border-bottom:1px solid var(--suh-line);flex:none;}',
+      '#suh-root .suh-profile-editor .suh-grid{padding-top:12px;}',
+      '#suh-root .suh-tabs{display:flex;padding:0 18px;background:var(--suh-paper-2);border-bottom:1px solid var(--suh-line);flex:none;}',
+      '#suh-root .suh-tab{min-height:44px;padding:0 16px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--suh-ink-sub);font:600 12px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#suh-root .suh-tab[aria-selected="true"]{color:var(--suh-ink);border-bottom-color:var(--suh-gold);}',
+      '#suh-root .suh-body{min-height:0;padding:16px 18px 22px;overflow:auto;overscroll-behavior:contain;}',
+      '#suh-root .suh-section{margin-bottom:14px;padding:14px;border:1px solid var(--suh-line);border-radius:8px;background:var(--suh-paper-2);}',
+      '#suh-root .suh-section h3{margin:0 0 12px;color:var(--suh-ink);font:700 14px/1.3 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#suh-root .suh-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}',
+      '#suh-root .suh-field{display:grid;gap:5px;min-width:0;}',
+      '#suh-root .suh-field.full{grid-column:1/-1;}',
+      '#suh-root .suh-field label{color:var(--suh-gold-ink);font-size:11px;font-weight:700;}',
+      '#suh-root .suh-field input,#suh-root .suh-field select,#suh-root .suh-field textarea{width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--suh-line);border-radius:6px;background:var(--suh-field);color:var(--suh-ink);padding:9px 10px;font:400 12px/1.5 system-ui,sans-serif;}',
+      '#suh-root .suh-field textarea{min-height:74px;resize:vertical;}',
+      '#suh-root .suh-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin-top:14px;}',
+      '#suh-root .suh-btn{min-height:36px;padding:0 13px;border:1px solid var(--suh-edge);border-radius:6px;background:var(--suh-field);color:var(--suh-ink);font:700 11px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#suh-root .suh-btn.primary{background:var(--suh-primary);border-color:var(--suh-primary);color:var(--suh-primary-ink);}',
+      '#suh-root .suh-btn.danger{color:var(--suh-red);border-color:var(--suh-red);}',
+      '#suh-root .suh-btn:disabled{opacity:.55;cursor:wait;}',
+      '#suh-root .suh-asset-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:10px;}',
+      '#suh-root .suh-asset-groups{display:grid;gap:10px;}',
+      '#suh-root .suh-asset-group{overflow:hidden;border:1px solid var(--suh-line);border-radius:8px;background:var(--suh-paper-2);}',
+      '#suh-root .suh-asset-group>summary{display:flex;align-items:center;gap:8px;min-height:42px;padding:9px 12px;color:var(--suh-ink);font:700 12px/1.3 system-ui,sans-serif;cursor:pointer;list-style:none;}',
+      '#suh-root .suh-asset-group>summary::-webkit-details-marker{display:none;}',
+      '#suh-root .suh-group-chevron{width:7px;height:7px;border-right:1.5px solid var(--suh-gold);border-bottom:1.5px solid var(--suh-gold);transform:rotate(-45deg);transition:transform .16s ease;}',
+      '#suh-root .suh-asset-group[open]>summary .suh-group-chevron{transform:rotate(45deg);}',
+      '#suh-root .suh-group-count{margin-left:auto;padding:2px 7px;border-radius:999px;background:var(--suh-paper-3);color:var(--suh-ink-sub);font-size:9px;font-weight:700;}',
+      '#suh-root .suh-asset-group-body{padding:0 10px 10px;border-top:1px solid var(--suh-line);}',
+      '#suh-root .suh-group-empty{padding:16px 10px 8px;text-align:center;color:var(--suh-ink-faint);font-size:11px;}',
+      '#suh-root .suh-asset{position:relative;padding:12px;border:1px solid var(--suh-line);border-radius:8px;background:var(--suh-field);}',
+      '#suh-root .suh-asset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}',
+      '#suh-root .suh-asset b{min-width:0;color:var(--suh-ink);font-size:13px;line-height:1.4;overflow-wrap:anywhere;}',
+      '#suh-root .suh-badge{flex:none;padding:2px 7px;border:1px solid var(--suh-red);border-radius:999px;color:var(--suh-red);font:700 9px/1.2 system-ui,sans-serif;white-space:nowrap;}',
+      '#suh-root .suh-asset-value{margin-top:9px;color:var(--suh-money);font:700 17px/1.2 system-ui,sans-serif;}',
+      '#suh-root .suh-meta{margin-top:5px;color:var(--suh-ink-faint);font-size:10px;line-height:1.5;}',
+      '#suh-root .suh-asset-details{display:grid;gap:4px;margin-top:9px;padding-top:8px;border-top:1px dashed var(--suh-line);}',
+      '#suh-root .suh-asset-detail{display:grid;grid-template-columns:64px minmax(0,1fr);gap:6px;color:var(--suh-ink-sub);font-size:10px;line-height:1.55;}',
+      '#suh-root .suh-asset-detail span:first-child{color:var(--suh-gold);font-weight:700;}',
+      '#suh-root .suh-asset-detail span:last-child{overflow-wrap:anywhere;}',
+      '#suh-root .suh-note{margin-top:7px;color:var(--suh-ink-sub);font-size:11px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;}',
+      '#suh-root .suh-asset-actions{display:flex;gap:6px;justify-content:flex-end;margin-top:9px;}',
+      '#suh-root .suh-asset-actions button{min-height:30px;padding:0 9px;border:1px solid var(--suh-line);border-radius:5px;background:var(--suh-paper-2);color:var(--suh-ink-sub);font:700 10px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#suh-root .suh-empty{padding:20px;text-align:center;color:var(--suh-ink-faint);font-size:12px;line-height:1.7;border:1px dashed var(--suh-line);border-radius:7px;background:var(--suh-field);}',
+      '#suh-root .suh-hidden-list{margin-top:12px;padding-top:12px;border-top:1px dashed var(--suh-line);}',
+      '#suh-root .suh-hidden-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0;font-size:11px;color:var(--suh-ink-sub);}',
+      '#suh-root .suh-sync-box{display:grid;gap:8px;}',
+      '#suh-root .suh-sync-notice{padding:10px 11px;border:1px solid var(--suh-edge);border-left:3px solid var(--suh-gold);border-radius:6px;background:var(--suh-paper-3);color:var(--suh-ink-sub);font-size:11px;line-height:1.65;}',
+      '#suh-root .suh-code{padding:10px;border:1px solid var(--suh-line);border-radius:6px;background:var(--suh-field);color:var(--suh-ink-sub);font:500 11px/1.6 ui-monospace,Consolas,monospace;overflow-wrap:anywhere;}',
+      '#suh-root .suh-submodal{position:absolute;inset:0;z-index:5;display:grid;place-items:center;padding:14px;background:rgba(10,15,22,.65);}',
+      '#suh-root .suh-submodal[hidden]{display:none!important;}',
+      '#suh-root .suh-avatar-dialog{width:min(440px,calc(100vw - 28px));max-height:calc(100vh - 28px);max-height:calc(100dvh - 28px);overflow:auto;border:1px solid var(--suh-edge);border-radius:8px;background:var(--suh-paper);box-shadow:0 18px 60px rgba(0,0,0,.38);}',
+      '#suh-root .suh-avatar-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;background:var(--suh-head);color:var(--suh-head-ink);}',
+      '#suh-root .suh-avatar-dialog-head h3{margin:0;font:600 16px/1.3 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#suh-root .suh-avatar-dialog-body{padding:14px;}',
+      '#suh-root .suh-avatar-preview{display:grid;place-items:center;width:128px;height:128px;margin:0 auto 14px;overflow:hidden;border:1px solid var(--suh-edge);border-radius:50%;background:var(--suh-paper-3);color:var(--suh-ink-faint);}',
+      '#suh-root .suh-avatar-preview img{width:100%;height:100%;object-fit:cover;}',
+      '#suh-root .suh-avatar-fields{display:grid;gap:10px;}',
+      '#suh-root .suh-avatar-fields label{display:grid;gap:5px;color:var(--suh-gold-ink);font-size:11px;font-weight:700;}',
+      '#suh-root .suh-avatar-fields input{width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--suh-line);border-radius:6px;background:var(--suh-field);color:var(--suh-ink);padding:9px 10px;font:400 12px/1.5 system-ui,sans-serif;}',
+      '#suh-root .suh-avatar-status{min-height:18px;margin-top:8px;color:var(--suh-ink-sub);font-size:10px;}',
+      '#suh-root .suh-avatar-status[data-kind="error"]{color:var(--suh-red);}',
+      '#suh-root .suh-status{min-height:18px;padding:0 18px 10px;color:var(--suh-ink-sub);font-size:10px;flex:none;}',
+      '#suh-root .suh-status[data-kind="ok"]{color:var(--suh-green);}',
+      '#suh-root .suh-status[data-kind="error"]{color:var(--suh-red);}',
+      // SD 内置：手机入口放在主屏插槽里（插槽自带和按钮行一样的左右留白），直接用手机的配色变量，夜间自动跟着变
+      '#suh-phone-entry{display:block;width:100%;margin:0;padding:0;box-sizing:border-box;}',
+      '#suh-phone-entry .suh-phone-btn{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;max-width:100%;min-height:56px;box-sizing:border-box;margin:0;padding:7px 14px 7px 8px;overflow:hidden;border:.5px solid var(--gold,#b89968);border-radius:18px;background:var(--paper-2,#fbf9f4);box-shadow:none;color:var(--ink,#1f2937);font:600 12px/1.2 var(--font-sans,system-ui,sans-serif);text-align:left;cursor:pointer;-webkit-appearance:none;appearance:none;}',
+      '#suh-phone-entry .suh-phone-btn:hover{background:var(--paper-3,#ece8dd);}',
+      '#suh-phone-entry .suh-phone-btn:focus-visible{outline:2px solid var(--gold,#b89968);outline-offset:2px;}',
+      '#suh-phone-entry .suh-phone-avatar{position:relative;display:grid;place-items:center;width:40px;height:40px;overflow:hidden;border:.5px solid var(--gold,#b89968);border-radius:50%;background:var(--paper-3,#ece8dd);color:var(--gold,#b89968);font:700 15px/1 var(--font-en,Georgia,serif);}',
+      '#suh-phone-entry .suh-phone-avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}',
+      '#suh-phone-entry .suh-phone-copy{display:flex;min-width:0;flex-direction:column;gap:3px;}',
+      '#suh-phone-entry .suh-phone-name{display:block;overflow:hidden;color:var(--ink,#1f2937);font:600 14px/1.25 var(--font-cn,serif);letter-spacing:1px;text-overflow:ellipsis;white-space:nowrap;}',
+      '#suh-phone-entry .suh-phone-meta{display:block;overflow:hidden;color:var(--ink-sub,#6b7280);font:500 10px/1.4 var(--font-sans,system-ui,sans-serif);text-overflow:ellipsis;white-space:nowrap;}',
+      '#suh-phone-entry .suh-phone-enter{flex:none;color:var(--gold,#b89968);font:700 10px/1 var(--font-sans,system-ui,sans-serif);letter-spacing:1px;white-space:nowrap;}',
+      'body.suh-modal-open{overflow:hidden!important;}',
+      '@media(max-width:640px){#suh-root{padding:0;}#suh-root .suh-dialog{width:100vw;height:100vh;height:100dvh;max-height:none;border:0;border-radius:0;}#suh-root .suh-summary{grid-template-columns:1fr 1fr;}#suh-root .suh-stat:last-child{grid-column:1/-1;}#suh-root .suh-identity{grid-template-columns:54px minmax(0,1fr);padding:10px 12px;}#suh-root .suh-avatar-button{width:50px;height:50px;}#suh-root .suh-identity-actions{grid-column:1/-1;justify-content:flex-end;}#suh-root .suh-grid{grid-template-columns:1fr;}#suh-root .suh-field.full{grid-column:auto;}#suh-root .suh-body{padding:14px 12px 20px;}#suh-root .suh-asset-grid{grid-template-columns:1fr;}}',
+      '@media(prefers-reduced-motion:reduce){#suh-root *{transition:none!important;animation:none!important;}}'
+    ].join('\n');
+    (DOC.head || DOC.documentElement).appendChild(style);
+  }
+
+  function createShell() {
+    if (root && root.isConnected) return;
+    installStyle();
+    root = el('div');
+    root.id = ROOT_ID;
+    root.hidden = true;
+    root.innerHTML = [
+      '<div class="suh-backdrop" data-suh-close="1"></div>',
+      '<section class="suh-dialog" role="dialog" aria-modal="true" aria-labelledby="suh-title">',
+      '  <header class="suh-head">',
+      '    <div class="suh-brand"><span class="suh-kicker">SugarOS · User Profile</span><h2 class="suh-title" id="suh-title">用户个人主页</h2></div>',
+      '    <button class="suh-close" type="button" aria-label="关闭用户主页" data-suh-close="1">×</button>',
+      '  </header>',
+      '  <div class="suh-summary"></div>',
+      '  <div class="suh-identity"></div>',
+      '  <div class="suh-profile-editor" hidden></div>',
+      '  <nav class="suh-tabs" role="tablist" aria-label="用户主页分区"></nav>',
+      '  <div class="suh-body"></div>',
+      '  <div class="suh-status" role="status" aria-live="polite"></div>',
+      '</section>',
+      '<div class="suh-submodal" hidden>',
+      '  <section class="suh-avatar-dialog" role="dialog" aria-modal="true" aria-label="自定义头像">',
+      '    <header class="suh-avatar-dialog-head"><h3>自定义头像</h3><button class="suh-btn" type="button" data-suh-avatar-close="1">关闭</button></header>',
+      '    <div class="suh-avatar-dialog-body">',
+      '      <div class="suh-avatar-preview"><img alt="头像预览" hidden><span>头像预览</span></div>',
+      '      <div class="suh-avatar-fields">',
+      '        <label>本地图片<input class="suh-avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label>',
+      '        <label>图片 URL<input class="suh-avatar-url" type="url" inputmode="url" placeholder="https://example.com/avatar.jpg"></label>',
+      '      </div>',
+      '      <div class="suh-avatar-status" role="status" aria-live="polite"></div>',
+      '      <div class="suh-actions">',
+      '        <button class="suh-btn danger suh-avatar-remove" type="button">移除头像</button>',
+      '        <button class="suh-btn" type="button" data-suh-avatar-close="1">取消</button>',
+      '        <button class="suh-btn primary suh-avatar-save" type="button">保存头像</button>',
+      '      </div>',
+      '    </div>',
+      '  </section>',
+      '</div>'
+    ].join('');
+    DOC.body.appendChild(root);
+    bodyEl = root.querySelector('.suh-body');
+    statusEl = root.querySelector('.suh-status');
+    root.addEventListener('click', function (event) {
+      if (event.target && event.target.classList && event.target.classList.contains('suh-submodal')) {
+        closeAvatarDialog();
+        return;
+      }
+      var avatarCloser = event.target.closest && event.target.closest('[data-suh-avatar-close]');
+      if (avatarCloser) {
+        event.preventDefault();
+        closeAvatarDialog();
+        return;
+      }
+      var closer = event.target.closest && event.target.closest('[data-suh-close]');
+      if (closer) closeProfile();
+    });
+    var avatarModal = root.querySelector('.suh-submodal');
+    var avatarFile = root.querySelector('.suh-avatar-file');
+    var avatarUrl = root.querySelector('.suh-avatar-url');
+    var avatarPreview = root.querySelector('.suh-avatar-preview img');
+    var avatarRemove = root.querySelector('.suh-avatar-remove');
+    var avatarSave = root.querySelector('.suh-avatar-save');
+    avatarFile.addEventListener('change', function () {
+      var file = avatarFile.files && avatarFile.files[0];
+      if (!file) return;
+      setAvatarStatus('正在处理本地图片…', 'info');
+      pendingAvatarBlob = null;
+      // SD 内置：处理过程记成 pendingAvatarJob，这时点保存会等它（见 saveAvatar）
+      var job = compressAvatarFile(file).then(function (blob) {
+        if (pendingAvatarJob !== job) return;
+        pendingAvatarBlob = blob;
+        releaseAvatarPreviewUrl();
+        pendingAvatarPreviewUrl = URL.createObjectURL(pendingAvatarBlob);
+        avatarPreview.src = pendingAvatarPreviewUrl;
+        avatarPreview.hidden = false;
+        if (avatarUrl) avatarUrl.value = '';
+        setAvatarStatus('本地图片已就绪，点击保存头像', 'info');
+      }, function (error) {
+        if (pendingAvatarJob !== job) return;
+        pendingAvatarBlob = null;
+        setAvatarStatus('本地图片读取失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+      }).then(function () {
+        if (pendingAvatarJob === job) pendingAvatarJob = null;
+      });
+      pendingAvatarJob = job;
+    });
+    avatarUrl.addEventListener('input', function () {
+      var url = validAvatarUrl(avatarUrl.value);
+      pendingAvatarBlob = null;
+      pendingAvatarJob = null;
+      releaseAvatarPreviewUrl();
+      if (!url) {
+        avatarPreview.removeAttribute('src');
+        avatarPreview.hidden = true;
+        return;
+      }
+      avatarPreview.src = url;
+      avatarPreview.hidden = false;
+    });
+    avatarRemove.addEventListener('click', removeAvatar);
+    avatarSave.addEventListener('click', saveAvatar);
+    avatarModal.hidden = true;
+  }
+
+  function renderTabs() {
+    var nav = root.querySelector('.suh-tabs');
+    nav.replaceChildren();
+    [
+      ['assets', '资产'],
+      ['sync', '正文同步']
+    ].forEach(function (entry) {
+      var button = el('button', 'suh-tab', entry[1]);
+      button.type = 'button';
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-selected', String(activeTab === entry[0]));
+      button.tabIndex = activeTab === entry[0] ? 0 : -1;
+      button.addEventListener('click', function () {
+        activeTab = entry[0];
+        render();
+      });
+      nav.appendChild(button);
+    });
+  }
+
+  function renderSummary(data) {
+    var summary = root.querySelector('.suh-summary');
+    summary.replaceChildren(
+      makeStat('现金余额', formatMoney(data.cash), '来自原卡钱包'),
+      makeStat('资产估值', formatMoney(assetTotal(data)), ownedAssets(data).length + ' 项已购资产'),
+      makeStat('现金与资产合计', formatMoney(totalWealth(data)), '已删除资产不计入估值与正文档案')
+    );
+  }
+
+  function field(label, control, full) {
+    var wrap = el('div', 'suh-field' + (full ? ' full' : ''));
+    var id = 'suh-field-' + Math.random().toString(36).slice(2, 9);
+    control.id = id;
+    var labelNode = el('label', '', label);
+    labelNode.setAttribute('for', id);
+    append(wrap, labelNode, control);
+    return wrap;
+  }
+
+  function renderIdentity(data) {
+    var box = root.querySelector('.suh-identity');
+    var editor = root.querySelector('.suh-profile-editor');
+    box.replaceChildren();
+    var avatarButton = el('button', 'suh-avatar-button');
+    avatarButton.type = 'button';
+    avatarButton.setAttribute('aria-label', '自定义头像');
+    var avatarImage = DOC.createElement('img');
+    avatarImage.alt = '';
+    avatarImage.hidden = true;
+    var fallback = el('span', 'suh-avatar-fallback', text(data.identity.name, 'U').slice(0, 1));
+    avatarButton.appendChild(avatarImage);
+    avatarButton.appendChild(fallback);
+    avatarButton.addEventListener('click', openAvatarDialog);
+    applyAvatarImage(avatarImage, data.avatar);
+
+    var copy = el('div', 'suh-identity-copy');
+    var nameLine = el('div', 'suh-identity-name', data.identity.name);
+    var facts = [data.identity.age ? data.identity.age + ' 岁' : '', data.identity.job].filter(Boolean).join(' · ');
+    nameLine.appendChild(el('small', '', facts || '年龄与职业待补充'));
+    copy.appendChild(nameLine);
+    [
+      ['身材', data.identity.figure],
+      ['容貌', data.identity.appearance],
+      ['性格', data.identity.personality]
+    ].forEach(function (entry) {
+      if (entry[1]) copy.appendChild(el('div', 'suh-identity-meta', entry[0] + '：' + entry[1]));
+    });
+    copy.appendChild(el('div', 'suh-identity-meta',
+      '性癖：' + (data.identity.kinks.length ? data.identity.kinks.join('、') : '待补充')));
+    copy.appendChild(el('div', 'suh-identity-meta',
+      '身体资料：' + (data.identity.penisShape || '待补充')));
+
+    var actions = el('div', 'suh-identity-actions');
+    var edit = el('button', '', profileEditing ? '收起编辑' : '编辑资料');
+    edit.type = 'button';
+    edit.addEventListener('click', function () {
+      profileEditing = !profileEditing;
+      render();
+    });
+    actions.appendChild(edit);
+    append(box, avatarButton, copy, actions);
+    editor.hidden = !profileEditing;
+    editor.replaceChildren();
+    if (profileEditing) renderProfileEditor(editor, data);
+  }
+
+  function renderProfileEditor(editor, data) {
+    editor.appendChild(el('p', 'suh-meta', '这里填的资料存在个人主页里，不会改开场表单那份档案；点过「正文同步」以后会写进聊天世界书，作为正文里 User 的当前设定。年龄留空就用开场填的。'));
+    var form = el('form');
+    var grid = el('div', 'suh-grid');
+    var nameInput = DOC.createElement('input');
+    nameInput.type = 'text';
+    nameInput.maxLength = 60;
+    nameInput.value = data.identity.name;
+    var ageInput = DOC.createElement('input');
+    ageInput.type = 'number';
+    ageInput.min = '18';
+    ageInput.max = '120';
+    ageInput.value = data.identity.age || '';
+    var kinksInput = DOC.createElement('textarea');
+    kinksInput.value = data.identity.kinks.join('、');
+    kinksInput.placeholder = '用逗号、顿号或换行分隔';
+    var shapeInput = DOCUMENT_TEXTAREA();
+    shapeInput.value = data.identity.penisShape;
+    shapeInput.placeholder = '用户主动填写的私密资料';
+    var jobInput = DOC.createElement('input');
+    jobInput.type = 'text';
+    jobInput.maxLength = 120;
+    jobInput.value = data.identity.job;
+    var figureInput = DOCUMENT_TEXTAREA();
+    figureInput.value = data.identity.figure;
+    figureInput.placeholder = '身高、体型、肌肉或整体身材特征';
+    var appearanceInput = DOCUMENT_TEXTAREA();
+    appearanceInput.value = data.identity.appearance;
+    appearanceInput.placeholder = '面部特征、气质、发型或整体容貌';
+    var personalityInput = DOCUMENT_TEXTAREA();
+    personalityInput.value = data.identity.personality;
+    personalityInput.placeholder = '性格、行事风格与待人方式';
+    append(grid,
+      field('姓名', nameInput),
+      field('年龄', ageInput),
+      field('职业', jobInput),
+      field('身材', figureInput, true),
+      field('容貌', appearanceInput, true),
+      field('性格', personalityInput, true),
+      field('性癖', kinksInput, true),
+      field('阴茎形状', shapeInput, true)
+    );
+    form.appendChild(grid);
+    var actions = el('div', 'suh-actions');
+    var cancel = el('button', 'suh-btn', '取消');
+    cancel.type = 'button';
+    cancel.addEventListener('click', function () {
+      profileEditing = false;
+      render();
+    });
+    var save = el('button', 'suh-btn primary', busy ? '保存中…' : '保存资料');
+    save.type = 'submit';
+    save.disabled = busy;
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    form.appendChild(actions);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (busy) return;
+      saveIdentity({
+        name: nameInput.value,
+        age: ageInput.value,
+        job: jobInput.value,
+        figure: figureInput.value,
+        appearance: appearanceInput.value,
+        personality: personalityInput.value,
+        kinks: kinksInput.value,
+        penisShape: shapeInput.value
+      });
+    });
+    editor.appendChild(form);
+  }
+
+  function DOCUMENT_TEXTAREA() {
+    var node = DOC.createElement('textarea');
+    node.maxLength = 500;
+    return node;
+  }
+
+  function saveIdentity(input) {
+    if (busy) return;
+    var name = clampText(input.name, 60);
+    // SD 内置：A4 —— 年龄留空就不写（以前会存成 18）；填了才夹在 18–120
+    var ageText = text(input.age);
+    var age = ageText ? Math.max(18, Math.min(120, Math.round(Number(ageText) || 0))) : 0;
+    var job = clampText(input.job, 120);
+    if (!name) {
+      setStatus('姓名不能为空', 'error');
+      return;
+    }
+    // SD 内置：A4 —— 开场表单没交（没有 sb 或没 _opened）时不写变量，不然手机会跳过「等待游戏数据」
+    if (!gameOpened(readChatVariables().sb)) {
+      setStatus('开场表单提交以后才能保存资料', 'error');
+      return;
+    }
+    busy = true;
+    setStatus('正在保存用户资料…', 'info');
+    mutateChatVariables(function (vars) {
+      if (!vars || !gameOpened(vars.sb)) return vars;
+      if (!vars.sb.profile || typeof vars.sb.profile !== 'object') vars.sb.profile = {};
+      if (!vars.sb.profile.userHome || typeof vars.sb.profile.userHome !== 'object') {
+        vars.sb.profile.userHome = {};
+      }
+      var home = vars.sb.profile.userHome;
+      home.schemaVersion = SCHEMA;
+      if (!home.identity || typeof home.identity !== 'object') home.identity = {};
+      // SD 内置：A4 —— 姓名/年龄/职业不再改手机的 sb.profile.name_cn / age / job，存进 userHome.identity；
+      // 和开场表单那份一样就不存（以后开场档案改了也跟得上），年龄留空就删掉，回落到开场填的
+      var base = profileBaseIdentity(vars);
+      if (name && name !== base.name) home.identity.name = name;
+      else delete home.identity.name;
+      if (age && age !== base.age) home.identity.age = age;
+      else delete home.identity.age;
+      if (job !== base.job) home.identity.job = job;
+      else delete home.identity.job;
+      home.identity.figure = clampText(input.figure, 500);
+      home.identity.appearance = clampText(input.appearance, 500);
+      home.identity.personality = clampText(input.personality, 500);
+      home.identity.kinks = asList(input.kinks, 20);
+      home.identity.penisShape = clampText(input.penisShape, 500);
+      home.updatedAt = new Date().toISOString();
+      return vars;
+    }).then(function () {
+      busy = false;
+      profileEditing = false;
+      try { eventEmit(STORE_EVENT, { target: 'profile' }); } catch (_) {}
+      setStatus('用户资料已保存', 'ok');
+      render();
+      refreshEntry();
+      syncWorldbook(false, 'auto');   // SD 内置：只更新已有条目，没点过同步就不碰世界书
+    }).catch(function (error) {
+      busy = false;
+      render();
+      setStatus('保存失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    });
+  }
+
+  function renderAssetEditor(data, asset) {
+    var box = el('section', 'suh-section');
+    box.appendChild(el('h3', '', asset ? '编辑资产信息' : '资产来源'));
+    if (!asset) {
+      box.appendChild(el('p', 'suh-meta', '资产只能来自 USER 在正文或手机的购买记录。送给 NPC 的礼物、一日租借、体验、账单和退了款的都不会进入资产；高仿会标出来。'));
+      bodyEl.appendChild(box);
+      return;
+    }
+    var form = el('form');
+    var grid = el('div', 'suh-grid');
+    var nameInput = DOC.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = asset.name;
+    nameInput.maxLength = 120;
+    var category = DOC.createElement('select');
+    Object.keys(CATEGORIES).forEach(function (key) {
+      var option = el('option', '', CATEGORIES[key]);
+      option.value = key;
+      option.selected = asset.category === key;
+      category.appendChild(option);
+    });
+    var valueInput = DOC.createElement('input');
+    valueInput.type = 'number';
+    valueInput.min = '0';
+    valueInput.step = '1';
+    valueInput.value = asset.value || '';
+    var noteInput = DOC.createElement('textarea');
+    noteInput.value = asset.note;
+    noteInput.maxLength = 800;
+    noteInput.placeholder = '型号、地址、配置或来源备注';
+    append(grid,
+      field('资产名称', nameInput),
+      field('分类', category),
+      field('估值', valueInput)
+    );
+    var detailControls = Object.create(null);
+    var detailWrappers = Object.create(null);
+    var detailLabels = Object.create(null);
+    DETAIL_FIELDS.forEach(function (key) {
+      var control = key === 'exterior' || key === 'interior'
+        ? DOC.createElement('textarea')
+        : DOC.createElement('input');
+      if (control.tagName === 'INPUT') control.type = 'text';
+      control.maxLength = key === 'exterior' ? 800 : (key === 'interior' ? 1200 : 500);
+      control.value = asset[key] || '';
+      var wrapper = field('资产详情', control, key === 'exterior' || key === 'interior');
+      wrapper.dataset.assetKey = key;
+      detailControls[key] = control;
+      detailWrappers[key] = wrapper;
+      detailLabels[key] = wrapper.querySelector('label');
+      grid.appendChild(wrapper);
+    });
+    var noteWrapper = field('备注', noteInput, true);
+    grid.appendChild(noteWrapper);
+    function applyAssetFieldVisibility() {
+      var fields = assetFieldConfig(normalizeCategory(category.value, nameInput.value));
+      var byKey = Object.create(null);
+      fields.forEach(function (entry) { byKey[entry.key] = entry; });
+      DETAIL_FIELDS.forEach(function (key) {
+        detailWrappers[key].hidden = !byKey[key];
+      });
+      fields.forEach(function (config) {
+        grid.insertBefore(detailWrappers[config.key], noteWrapper);
+        detailLabels[config.key].textContent = config.label;
+        detailControls[config.key].placeholder = config.placeholder;
+      });
+    }
+    category.addEventListener('change', applyAssetFieldVisibility);
+    applyAssetFieldVisibility();
+    form.appendChild(grid);
+    var actions = el('div', 'suh-actions');
+    var cancel = el('button', 'suh-btn', '取消');
+    cancel.type = 'button';
+    cancel.addEventListener('click', function () {
+      assetEditingId = '';
+      render();
+    });
+    var save = el('button', 'suh-btn primary', '保存资产');
+    save.type = 'submit';
+    save.disabled = busy;
+    actions.appendChild(cancel);
+    actions.appendChild(save);
+    form.appendChild(actions);
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      if (busy) return;
+      var patch = {
+        name: nameInput.value,
+        category: category.value,
+        value: valueInput.value,
+        note: noteInput.value
+      };
+      var allowed = assetFieldConfig(normalizeCategory(category.value, nameInput.value))
+        .map(function (entry) { return entry.key; });
+      DETAIL_FIELDS.forEach(function (key) {
+        patch[key] = allowed.indexOf(key) !== -1 && detailControls[key]
+          ? detailControls[key].value
+          : '';
+      });
+      saveAsset(asset.id, patch);
+    });
+    box.appendChild(form);
+    bodyEl.appendChild(box);
+  }
+
+  function renderAssetCard(asset) {
+    var card = el('article', 'suh-asset');
+    var head = el('div', 'suh-asset-head');
+    head.appendChild(el('b', '', asset.name));
+    if (asset.fake) head.appendChild(el('span', 'suh-badge', '高仿'));   // SD 内置：高仿照算资产，挂个角标
+    card.appendChild(head);
+    if (Number(asset.value) > 0) {
+      card.appendChild(el('div', 'suh-asset-value', formatMoney(asset.value)));
+    }
+    var meta = [
+      asset.acquiredGameDay > 0 ? '第 ' + asset.acquiredGameDay + ' 天' : '',
+      asset.acquiredTime,
+      asset.source
+    ].filter(Boolean).join(' · ');
+    if (meta) card.appendChild(el('div', 'suh-meta', meta));
+    var detailRows = assetDetailEntries(asset);
+    if (detailRows.length) {
+      var details = el('div', 'suh-asset-details');
+      detailRows.forEach(function (row) {
+        var line = el('div', 'suh-asset-detail');
+        line.appendChild(el('span', '', row.label));
+        line.appendChild(el('span', '', row.value));
+        details.appendChild(line);
+      });
+      card.appendChild(details);
+    }
+    if (asset.note) card.appendChild(el('div', 'suh-note', asset.note));
+    var actions = el('div', 'suh-asset-actions');
+    var edit = el('button', '', '编辑');
+    edit.type = 'button';
+    edit.addEventListener('click', function () {
+      assetEditingId = asset.id;
+      render();
+    });
+    var hide = el('button', '', asset.hidden ? '恢复' : '删除');
+    hide.type = 'button';
+    hide.addEventListener('click', function () {
+      toggleAssetHidden(asset.id, !asset.hidden);
+    });
+    actions.appendChild(edit);
+    actions.appendChild(hide);
+    card.appendChild(actions);
+    return card;
+  }
+
+  function renderAssetGroup(category, assets) {
+    var details = DOC.createElement('details');
+    details.className = 'suh-asset-group';
+    details.dataset.category = category;
+    details.open = assetGroupOpen[category] !== false;
+    details.addEventListener('toggle', function () {
+      assetGroupOpen[category] = details.open;
+    });
+
+    var summary = DOC.createElement('summary');
+    summary.appendChild(el('span', 'suh-group-chevron'));
+    summary.appendChild(el('span', '', CATEGORIES[category] || CATEGORIES.other));
+    summary.appendChild(el('span', 'suh-group-count', assets.length + ' 项'));
+    details.appendChild(summary);
+
+    var groupBody = el('div', 'suh-asset-group-body');
+    if (!assets.length) {
+      groupBody.appendChild(el('div', 'suh-group-empty', '该分类暂无物品'));
+    } else {
+      var grid = el('div', 'suh-asset-grid');
+      assets.forEach(function (asset) {
+        if (!asset.hidden) grid.appendChild(renderAssetCard(asset));
+      });
+      if (!grid.children.length) {
+        groupBody.appendChild(el('div', 'suh-group-empty', '该分类暂无物品'));
+      } else {
+        groupBody.appendChild(grid);
+      }
+    }
+    details.appendChild(groupBody);
+    return details;
+  }
+
+  function renderAssets(data) {
+    var owned = ownedAssets(data);
+    var allOwned = allOwnedAssets(data);
+    var editing = allOwned.filter(function (asset) { return asset.id === assetEditingId; })[0] || null;
+    renderAssetEditor(data, editing);
+    var section = el('section', 'suh-section');
+    section.appendChild(el('h3', '', '已购买资产'));
+    var groups = el('div', 'suh-asset-groups');
+    CATEGORY_ORDER.forEach(function (category) {
+      groups.appendChild(renderAssetGroup(category, owned.filter(function (asset) {
+        return asset.category === category && !asset.hidden;
+      })));
+    });
+    section.appendChild(groups);
+
+    var hidden = allOwned.filter(function (asset) { return asset.hidden; });
+    if (hidden.length) {
+      var hiddenBox = el('div', 'suh-hidden-list');
+      hiddenBox.appendChild(el('h3', '', '已删除资产 ' + hidden.length + ' 项'));
+      hidden.forEach(function (asset) {
+        var row = el('div', 'suh-hidden-row');
+        row.appendChild(el('span', '', asset.name + (asset.fake ? '（高仿）' : '') + (Number(asset.value) > 0 ? ' · ' + formatMoney(asset.value) : '')));
+        var restore = el('button', 'suh-btn', '恢复');
+        restore.type = 'button';
+        restore.addEventListener('click', function () { toggleAssetHidden(asset.id, false); });
+        row.appendChild(restore);
+        hiddenBox.appendChild(row);
+      });
+      section.appendChild(hiddenBox);
+    }
+    bodyEl.appendChild(section);
+  }
+
+  function saveAsset(id, patch) {
+    if (busy) return;
+    if (!text(patch.name)) {
+      setStatus('资产名称不能为空', 'error');
+      return;
+    }
+    busy = true;
+    setStatus('正在保存资产信息…', 'info');
+    mutateChatVariables(function (vars) {
+      var list = vars && vars.sb && vars.sb.profile && vars.sb.profile.userHome &&
+        Array.isArray(vars.sb.profile.userHome.assets) ? vars.sb.profile.userHome.assets : [];
+      for (var i = 0; i < list.length; i++) {
+        if (!list[i] || text(list[i].id) !== id) continue;
+        list[i].name = clampText(patch.name, 120);
+        list[i].category = normalizeCategory(patch.category, patch.name);
+        list[i].value = Math.max(0, Number(patch.value) || 0);
+        list[i].valueSource = 'manual';
+        var manualFields = [];
+        DETAIL_FIELDS.forEach(function (key) {
+          var max = key === 'exterior' ? 800 : (key === 'interior' ? 1200 : 500);
+          var detail = clampText(patch[key], max);
+          list[i][key] = detail;
+          if (detail) manualFields.push(key);
+        });
+        list[i].manualFields = manualFields;
+        list[i].detailsSource = manualFields.length ? 'manual' : 'auto';
+        list[i].detailsUpdatedAt = new Date().toISOString();
+        list[i].note = clampText(patch.note, 800);
+        list[i].updatedAt = new Date().toISOString();
+        break;
+      }
+      return vars;
+    }).then(function () {
+      busy = false;
+      assetEditingId = '';
+      setStatus('资产信息已保存', 'ok');
+      render();
+      syncWorldbook(false, 'auto');
+    }).catch(function (error) {
+      busy = false;
+      render();
+      setStatus('保存资产失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    });
+  }
+
+  function toggleAssetHidden(id, hidden) {
+    if (busy) return;
+    busy = true;
+    mutateChatVariables(function (vars) {
+      var list = vars && vars.sb && vars.sb.profile && vars.sb.profile.userHome &&
+        Array.isArray(vars.sb.profile.userHome.assets) ? vars.sb.profile.userHome.assets : [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && text(list[i].id) === id) list[i].hidden = !!hidden;
+      }
+      return vars;
+    }).then(function () {
+      busy = false;
+      render();
+      setStatus(hidden ? '资产已删除，不再计入估值和正文档案' : '资产已恢复', 'ok');
+      syncWorldbook(false, 'auto');
+    }).catch(function (error) {
+      busy = false;
+      render();
+      setStatus('资产删除状态更新失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    });
+  }
+
+  function renderSync(data) {
+    var section = el('section', 'suh-section');
+    section.appendChild(el('h3', '', '正文读取状态'));
+    var box = el('div', 'suh-sync-box');
+    box.appendChild(el('div', 'suh-meta', '档案条目：' + text(data.worldbook.entryName, '用户主页-' + data.identity.name)));
+    box.appendChild(el('div', 'suh-meta', '最近同步：' + (formatLocalDateTime(data.worldbook.lastSyncedAt) || '尚未同步') + (data.worldbook.lastSyncedAt ? '（本地时间）' : '')));
+    // SD 内置：A1 —— 写明没点过就不碰世界书，点过以后只自动更新这一条
+    box.appendChild(el('div', 'suh-meta', '自动更新：' + (data.worldbookConsent
+      ? '已开启（资料或资产有变化时，只更新这一条已有条目，不会新建）'
+      : (autoWorldbookAllowed(data) ? '旧版写过条目，有变化时只更新那一条' : '未开启（点一次下面的按钮才会写世界书）'))));
+    box.appendChild(el('div', 'suh-sync-notice', '第一次点下面的按钮，会给当前聊天绑定一本聊天世界书（已经有就用现成的），写入一条常驻的用户主页档案：个人资料和未删除的资产。没点过就不会动任何世界书。已删除资产不会进入档案。'));
+    box.appendChild(el('div', 'suh-code', '同步时会读取聊天上下文，补全房产、车辆、公司和奢侈品详情；手动填写的字段不会被覆盖。'));
+    var actions = el('div', 'suh-actions');
+    var syncing = worldbookTask.isRunning() || profileSyncRunning;
+    var sync = el('button', 'suh-btn primary', syncing ? '同步中…' : '同步并写入世界书');
+    sync.type = 'button';
+    sync.disabled = syncing;
+    sync.addEventListener('click', function () { syncProfileToContext(true); });
+    actions.appendChild(sync);
+    box.appendChild(actions);
+    section.appendChild(box);
+    bodyEl.appendChild(section);
+  }
+
+  // SD 内置：A5 —— 主页挂在手机面板外面，配色从 #sbnyc-panel 抄过来（手机夜间时面板上有 .night）
+  var THEME_VARS = ['ink', 'ink-sub', 'ink-faint', 'paper', 'paper-2', 'paper-3', 'line', 'gold', 'red', 'green'];
+
+  function phonePanel() {
+    return DOC.getElementById('sbnyc-panel');
+  }
+
+  function applyPhoneTheme() {
+    if (!root) return;
+    var panel = phonePanel();
+    var night = !!(panel && panel.classList.contains('night'));
+    root.classList.toggle('suh-night', night);
+    var computed = null;
+    try { computed = panel && HOST.getComputedStyle ? HOST.getComputedStyle(panel) : null; } catch (_) {}
+    THEME_VARS.forEach(function (name) {
+      var value = '';
+      try { value = computed ? text(computed.getPropertyValue('--' + name)) : ''; } catch (_) {}
+      if (value) root.style.setProperty('--suh-' + name, value);
+      else root.style.removeProperty('--suh-' + name);
+    });
+  }
+
+  function render() {
+    if (!root || !bodyEl) return;
+    applyPhoneTheme();
+    var data = readHomeData(readChatVariables());
+    renderSummary(data);
+    renderIdentity(data);
+    renderTabs();
+    bodyEl.replaceChildren();
+    if (activeTab === 'assets') renderAssets(data);
+    else renderSync(data);
+  }
+
+  // SD 内置：A5 —— 入口走手机的主屏插槽 SugarOS.onHomeSlot：手机每次画主屏，同一拍里调 fillHomeSlot(插槽)，
+  // 入口不会被重画闪掉，也不用扒「遥控」按钮、等 60ms。手机太老没有 onHomeSlot 就不放入口。
+  function phoneApi() {
+    try { return HOST.SugarOS || null; } catch (_) { return null; }
+  }
+
+  function attachHomeSlot() {
+    if (destroyed) return;
+    var os = phoneApi();
+    if (homeSlotHandle && homeSlotOwner === os) return;
+    if (homeSlotHandle) {
+      try { homeSlotHandle.stop(); } catch (_) {}
+      homeSlotHandle = null;
+      homeSlotOwner = null;
+    }
+    if (!os || typeof os.onHomeSlot !== 'function') return;
+    try {
+      homeSlotOwner = os;
+      homeSlotHandle = os.onHomeSlot(fillHomeSlot) || null;
+    } catch (_) {
+      homeSlotHandle = null;
+      homeSlotOwner = null;
+    }
+  }
+
+  function detachHomeSlot() {
+    if (homeSlotHandle) {
+      try { homeSlotHandle.stop(); } catch (_) {}
+    }
+    homeSlotHandle = null;
+    homeSlotOwner = null;
+  }
+
+  function entryData() {
+    var vars = readChatVariables();
+    var sb = vars && vars.sb && typeof vars.sb === 'object' ? vars.sb : {};
+    var home = sb.profile && sb.profile.userHome && typeof sb.profile.userHome === 'object' ? sb.profile.userHome : {};
+    return {
+      identity: userIdentity(vars),
+      avatar: home.avatar && typeof home.avatar === 'object' ? home.avatar : {}
+    };
+  }
+
+  function fillHomeSlot(slot) {
+    if (destroyed || !slot) return;
+    var existing = DOC.getElementById(ENTRY_ID);
+    if (existing && existing.parentNode !== slot) existing.remove();
+    if (existing && existing.parentNode === slot) {
+      var existingButton = existing.querySelector('.suh-phone-btn');
+      if (existingButton) renderPhoneEntryButton(existingButton, entryData());
+      return;
+    }
+    var row = el('div');
+    row.id = ENTRY_ID;
+    var button = el('button', 'suh-phone-btn');
+    button.type = 'button';
+    renderPhoneEntryButton(button, entryData());
+    button.addEventListener('click', function () { openProfile(); });
+    row.appendChild(button);
+    slot.appendChild(row);
+  }
+
+  // 资料/头像改了：手机没重画，就地把入口里的字和头像换掉
+  function refreshEntry() {
+    if (destroyed) return;
+    var existing = DOC.getElementById(ENTRY_ID);
+    var button = existing && existing.querySelector('.suh-phone-btn');
+    if (button) renderPhoneEntryButton(button, entryData());
+  }
+
+  function renderPhoneEntryButton(button, data) {
+    if (!button) return;
+    var identity = data.identity;
+    button.replaceChildren();
+    button.setAttribute('aria-label', '打开' + text(identity.name, 'User') + '的个人主页');
+
+    var avatar = el('span', 'suh-phone-avatar');
+    var avatarImage = DOC.createElement('img');
+    avatarImage.alt = '';
+    avatarImage.hidden = true;
+    avatar.appendChild(avatarImage);
+    avatar.appendChild(el('span', '', text(identity.name, 'U').slice(0, 1)));
+    applyAvatarImage(avatarImage, data.avatar);
+
+    var copy = el('span', 'suh-phone-copy');
+    copy.appendChild(el('strong', 'suh-phone-name', text(identity.name, 'User')));
+    var facts = [
+      identity.age ? identity.age + ' 岁' : '',
+      identity.job
+    ].filter(Boolean).join(' · ');
+    copy.appendChild(el('span', 'suh-phone-meta', facts || '个人主页 · 资产与档案'));
+
+    append(button,
+      avatar,
+      copy,
+      el('span', 'suh-phone-enter', '个人主页 ›')
+    );
+  }
+
+  function scheduleAssetSync(showStatus) {
+    if (destroyed) return;
+    if (assetSyncTimer) HOST.clearTimeout(assetSyncTimer);
+    assetSyncTimer = HOST.setTimeout(function () {
+      assetSyncTimer = null;
+      syncPurchasedAssets(showStatus);
+    }, 80);
+  }
+
+  function openProfile() {
+    if (destroyed) return;
+    createShell();
+    lastFocus = DOC.activeElement;
+    open = true;
+    root.hidden = false;
+    DOC.body.classList.add('suh-modal-open');
+    activeTab = 'assets';
+    profileEditing = false;
+    assetEditingId = '';
+    render();
+    scheduleAssetSync(false);
+    HOST.setTimeout(function () {
+      var close = root && root.querySelector('.suh-close');
+      if (close) {
+        try { close.focus({ preventScroll: true }); } catch (_) { try { close.focus(); } catch (__) {} }
+      }
+    }, 0);
+  }
+
+  function closeProfile() {
+    if (!open) return;
+    closeAvatarDialog();
+    open = false;
+    if (root) root.hidden = true;
+    try { DOC.body.classList.remove('suh-modal-open'); } catch (_) {}
+    if (lastFocus && lastFocus.isConnected) {
+      try { lastFocus.focus({ preventScroll: true }); } catch (_) { try { lastFocus.focus(); } catch (__) {} }
+    }
+    lastFocus = null;
+  }
+
+  function refresh() {
+    if (open) render();
+    refreshEntry();
+  }
+
+  function onKeydown(event) {
+    if (!open) return;
+    var submodal = avatarDialog();
+    if (event.key === 'Escape' && submodal && !submodal.hidden) {
+      event.preventDefault();
+      closeAvatarDialog();
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeProfile();
+      return;
+    }
+    if (event.key !== 'Tab' || !root) return;
+    var focusable = root.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && DOC.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && DOC.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  // SD 内置：reason 'pagehide' = 自己这个 iframe 在收摊（脚本被关、手机重载）；
+  // 别人调 api.destroy()（多半是独立版加载时把同 key 的旧实例关掉）时，下一拍看看接手的是不是独立版，是就重新起来、再关掉它。
+  function destroy(reason) {
+    if (destroyed) return;
+    destroyed = true;
+    detachHomeSlot();
+    if (reason !== 'pagehide') {
+      try {
+        window.setTimeout(function () {
+          var current = null;
+          try { current = HOST[RUNTIME_KEY]; } catch (_) {}
+          if (current && current !== api && !current.builtin) suhMain();
+        }, 0);
+      } catch (_) {}
+    }
+    if (assetSyncTimer) {
+      try { HOST.clearTimeout(assetSyncTimer); } catch (_) {}
+      assetSyncTimer = null;
+    }
+    stopAll();
+    releaseAvatarObjectUrl();
+    releaseAvatarPreviewUrl();
+    try { DOC.body.classList.remove('suh-modal-open'); } catch (_) {}
+    var entry = DOC.getElementById(ENTRY_ID);
+    if (entry) entry.remove();
+    if (root) root.remove();
+    var style = DOC.getElementById(STYLE_ID);
+    if (style) style.remove();
+    try { if (HOST[RUNTIME_KEY] === api) delete HOST[RUNTIME_KEY]; } catch (_) {}
+    try { if (window.SugarUserHome === api) delete window.SugarUserHome; } catch (_) {}
+    try { if (HOST.SugarUserHome === api) delete HOST.SugarUserHome; } catch (_) {}
+  }
+
+  function bindTavernEvent(eventName, listener) {
+    if (!eventName || typeof eventOn !== 'function') return;
+    try {
+      var handle = eventOn(eventName, listener);
+      if (handle && typeof handle.stop === 'function') disposers.push(function () { handle.stop(); });
+    } catch (_) {}
+  }
+
+  function boot() {
+    if (!DOC.body) {
+      HOST.setTimeout(boot, 120);
+      return;
+    }
+    installStyle();
+    createShell();
+    listen(DOC, 'keydown', onKeydown, false);
+    listen(HOST, OPEN_EVENT, function (event) {
+      openProfile(event && event.detail ? event.detail.name : '');
+    });
+    listen(window, 'pagehide', onPageHide);
+    if (window !== HOST) listen(HOST, 'pagehide', onPageHide);
+    // SD 内置：手机画完一页（含等待屏）时确认插槽挂上了——主页脚本比手机先加载、或手机重载换了 SugarOS，都靠这里补挂
+    bindTavernEvent('sb_phone_rendered', function () {
+      attachHomeSlot();
+    });
+    bindTavernEvent('sb_updated', function () {
+      scheduleAssetSync(false);
+      if (open) render();
+    });
+    try {
+      var events = window.tavern_events || {};
+      [
+        events.APP_READY,
+        events.MESSAGE_SENT,
+        events.MESSAGE_RECEIVED,
+        events.CHARACTER_MESSAGE_RENDERED,
+        events.GENERATION_ENDED
+      ].filter(Boolean).forEach(function (eventName) {
+        bindTavernEvent(eventName, function () {
+          scheduleAssetSync(false);
+          if (open) render();
+        });
+      });
+    } catch (_) {}
+    try {
+      var chatEvent = window.tavern_events && window.tavern_events.CHAT_CHANGED;
+      if (chatEvent) {
+        bindTavernEvent(chatEvent, function () {
+          closeProfile();
+          autoWorldbookSkipHash = '';
+          releaseAvatarObjectUrl();
+          refreshEntry();
+          scheduleAssetSync(false);
+        });
+      }
+    } catch (_) {}
+    attachHomeSlot();
+    scheduleAssetSync(false);
+  }
+
+  function onPageHide() {
+    destroy('pagehide');
+  }
+
+  var api = {
+    version: VERSION,
+    schema: SCHEMA,
+    open: openProfile,
+    close: closeProfile,
+    refresh: refresh,
+    sync: function () { return syncProfileToContext(true); },
+    enrichAssets: function () { return enrichAssetsFromContext(true); },
+    refreshAssets: function () { return syncPurchasedAssets(true); },
+    builtin: BUILTIN,   // SD 内置：独立版看到这个也只会照常 destroy；内置版靠它认出谁是谁
+    destroy: function () { destroy('external'); }
+  };
+  HOST[RUNTIME_KEY] = api;
+  try { HOST.SugarUserHome = api; } catch (_) {}
+  try { window.SugarUserHome = api; } catch (_) {}
+  boot();
 })();

@@ -873,6 +873,7 @@ function creditWallet(sb, dir, amount, counterparty, channel, pass) {
     direction: dir, amount: amount,
     counterparty: counterparty || '', channel: channel || '', note: '',
     time: nowTime(), gameDay: (sb.game && sb.game.day) || 1,
+    src: pass || '',   // 'm楼层号'＝正文记的账：重roll 回退时靠它找回原记录标 reversed（10-28，个人主页要分清退了款的）
   });
   if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
   if (dir === '-') payBillIfMatch(w, counterparty);   // 正文里付了房租/还了卡 → 账单倒计时重置下期，不然永远催缴
@@ -3247,7 +3248,14 @@ async function onMainMessage(message_id) {
             w.transactions.push({ direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime() });
             if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
             if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
-            w.allTransactions.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime(), gameDay: (v.sb.game && v.sb.game.day) || 1 });
+            // 原来那笔标上 reversed，退款记一笔 reverses 指回去（10-28）：流水页和个人主页才分得清「买了又退了」
+            var orig = null, msrc = 'm' + msgIdStr;
+            for (var oi = w.allTransactions.length - 1; oi >= 0; oi--) {
+              var ot = w.allTransactions[oi];
+              if (ot && ot.src === msrc && !ot.reversed && ot.direction === eff.dir && ot.amount === eff.amount) { orig = ot; break; }
+            }
+            if (orig) orig.reversed = true;
+            w.allTransactions.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime(), gameDay: (v.sb.game && v.sb.game.day) || 1, reverses: orig ? orig.id : '' });
             if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
           }
           if (w && Array.isArray(w._dedup)) {
