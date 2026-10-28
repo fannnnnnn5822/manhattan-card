@@ -2965,6 +2965,7 @@ async function maybeUnlockAnonGroup() {
   var sb = vars && vars.sb;
   if (!sb || sb._anonInvited) return;
   if (!sb.npcs || !Object.keys(sb.npcs).length) return;        // 手机还没起来（开场表单还没交）就先不拉人
+  if (autoAllOff(sb)) return;                                   // 🎚 自动来消息三路全关：先压着，开回任意一路再拉
   var floors = 0;
   try {
     var ctx = (typeof SillyTavern !== 'undefined' && SillyTavern.getContext) ? SillyTavern.getContext() : null;
@@ -3003,6 +3004,125 @@ async function maybeUnlockAnonGroup() {
 var AUTO_STRANGER_CHANCE = 0.30;
 var AUTO_STRANGER_MINGAP = 3;
 var AUTO_STRANGER_MAXPENDING = 4;
+// ── 🎚 自动来消息的三个开关（2026-10-28，凌keke 老师的《私信生成器控制版》做进手机 ⚙ 设置）──
+// 以前「陌生人私信」和「群里自己聊」共用上面那一个名额，控制版一关陌生人、群也跟着哑了（凌老师报的联动）。
+// 现在三路各管各：dm＝陌生人来私信、group＝群里自己聊、forum＝正文写到发招聘帖后来应聘。设置存 sb.autoCtl，跟着存档走。
+// 档位：off 关 / quiet 冷清 / native 原生 / busy 活跃 / turns 每 N 轮正文 / minutes 每 N 分钟（forum 只有前四档）。
+// 两路都是「原生」时原样走共用名额那套，一个数不改；只要有一路不是原生，两路各掷各的，一拍最多来一条。
+var AUTO_MODES = ['off', 'quiet', 'native', 'busy', 'turns', 'minutes'];
+var AUTO_RATE = {                       // [命中率, 两次之间最少隔几轮, 压着几个没读的陌生人就先停]
+  dm: { quiet: [0.15, 5, 2], native: [AUTO_STRANGER_CHANCE, AUTO_STRANGER_MINGAP, AUTO_STRANGER_MAXPENDING], busy: [0.55, 2, 6] },
+  group: { quiet: [0.06, 6], native: [0.15, 3], busy: [0.35, 2] }   // 原生 0.15＝原来共用名额里群分到的那一半
+};
+var AUTO_TIMED_MAXPENDING = 6;          // 按轮数/按分钟：没读的陌生人攒到这么多就先跳过（不读还一直塞＝白烧 API）
+var FORUM_N = { quiet: [1, 2], native: [3, 5], busy: [5, 7] };
+function autoInt(x, lo, hi, dflt) { var n = Math.round(Number(x)); return n >= lo ? Math.min(hi, n) : dflt; }
+function autoChan(raw, timed) {
+  var s = (raw && typeof raw === 'object') ? raw : {};
+  var m = AUTO_MODES.indexOf(s.mode) !== -1 ? s.mode : 'native';
+  if (!timed && (m === 'turns' || m === 'minutes')) m = 'native';
+  return { mode: m, n: autoInt(s.n, 1, 50, 5), min: autoInt(s.min, 1, 360, 30), due: Number(s.due) || 0 };
+}
+// 凌老师控制版 v1.1.0 存的是 sb.dmAutoControl（一个开关管全部）：没有新设置时照它翻过来，按轮/按分钟只管陌生人，群和论坛回原生
+function autoCtlFromLegacy(o) {
+  var m = o.mode === 'interval' ? 'interval_turns' : o.mode;
+  if (m === 'off') return { dm: { mode: 'off' }, group: { mode: 'off' }, forum: { mode: 'off' } };
+  if (m === 'interval_turns') return { dm: { mode: 'turns', n: o.interval } };
+  if (m === 'interval_minutes') return { dm: { mode: 'minutes', min: o.minutes, due: o.nextDueAt } };
+  return {};
+}
+function autoCtlOf(sb) {
+  var c = sb && sb.autoCtl;
+  if (!c && sb && sb.dmAutoControl && typeof sb.dmAutoControl === 'object') c = autoCtlFromLegacy(sb.dmAutoControl);
+  c = c || {};
+  return { dm: autoChan(c.dm, true), group: autoChan(c.group, true), forum: autoChan(c.forum, false) };
+}
+// 三路全关＝手机完全不自己找人：50 楼的匿名群邀请、Akuma 的跨卡彩蛋这种一次性的也先压着，开回任意一路再来
+function autoAllOff(sb) {
+  var c = autoCtlOf(sb);
+  return c.dm.mode === 'off' && c.group.mode === 'off' && c.forum.mode === 'off';
+}
+// 这一路这一拍来不来（按分钟的不在这里算，归 autoMinuteTick）
+function autoRoll(kind, ch, since) {
+  if (ch.mode === 'off' || ch.mode === 'minutes') return false;
+  if (ch.mode === 'turns') return since >= ch.n;
+  var r = AUTO_RATE[kind][ch.mode];
+  return since >= r[1] && Math.random() < r[0];
+}
+function autoCap(ch) {
+  if (ch.mode === 'turns' || ch.mode === 'minutes') return AUTO_TIMED_MAXPENDING;
+  return (AUTO_RATE.dm[ch.mode] || AUTO_RATE.dm.native)[2];
+}
+function countUnreadStrangers(sb) {
+  var n = 0, npcs = (sb && sb.npcs) || {};
+  for (var k in npcs) {
+    if (npcs.hasOwnProperty(k) && npcs[k] && !npcs[k].persistent && !npcs[k].isGroup && (npcs[k].unread || 0) > 0) n++;
+  }
+  return n;
+}
+var STRANGER_REASON = '手机忽然进来一条陌生人的新私信：只生成 1 个全新陌生SB的开场，不要让任何已有联系人出现、不要续接任何已有对话';
+function emitStranger(why) {
+  try {
+    eventEmit('sb_request_dm', { reason: STRANGER_REASON, n: '1' });
+    console.log('[SD-S v4] auto-stranger fired (' + why + ')');
+  } catch (e) {}
+}
+function emitGroupAmbience(sb, gName, why) {
+  var ag = (sb.npcs && sb.npcs[gName]) || {};
+  try {
+    eventEmit('sb_request_dm', {
+      group: gName,
+      reason: ag.anon
+        ? 'User 这会儿没在群里说话，只是手机开着——大厅里的人自顾自地在聊。写一轮背景氛围：各聊各的、互相接茬，不必围着 User 转'
+        : 'User 这会儿没在群里说话，手机就摆在那儿——群里的人自己聊起来了。写一轮背景氛围：成员之间互相说话，可以聊到 User 但他没在场发言；每个人只聊自己知道的事',
+    });   // 行数不用传：群轮几个人说、写几行由生成器那边的 plan 定
+    console.log('[SD-S v4] auto-slot spent on group ambience: ' + gName + ' (' + why + ')');
+  } catch (e) {}
+}
+// 按分钟：脚本自己的 iframe 里每 30 秒看一眼（页面开着才走，脚本关掉 iframe 一销毁计时器就没了）。
+// 到点但被挡（没读的陌生人攒满 / 没有能自己聊的群）＝这一拍跳过，重新等一整段；正在生成私信就下一眼再说。
+var AUTO_TICK_MS = 30000;
+var _autoTickBusy = false;
+async function autoMinuteTick() {
+  if (_autoTickBusy || _busy || _pending.length) return;
+  _autoTickBusy = true;
+  try {
+    var sb0 = (getVariables({ type: 'chat' }) || {}).sb;
+    if (!sb0 || !sb0.npcs || !Object.keys(sb0.npcs).length) return;   // 手机还没起来
+    var c0 = autoCtlOf(sb0), now = Date.now(), plan = [];
+    ['dm', 'group'].forEach(function (k) {
+      var ch = c0[k];
+      if (ch.mode !== 'minutes') return;
+      if (!ch.due || ch.due > now + ch.min * 60000) plan.push({ k: k, fire: false });   // 没排过 / 改短了间隔：从现在起算
+      else if (now >= ch.due) plan.push({ k: k, fire: true });
+    });
+    if (!plan.length) return;
+    var fire = '', gPick = '';
+    for (var i = 0; i < plan.length && !fire; i++) {
+      if (!plan[i].fire) continue;
+      if (plan[i].k === 'dm' && countUnreadStrangers(sb0) < AUTO_TIMED_MAXPENDING) fire = 'dm';
+      if (plan[i].k === 'group') { gPick = pickAmbientGroup(sb0, null) || ''; if (gPick) fire = 'group'; }
+    }
+    await updateVariablesWith(function (v) {
+      if (!v.sb) return v;
+      var c = autoCtlOf(v.sb);
+      for (var j = 0; j < plan.length; j++) {
+        var k = plan[j].k;
+        // 一拍只来一条：另一路到点了也不动它的钟，下一眼接着来
+        if (plan[j].fire && fire && fire !== k) continue;
+        c[k].due = now + c[k].min * 60000;
+      }
+      v.sb.autoCtl = c;
+      return v;
+    }, { type: 'chat' });
+    if (fire === 'dm') emitStranger('every ' + c0.dm.min + ' min');
+    else if (fire === 'group') emitGroupAmbience(sb0, gPick, 'every ' + c0.group.min + ' min');
+  } catch (e) {
+    console.warn('[SD-S v4] auto minute tick failed', e);
+  } finally {
+    _autoTickBusy = false;
+  }
+}
 // 👥 这一次的自动名额该不该给群、给哪个群（纯函数，离线可测）。
 // 合格＝ isGroup + 成员≥2 + **当前一条未读都没有**（有未读说明玩家还没读，再塞就是往 99+ 上堆、白烧 API；
 // 免打扰的群照样合格，它只是不吵，未读数是真的）。多个合格的挑最久没动静的那个。
@@ -3035,42 +3155,42 @@ async function maybeAutoStranger() {
   }
   if (!started) return;
   var auto = sb._auto || { turns: 0, last: -99 };
-  var turns = (auto.turns || 0) + 1;
-  var lastFire = (auto.last != null) ? auto.last : -99;
-  var hit = (turns - lastFire) >= AUTO_STRANGER_MINGAP && Math.random() < AUTO_STRANGER_CHANCE;
-  // 名额归谁：先掷一把问群要不要（一半一半）；陌生人那边被"压着一堆没读的陌生人"卡住时，
-  // 只要有合格的群就整个转给群——总调用量一点没变，只是这一次花在群上。
-  var gPick = '';
-  if (hit) {
-    gPick = pickAmbientGroup(sb, Math.random()) || '';
-    if (!gPick && unreadStrangers >= AUTO_STRANGER_MAXPENDING) gPick = pickAmbientGroup(sb, null) || '';
-    if (!gPick && unreadStrangers >= AUTO_STRANGER_MAXPENDING) hit = false;   // 陌生人被卡、又没群可给 → 这拍作废
+  var turns = (Number(auto.turns) || 0) + 1;
+  // 凌老师控制版 v1.1.0 往 last 里塞过字符串 '__sdc_deferred__' 来压住原生：减出来是 NaN，卸了它原生陌生人也永远不来——不是数字一律当没来过
+  var lastFire = (typeof auto.last === 'number') ? auto.last : -99;
+  var lastG = (typeof auto.lastG === 'number') ? auto.lastG : -99;
+  var ctl = autoCtlOf(sb);
+  var hit = false, gPick = '', gHit = false;
+  if (ctl.dm.mode === 'native' && ctl.group.mode === 'native') {
+    hit = (turns - lastFire) >= AUTO_STRANGER_MINGAP && Math.random() < AUTO_STRANGER_CHANCE;
+    // 名额归谁：先掷一把问群要不要（一半一半）；陌生人那边被"压着一堆没读的陌生人"卡住时，
+    // 只要有合格的群就整个转给群——总调用量一点没变，只是这一次花在群上。
+    if (hit) {
+      gPick = pickAmbientGroup(sb, Math.random()) || '';
+      if (!gPick && unreadStrangers >= AUTO_STRANGER_MAXPENDING) gPick = pickAmbientGroup(sb, null) || '';
+      if (!gPick && unreadStrangers >= AUTO_STRANGER_MAXPENDING) hit = false;   // 陌生人被卡、又没群可给 → 这拍作废
+    }
+  } else {
+    // 🎚 两路各掷各的（陌生人记 last，群记 lastG）；同一拍都中了只放一条，没放的那路不记账，下一拍接着排
+    var sHit = autoRoll('dm', ctl.dm, turns - lastFire) && unreadStrangers < autoCap(ctl.dm);
+    var gCand = pickAmbientGroup(sb, null) || '';
+    gHit = !!gCand && autoRoll('group', ctl.group, turns - lastG);
+    if (sHit && gHit) { if (Math.random() < 0.5) sHit = false; else gHit = false; }
+    if (gHit) gPick = gCand;
+    hit = sHit || gHit;
   }
   await updateVariablesWith(function (v) {
     if (!v.sb) return v;
     if (!v.sb._auto) v.sb._auto = { turns: 0, last: -99 };
     v.sb._auto.turns = turns;
-    if (hit) v.sb._auto.last = turns;   // 群氛围轮和陌生人共用同一个节流
+    if (typeof v.sb._auto.last !== 'number') v.sb._auto.last = -99;
+    // 两路原生时 gHit 永远是 false：群氛围轮和陌生人共用 last 这一个节流，和以前一样
+    if (hit) { if (gHit) v.sb._auto.lastG = turns; else v.sb._auto.last = turns; }
     return v;
   }, { type: 'chat' });
   if (!hit) return;
-  if (gPick) {
-    var ag = sb.npcs[gPick] || {};
-    try {
-      eventEmit('sb_request_dm', {
-        group: gPick,
-        reason: ag.anon
-          ? 'User 这会儿没在群里说话，只是手机开着——大厅里的人自顾自地在聊。写一轮背景氛围：各聊各的、互相接茬，不必围着 User 转'
-          : 'User 这会儿没在群里说话，手机就摆在那儿——群里的人自己聊起来了。写一轮背景氛围：成员之间互相说话，可以聊到 User 但他没在场发言；每个人只聊自己知道的事',
-      });   // 行数不用传：群轮几个人说、写几行由生成器那边的 plan 定
-      console.log('[SD-S v4] auto-slot spent on group ambience: ' + gPick + ' (turn ' + turns + ')');
-    } catch (e) {}
-    return;
-  }
-  try {
-    eventEmit('sb_request_dm', { reason: '手机忽然进来一条陌生人的新私信：只生成 1 个全新陌生SB的开场，不要让任何已有联系人出现、不要续接任何已有对话', n: '1' });
-    console.log('[SD-S v4] auto-stranger fired (turn ' + turns + ')');
-  } catch (e) {}
+  if (gPick) { emitGroupAmbience(sb, gPick, 'turn ' + turns); return; }
+  emitStranger('turn ' + turns);
 }
 
 // ── 正文 swipe 回退：同一 message_id 第二次触发 = 玩家重roll了，先撤销上一版的钱包/衣橱变动再处理新标记 ──
@@ -3166,9 +3286,11 @@ async function onMainMessage(message_id) {
     // ── 论坛发帖检测（独立于标记处理）：正文描述 User 发帖 → 自动触发一批匹配 XP 的陌生人私信 ──
     if (!isSwipe) {
       try {
-        if (/(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(stripMemo(text))) {   // 10-15 隐形手机记录里的私信提到发帖不算
+        var forumMode = autoCtlOf((getVariables({ type: 'chat' }) || {}).sb).forum.mode;   // 🎚 关＝不来人；冷清 1~2 / 原生 3~5 / 活跃 5~7
+        if (forumMode !== 'off' && /(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(stripMemo(text))) {   // 10-15 隐形手机记录里的私信提到发帖不算
           var forumSnippet = stripMemo(text).slice(0, 800);   // 10-15 不带隐形记录
-          var forumN = 3 + Math.floor(Math.random() * 3);   // 3~5（原 2~4，和按钮侧对齐）
+          var fr = FORUM_N[forumMode] || FORUM_N.native;
+          var forumN = fr[0] + Math.floor(Math.random() * (fr[1] - fr[0] + 1));   // 原生 3~5（原 2~4，和按钮侧对齐）
           eventEmit('sb_request_dm', {
             reason: '论坛发帖后自动响应：User（金主）刚在论坛发了招聘/征人帖，生成 ' + forumN + ' 个全新陌生SB的开场，来私信应聘。' +
               '每个女孩都从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**——她们拿着自己本来的条件来对这条招聘：符合的强调；不符合的照样来，嘴硬、砍价、"你要的我没有但我有别的"；真抽到完美符合的，必然贵、或者带一个帖子里没提的特殊要求。每个人的开场白都要让人看出真读过帖子。' +
@@ -4650,6 +4772,13 @@ try { eventOn(tavern_events.MESSAGE_RECEIVED, onMainMessage); } catch (e) {}    
 try { eventOn(tavern_events.CHAT_COMPLETION_PROMPT_READY, stripMemoFromPrompt); } catch (e) {}   // 10-15 隐形手机记录不进主线 prompt
 try { eventOn(tavern_events.GENERATE_AFTER_COMBINE_PROMPTS, stripMemoFromTextPrompt); } catch (e) {}   // 10-15 文本补全接口同理
 syncInject();
+try { setInterval(autoMinuteTick, AUTO_TICK_MS); } catch (e) {}   // 🎚 「每 N 分钟」那一档的钟
+// 还开着凌老师控制版 v1.1.0 的：它会把这份生成器拉去打补丁再跑，开关就成了两层——提醒一次换回卡自带的
+try {
+  if (typeof __sdcNativeAuto === 'function') setTimeout(function () {
+    try { if (typeof toastr !== 'undefined') toastr.info('「自动来消息」的开关已经做进手机 ⚙ 设置里了（来自凌keke老师）。去脚本库关掉「私信生成器（控制版）」、重新打开卡自带的「一掷千金 · 私信生成器」就好，两层开关一起开会打架。', 'SugarOS', { timeOut: 20000 }); } catch (e) {}
+  }, 5000);
+} catch (e) {}
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
 try { Promise.resolve(migrateGroups()).catch(function (e) { console.warn('[SD-S v4] migrate groups failed', e); }); } catch (e) {}   // 👥 老存档里的群补上 isGroup/members（顶层不是 async，用 .catch 兜）
 
@@ -4665,6 +4794,7 @@ async function xcardScan() {
     var msgCount = ctx.chat.length;
     var v = getVariables({ type: 'chat' });
     if (v && v.sb && v.sb._xcard_fired) return;
+    if (v && v.sb && autoAllOff(v.sb)) return;   // 🎚 自动来消息三路全关：彩蛋先压着，下次开卡再看
     if (msgCount < 100) return;
     var meIdx = Number(ctx.characterId);
     var now = Date.now();

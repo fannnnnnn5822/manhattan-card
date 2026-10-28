@@ -4509,6 +4509,89 @@
     }
   }
 
+  // ── 🎚 自动来消息（来自凌keke老师的二创《私信生成器控制版》）：陌生人私信 / 群里自己聊 / 论坛应聘 三路各管各 ──
+  // 设置存 sb.autoCtl（跟着存档走）；档位的具体数在 dm_generator.js 的 AUTO_RATE / FORUM_N，这里只管画和存。
+  // autoCtlNow 和生成器的 autoCtlOf 是同一套规矩（含凌老师 v1.1.0 旧开关 sb.dmAutoControl 的翻译），改一边另一边跟着改。
+  var AUTO_CH = [
+    { k: 'dm', name: '💌 陌生人来私信', timed: true },
+    { k: 'group', name: '👥 群里自己聊', timed: true },
+    { k: 'forum', name: '📋 正文发了招聘帖，有人来应聘', timed: false }
+  ];
+  var AUTO_LABEL = { off: '关', quiet: '冷清', native: '原生', busy: '活跃', turns: '按轮数', minutes: '按分钟' };
+  function autoChanNow(raw, timed) {
+    var s = (raw && typeof raw === 'object') ? raw : {};
+    var m = AUTO_LABEL.hasOwnProperty(s.mode) ? s.mode : 'native';
+    if (!timed && (m === 'turns' || m === 'minutes')) m = 'native';
+    var n = Math.round(Number(s.n)), mi = Math.round(Number(s.min));
+    return { mode: m, n: n >= 1 ? Math.min(50, n) : 5, min: mi >= 1 ? Math.min(360, mi) : 30, due: Number(s.due) || 0 };
+  }
+  function autoCtlNow(sb) {
+    var c = sb && sb.autoCtl;
+    var o = !c && sb && sb.dmAutoControl;
+    if (o && typeof o === 'object') {
+      var lm = o.mode === 'interval' ? 'interval_turns' : o.mode;
+      c = lm === 'off' ? { dm: { mode: 'off' }, group: { mode: 'off' }, forum: { mode: 'off' } }
+        : lm === 'interval_turns' ? { dm: { mode: 'turns', n: o.interval } }
+        : lm === 'interval_minutes' ? { dm: { mode: 'minutes', min: o.minutes, due: o.nextDueAt } } : {};
+    }
+    c = c || {};
+    return { dm: autoChanNow(c.dm, true), group: autoChanNow(c.group, true), forum: autoChanNow(c.forum, false) };
+  }
+  function autoNowText(k, ch) {
+    if (ch.mode === 'turns') return '每 ' + ch.n + ' 轮正文来一次';
+    if (ch.mode === 'minutes') return '每 ' + ch.min + ' 分钟来一次';
+    if (k === 'forum') return { off: '关', quiet: '冷清（1~2 人）', native: '原生（3~5 人）', busy: '活跃（5~7 人）' }[ch.mode];
+    return AUTO_LABEL[ch.mode];
+  }
+  function autoCtlHtml() {
+    var c = autoCtlNow(state), x = '';
+    x += '<div class="sb-sec" style="margin-top:16px;">自动来消息 · Auto（来自凌keke老师）</div>';
+    for (var i = 0; i < AUTO_CH.length; i++) {
+      var d = AUTO_CH[i], ch = c[d.k];
+      var modes = d.timed ? ['off', 'quiet', 'native', 'busy', 'turns', 'minutes'] : ['off', 'quiet', 'native', 'busy'];
+      x += '<div style="margin:10px 14px 2px;font-size:12px;color:var(--ink);">' + d.name + '：<b>' + esc(autoNowText(d.k, ch)) + '</b></div>';
+      x += '<div style="margin:2px 14px 4px;display:flex;gap:6px;flex-wrap:wrap;">' + modes.map(function (m) {
+        return '<button class="sb-abtn sb-auto-mode" data-ch="' + d.k + '" data-mode="' + m + '" style="flex:0 0 auto;' + (ch.mode === m ? 'background:var(--gold);color:#fff;' : '') + '">' + AUTO_LABEL[m] + '</button>';
+      }).join('') + '</div>';
+      if (ch.mode === 'turns' || ch.mode === 'minutes') {
+        var isT = ch.mode === 'turns';
+        x += '<div style="margin:2px 14px 6px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--ink-sub);">每 ' +
+          '<input class="sb-auto-num" data-ch="' + d.k + '" type="number" inputmode="numeric" min="1" max="' + (isT ? 50 : 360) + '" value="' + (isT ? ch.n : ch.min) + '" style="width:58px;border:.5px solid var(--line);border-radius:8px;padding:5px 7px;font-size:12px;background:var(--paper-2);color:var(--ink);">' +
+          ' ' + (isT ? '轮正文来一次（1~50）' : '分钟来一次（1~360）') + ' <button class="sb-abtn sb-auto-save" data-ch="' + d.k + '" style="flex:0 0 auto;">保存</button></div>';
+      }
+    }
+    x += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:6px 16px 4px;"><b>原生</b>＝卡原来的手感；<b>活跃</b>来得勤、<b>冷清</b>来得少、<b>关</b>就不来。<b>按轮数</b>＝每写几轮正文准来一次；<b>按分钟</b>＝页面开着的时候每隔几分钟来一次。' +
+      '没读的陌生人攒多了会先停，读了再来；群里有没读的消息也不会再自己聊。三路全关＝手机不主动找你，连 50 楼那种一次性的邀请也先压着。你自己发私信、点刷新、在群里说话都照常。每多来一条就多花一次 API。</div>';
+    return x;
+  }
+  function setAutoCtl(k, patch) {
+    var now = Date.now();
+    var keep = chatEl.querySelector('.sb-msgs'), top = keep ? keep.scrollTop : 0;   // 整页重画会跳回顶上，记住位置
+    SBupdate(function (v) {
+      if (!v.sb) return v;
+      var c = autoCtlNow(v.sb), ch = c[k];
+      var changed = !!(patch.mode && patch.mode !== ch.mode);
+      if (patch.mode) ch.mode = patch.mode;
+      if (patch.n) ch.n = patch.n;
+      if (patch.min) ch.min = patch.min;
+      // 换到按轮数/按分钟、或改了间隔：从这一刻重新数，别一换档立刻就来一条
+      if (ch.mode === 'minutes' && (changed || patch.min)) ch.due = now + ch.min * 60000;
+      if (ch.mode !== 'minutes') ch.due = 0;
+      if (!v.sb._auto) v.sb._auto = { turns: 0, last: -99 };
+      if (typeof v.sb._auto.last !== 'number') v.sb._auto.last = -99;   // 控制版塞过字符串，见生成器 maybeAutoStranger
+      if (ch.mode === 'turns' && (changed || patch.n)) v.sb._auto[k === 'group' ? 'lastG' : 'last'] = Number(v.sb._auto.turns) || 0;
+      v.sb.autoCtl = c;
+      delete v.sb.dmAutoControl;   // 凌老师控制版的旧开关：新开关一存就以新的为准
+      return v;
+    }).then(function () {
+      loadState();
+      if (currentPage !== 'settings') return;
+      openSettings();
+      var m2 = chatEl.querySelector('.sb-msgs'); if (m2) m2.scrollTop = top;
+      var d = null; for (var i = 0; i < AUTO_CH.length; i++) if (AUTO_CH[i].k === k) d = AUTO_CH[i];
+      if (d) toast('info', d.name + '：' + autoNowText(k, autoCtlNow(state)[k]));
+    });
+  }
   function openSettings() {
     currentPage = 'settings';
     currentChatName = null;
@@ -4526,6 +4609,7 @@
       '<button class="sb-abtn" id="sbnyc-cfg-save" style="flex:1;">💾 保存</button>' +
       '<button class="sb-abtn" id="sbnyc-cfg-clear" style="flex:1;">' + sbIcon('trash', 14) + ' 清除</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">填了独立 API 后，私信生成完全不占主 API 的每分钟限额，也不再限速排队。Key 只存这台浏览器本地，不进聊天文件。</div>';
+    h += autoCtlHtml();   // 🎚 自动来消息（来自凌keke老师）
     // 显示偏好：盲盒模式（藏标签）
     var blindOn = panel.classList.contains('blindbox');
     h += '<div class="sb-sec" style="margin-top:16px;">显示 · Display</div>';
@@ -4625,7 +4709,7 @@
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-reset" style="flex:1;color:var(--red);">' + sbIcon('refresh', 14) + ' 初始化聊天（回档到 Day 1）</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
-    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师<br>🎙 真人语音通话 —— 流式播放、逐句朗读、酒馆代理等参考并移植自常夜灯老师的《镜译》（MirrorTranslate）与 Yoren 老师的《通用通讯终端 V4》，感谢两位老师授权</div>';
+    h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师<br>🎙 真人语音通话 —— 流式播放、逐句朗读、酒馆代理等参考并移植自常夜灯老师的《镜译》（MirrorTranslate）与 Yoren 老师的《通用通讯终端 V4》，感谢两位老师授权<br>🎚 自动来消息的三路开关（冷清/活跃/按轮数/按分钟）—— 来自凌keke老师的二创《私信生成器控制版》，感谢凌keke老师</div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
@@ -4664,6 +4748,19 @@
     if (kIn) kIn.addEventListener('focus', function () { kIn.removeAttribute('readonly'); });
     var kIn2 = chatEl.querySelector('#sbnyc-on-key');
     if (kIn2) kIn2.addEventListener('focus', function () { kIn2.removeAttribute('readonly'); });
+    // 🎚 自动来消息
+    var autoBtns = chatEl.querySelectorAll('.sb-auto-mode');
+    for (var ab = 0; ab < autoBtns.length; ab++) autoBtns[ab].addEventListener('click', function () {
+      setAutoCtl(this.getAttribute('data-ch'), { mode: this.getAttribute('data-mode') });
+    });
+    var autoSaves = chatEl.querySelectorAll('.sb-auto-save');
+    for (var asv = 0; asv < autoSaves.length; asv++) autoSaves[asv].addEventListener('click', function () {
+      var k = this.getAttribute('data-ch');
+      var inp = chatEl.querySelector('.sb-auto-num[data-ch="' + k + '"]');
+      var val = Math.round(Number(inp && inp.value));
+      if (autoCtlNow(state)[k].mode === 'turns') setAutoCtl(k, { n: Math.max(1, Math.min(50, val || 5)) });
+      else setAutoCtl(k, { min: Math.max(1, Math.min(360, val || 30)) });
+    });
     var blindBtn = chatEl.querySelector('#sbnyc-blind-toggle');
     if (blindBtn) blindBtn.addEventListener('click', function () { applyBlind(!panel.classList.contains('blindbox')); openSettings(); });
     // 三种「写进正文」互斥：开哪个就把另外两个按下去（同时开=同一段对话在正文里出现两次）
