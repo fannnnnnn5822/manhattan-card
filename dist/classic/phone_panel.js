@@ -3443,7 +3443,9 @@
       if (state) { if (!Array.isArray(state.myAds)) state.myAds = []; state.myAds.push({ text: txt, ts: adTs, comments: [] }); }
       var oneLine = txt.replace(/\s+/g, ' ');
       var recruitN = 3 + Math.floor(Math.random() * 3);   // 3~5 个金主来私信（原来只有 1 个，玩家抱怨招不到人）
-      SBemit('sb_request_dm', { reason: '招聘版有新帖：User 刚挂了自荐帖，生成 ' + recruitN + ' 个全新陌生金主的开场，主动私信找上门。每个金主都从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**——他们拿着自己本来的条件来对这条自荐：看中的会直接问约；条件不完全吻合的照样来，砍价、挑剔、"你条件不错但我预算只有这个数"；真抽到完美匹配的，必然有特殊要求或者排他条款。每个人的开场白都要让人看出真读过帖子。她的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: String(recruitN) });
+      // 10-29（SD 亚伦报：来的人全对不上帖子）同一个病：只写「绝不现捏」没给保底。现在约一半是真看中的
+      var fitN = Math.ceil(recruitN / 2);
+      SBemit('sb_request_dm', { reason: '招聘版有新帖：User 刚挂了自荐帖，生成 ' + recruitN + ' 个全新陌生金主的开场，主动私信找上门。' + '每个金主都是从随机素材库里挑的真人，各有各的来历，不是照着帖子现捏的完美金主；但找上门的人都先读了帖子、自己掂量过：**其中 ' + fitN + ' 个是真看中的**——她帖子里写的条件和想要的（类型、预算、见面方式、时间这些）他基本都对得上，来就是因为合适，开场直接问约、说清自己能给什么；看中是真看中，不是开空头支票的 Splenda；对上了也还是他自己，有自己的脾气、规矩和底线，不必大方，也不必好说话。' + (recruitN > fitN ? '**其余 ' + (recruitN - fitN) + ' 个**只对上一部分：砍价、挑剔、"你条件不错但我预算只有这个数"。' : '') + '每个人的开场白都要让人看出真读过帖子。她的帖子原文：「' + oneLine + '」。不要让任何已有联系人出现、不要续接任何已有对话', n: String(recruitN) });
       SBemit('sb_request_ad_comments', { ts: adTs, text: txt });   // 评论区同步开盖：发完帖过一会儿就有人来围观起哄
       toast('success', '📋 挂出去了——评论和私信马上就来');
       openBoard('recruit');
