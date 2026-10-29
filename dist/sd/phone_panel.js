@@ -1894,6 +1894,7 @@
     fetchBanned();   // 封禁名单顺手保鲜（5分钟节流；本机被封则当场落锁）
     if (!state) {
       root.innerHTML = '<div class="sb-wait">⏳ 等待游戏数据<br>先在开场消息里填表并提交<br><span style="font-size:10px">（提交后金主们的第一批私信会自动进来）</span></div>';
+      runRenderHooks('wait');
       phoneRendered('wait');   // 🔌 二创接口：等待屏也通知（外挂好知道主屏插槽没了）
       return;
     }
@@ -1926,6 +1927,7 @@
     root.innerHTML = h;
     bindMain(npcs);
     fillHomeSlots();         // 🔌 主屏插槽：同一拍里填上，不闪
+    runRenderHooks('list');  // 🔌 同一拍通知（头像这类要贴在行上的，晚一拍就会闪）
     phoneRendered('list');   // 🔌 二创接口：消息列表画完，通知外挂
   }
 
@@ -5095,6 +5097,7 @@
     h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
 
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    runRenderHooks('chat', name);  // 🔌 同一拍通知
     phoneRendered('chat', name);   // 🔌 二创接口：聊天页画完，通知外挂
     chatEl.querySelectorAll('[data-cid]').forEach(function (b) { b.addEventListener('click', function (e) { if (_msel) return; e.stopPropagation(); reviewCall(name, b.getAttribute('data-cid')); }); });   // 📞 点通话灰泡回看
     if (!isGrp) sweepOrphanCalls(name);
@@ -6310,9 +6313,24 @@
     if (!el) return;
     for (var i = 0; i < fns.length; i++) { try { fns[i](el); } catch (e) { console.warn('[SB phone] home slot filler failed', e); } }
   }
+  // 同一拍的画完通知（10-29 给内置的「好友主页」贴头像用）：和 sb_phone_rendered 同样的 {view,name,kind}，
+  // 只是在 innerHTML 落下的同一拍同步调用，外挂贴上去的东西不会先空一下再出现。
+  function runRenderHooks(view, name) {
+    var fns = runRenderHooks._f || [];
+    if (!fns.length) return;
+    var d = { view: view };
+    if (name) { d.name = name; d.kind = npcKind(name, state && state.npcs && state.npcs[name]); }
+    for (var i = 0; i < fns.length; i++) { try { fns[i](d); } catch (e) { console.warn('[SB phone] render hook failed', e); } }
+  }
   var sbPublicApi = {
     apiVersion: 1,
     card: 'sd',
+    onRender: function (fn) {
+      if (typeof fn !== 'function') return { stop: function () {} };
+      var fns = runRenderHooks._f || (runRenderHooks._f = []);
+      fns.push(fn);
+      return { stop: function () { var i = fns.indexOf(fn); if (i !== -1) fns.splice(i, 1); } };
+    },
     onHomeSlot: function (fn) {
       if (typeof fn !== 'function') return { stop: function () {} };
       var fns = fillHomeSlots._f || (fillHomeSlots._f = []);
@@ -7967,6 +7985,3860 @@ var SBLAB_CARD = "sd";
     } catch (e) { console.warn('[SB wb_sync]', e); }
   }
   setTimeout(run, 1500);
+})();
+
+;
+// 一掷千金 · 好友个人主页框架
+// 独立卡内组件：读取聊天变量 sb.npcs，不依赖也不修改远程手机脚本的闭包。
+// 基于 fannnnnnn《一掷千金》的手机数据格式与二创接口 window.parent.SugarOS。
+//   接口说明书：https://github.com/fannnnnnn5822/manhattan-card/blob/main/二创接口.md
+//   原帖：https://discord.com/channels/1380075940285124724/1533079819942891530
+// 1.9.0（2026-10-22）：认人改走 SugarOS 接口和 data-npc / data-kind 标记，只在个人聊天页和个人行上挂头像；
+//   去掉全页 MutationObserver 和 1.5 秒心跳，改听 sb_phone_rendered / sb_updated；
+//   往来、橱窗的「删除」改成「从主页隐藏」，钱包、衣橱、私信一个字不动；本地上传的图片存进浏览器 IndexedDB；
+//   隐秘档案年龄从 18 起、身份栏不写校园；身体描写只认这个人；聊天世界书起可读的名字；关脚本时收干净。
+//
+// ── 2026-10-29 合进一掷千金手机时的改动（作者：凌keke老师；合入：fannnnnnn）──
+// 这份是凌老师 1.9.0 的内置版，打包时原样接在 phone_panel.js 后面（个人主页 user_home.js 之前），和手机跑在同一个脚本里。
+// 结构和写法尽量没动，方便对照；改到的地方都带「SD 内置」注释。
+//  1. 内置身份：VERSION '1.9.0-sd1'，全局 SugarFriendProfile 带 builtin:true。发现独立版（同一个 __SD_FRIEND_PROFILE_V1__）
+//     就关掉它并提示一次（请玩家去脚本库关掉「一掷千金 · 好友个人主页」）；独立版后加载把内置版顶掉时，内置版下一拍重新起来
+//     再关掉它。最后只剩内置版一份在跑。
+//  2. 头像不闪：列表行和聊天页顶栏的头像改走 SugarOS.onRender——手机 innerHTML 落下的同一拍就贴上，不再等下一拍的
+//     sb_phone_rendered（再加 80ms）；手机太老没有 onRender 才退回 sb_phone_rendered。
+//     IndexedDB 里的图读出来按编号缓存一份 objectURL，同一张图一直用同一个地址（不每次 revoke 再重建），重画时同步就能用；
+//     这次开机第一次用到某张图时先放首字母，读出来再换上。头像的 <img> 不再 lazy。
+//  3. 夜间模式：浮层配色改成变量，打开/重画时从 #sbnyc-panel 抄手机的 --ink/--paper/--line/--gold 等（含 .night），
+//     抄不到时默认值就是手机白天的配色；隐秘档案的粉、隐秘建档按钮的紫各配了一组夜间色；立绘框、图片预览本来就是深底，
+//     稀有度徽章和揭晓动画保持原色。贴在手机里的头像直接用手机的配色变量，和列表里的圆头像一个样。
+//  4. 往来按手机的退款标记算（手机 10-28 起的记法）：
+//     · 正文重 roll 退了款的（原记录 reversed:true，或退款那笔 reverses 指着它）照样列出来，标「已退款 · 不计入」、金额划掉，
+//       累计往来和笔数不算它们。
+//     · 私信「消息回退 · 名字」只记一笔合计：同金额的往前配一笔转账，配不上就配紧挨着的连续几笔（加起来正好等于退款）。
+//     · 老存档没有标记：「正文重roll回退」按同金额、方向相反往前配对正文记的账。
+//     · 「消息回退 · 她」方向是「-」的那种（她转来的钱被扣回）以前会被算成 User 花在她身上的钱，现在不算。
+//     · 回退那笔自己不列（channel '回退'）。配不上原记录的退款（原记录已经滚出 500 笔总账）不列也不倒扣，累计不会变负数。
+//  5. 橱窗：高仿照样陈列，标签换成红框「… · 高仿」。衣橱那条被挤出 60 件、只剩私信里那条「[送礼物]」时，私信写着
+//     「专柜买的」或对上的流水是莆田直发，也认得出是高仿；价钱从私信里的「—— ¥…」读回来。拿流水补价钱时跳过退了款的和
+//     回退/二手/校正/账单/税务/一日租借/体验这些不是买东西的频道。给隐秘档案的礼物清单里高仿写「（其实是高仿）」。
+//  6. 「从主页隐藏」多记一个备用键：原记录滚出总账（500 笔）或衣橱（60 件）、往来/橱窗改用私信里那条备份时，仍然算隐藏
+//     （以前主键跟着变，藏过的又冒出来）。
+//  7. 生成：去掉 120 秒后自动 stopGenerationById（慢一点或带思考的模型写到一半被掐，JSON 就断了，等于给输出加了上限）；
+//     解析失败不再自动再调一次模型（玩家的 API 按次数算钱，点一次就只调一次），改成提示再点一次「更新」。
+//     生成途中或写世界书途中换了聊天、关了脚本，结果不写进去（以前会写进新聊天里同名的人）。没有任何自动调模型、自动写世界书。
+//  8. 只写 sb.npcs[名字].profile：隐秘档案不再写 MVU 的 stat_data（一掷千金不用 MVU；写进最新一楼的变量，重 roll 那楼就没了）；
+//     读的时候仍认 MVU 里已有的档案。保存时这个联系人已经不在手机里就报错不写（以前会凭空建一个只有 name 的联系人，
+//     没有 sb 时还会建 sb，手机就跳过「等待游戏数据」）。
+//  9. 和内置的「个人主页」（#suh-root）共处：两个浮层同时开时后开的在上面（好友主页 2147483646，个人主页后开时让到 2147483644）；
+//     Esc、Tab 只归最上面那个。IndexedDB 库名（sdfp-media / suh-user-profile-media）、localStorage/sessionStorage 键（sdfp:）、
+//     全局名、运行时 key、CSS/ID 前缀（sdfp- / suh-）、body 类名都不重叠。
+// 10. 关脚本收摊：贴进手机的头像、按钮、属性一起摘掉，列表字母换回手机自己的写法（以前样式表先没了，留下的图会撑满一行）；
+//     objectURL 全部 revoke，IndexedDB 连接关掉；运行时 key 按身份摘（以前按版本号）。1.8.0 插在日历/流水页头上的老头像，
+//     手机重画时顺手摘掉。
+// 11. 小修：sb_updated 只在这个人的数据真变了才重画（以前每次都整页重画：滚动跳回顶上、小穴评级转盘转到一半被打断），重画保留
+//     滚动位置；分支聊天会复制父聊天的变量，换图时只删本聊天建的那张（图片编号带聊天标记，老编号一律不删）；改原名失败时
+//     不盖掉具体原因；backdrop-filter 补 -webkit- 前缀，dvh 加 vh 回退；下拉框选项在深色页头下也看得清。
+// Data contract (schema 1): sb.npcs[displayName].profile = {
+//   schema, headline, bio, city, birthday, tags[], likes[], boundaries[], pin, note,
+//   avatar, illustration, updatedAt
+// }
+(function sdfpMain() {   // SD 内置：起个名字，被独立版顶掉时要能重新起来
+  'use strict';
+
+  var VERSION = '1.9.0-sd1';
+  var BUILTIN = true;   // SD 内置：打包进一掷千金手机的这份
+  var DUP_WARN_KEY = '__SD_FRIEND_PROFILE_DUP_WARNED__';
+  var SCHEMA = 1;
+  var ROOT_ID = 'sdfp-root';
+  var STYLE_ID = 'sdfp-style';
+  var RUNTIME_KEY = '__SD_FRIEND_PROFILE_V1__';
+  var LAST_CONTACT_KEY = 'sdfp:last-contact';
+  var OPEN_EVENT = 'sdsim:friend-profile-open';
+  var STORE_EVENT = 'sdsim:friend-profile-saved';
+  var CLOTHING_RE = /衣|裙|裤|鞋|包|表|腕|链|戒|耳|帽|围巾|丝|缎|皮|珠宝|香|化妆|护肤|手袋|外套|衬衫|西装|礼服|内衣|睡衣|泳|墨镜/i;
+  var BODY_EVIDENCE_RE = /罩杯|胸围|[A-Ha-h]\s*[杯罩]|乳房|胸部|乳量|乳头|乳晕|口腔|舌头|亲吻|嘴唇|小穴|名器|阴道|花穴|蜜穴|腔壁|褶皱|后穴|后庭|肛门|体香|肌肤|身体曲线|身材/;
+
+  function hostWindow() {
+    try {
+      if (window.parent && window.parent !== window && window.parent.document) return window.parent;
+    } catch (_) {}
+    return window;
+  }
+
+  function hostDocument() {
+    try {
+      return hostWindow().document || document;
+    } catch (_) {
+      return document;
+    }
+  }
+
+  var DOC = hostDocument();
+  var HOST = hostWindow();
+
+  if (HOST[RUNTIME_KEY] && typeof HOST[RUNTIME_KEY].destroy === 'function') {
+    // SD 内置：宿主上挂着的如果是独立版（脚本库里的「一掷千金 · 好友个人主页」），关掉它并提示一次
+    var previousRuntime = HOST[RUNTIME_KEY];
+    try { previousRuntime.destroy(); } catch (_) {}
+    if (!previousRuntime.builtin) warnStandaloneDuplicate();
+  }
+
+  function warnStandaloneDuplicate() {
+    try {
+      if (HOST[DUP_WARN_KEY]) return;
+      HOST[DUP_WARN_KEY] = true;
+    } catch (_) {}
+    var message = '好友主页已经内置进手机了（来自凌keke老师）。请到酒馆助手的脚本库里关掉「一掷千金 · 好友个人主页」这个独立脚本。';
+    try {
+      if (typeof toastr !== 'undefined') toastr.info(message, 'SugarOS', { timeOut: 12000 });
+    } catch (_) {}
+    try { console.info('[SD 好友主页] ' + message); } catch (_) {}
+  }
+
+  var root = null;
+  var bodyEl = null;
+  var switchEl = null;
+  var statusEl = null;
+  var mediaRoot = null;
+  var mediaStatusEl = null;
+  var mediaFileInput = null;
+  var mediaTarget = 'avatar';
+  var mediaOpener = null;
+  var dossierOptionsRoot = null;
+  var dossierOptionsOpener = null;
+  var dossierOptionsContact = null;
+  var dossierOptionsButton = null;
+  var confirmRoot = null;
+  var confirmOpener = null;
+  var confirmAction = null;
+  var observer = null;
+  var ensureTimer = null;
+  var heartbeat = null;
+  var open = false;
+  var activeName = '';
+  var activeTab = 'home';
+  var contacts = [];
+  var lastDataRevision = null;
+  var pussyRolling = false;
+  var pussyRollTimer = null;
+  var pussyCelebrateTimer = null;
+  var dossierUpdating = false;
+  var pussyArchiving = false;
+  var dossierGenerationId = '';
+  var lastFocus = null;
+  var destroyed = false;
+  var disposers = [];
+  var renderHookHandle = null;   // SD 内置：SugarOS.onRender 的句柄
+  var renderHookOwner = null;
+  var stackObserver = null;      // SD 内置：开着的时候看「个人主页」浮层是不是后开的
+
+  function stopAll() {
+    while (disposers.length) {
+      try { disposers.pop()(); } catch (_) {}
+    }
+  }
+
+  function listen(target, eventName, listener, options) {
+    target.addEventListener(eventName, listener, options);
+    disposers.push(function () { target.removeEventListener(eventName, listener, options); });
+  }
+
+  function text(value, fallback) {
+    if (value === null || value === undefined) return fallback || '';
+    var s = String(value).replace(/\r\n/g, '\n').trim();
+    return s || fallback || '';
+  }
+
+  function clampText(value, length) {
+    return text(value).slice(0, length);
+  }
+
+  function asList(value, limit) {
+    var list = [];
+    if (Array.isArray(value)) {
+      list = value;
+    } else if (typeof value === 'string') {
+      list = value.split(/[,，、\n]/);
+    }
+    var out = [];
+    for (var i = 0; i < list.length && out.length < (limit || 8); i++) {
+      var item = clampText(list[i], 48);
+      if (item && out.indexOf(item) === -1) out.push(item);
+    }
+    return out;
+  }
+
+  function initialOf(name) {
+    var s = text(name, '?').replace(/[^\w\u3400-\u9fff]/g, '');
+    if (!s) return '?';
+    if (/[\u3400-\u9fff]/.test(s.charAt(0))) return s.charAt(0);
+    var words = text(name).split(/\s+/);
+    if (words.length > 1) {
+      return (words[0].charAt(0) + words[1].charAt(0)).toUpperCase().slice(0, 2);
+    }
+    return s.slice(0, 2).toUpperCase();
+  }
+
+  function readChatVariables() {
+    try {
+      if (typeof getVariables === 'function') return getVariables({ type: 'chat' }) || {};
+    } catch (_) {}
+    return {};
+  }
+
+  function readRawContacts() {
+    var vars = readChatVariables();
+    var npcs = vars && vars.sb && vars.sb.npcs;
+    var out = [];
+    if (!npcs || typeof npcs !== 'object') return out;
+    Object.keys(npcs).forEach(function (key) {
+      var raw = npcs[key];
+      if (!raw || typeof raw !== 'object' || raw.isGroup) return;
+      var name = text(raw.name, key);
+      if (!name) return;
+      out.push({ name: name, key: key, raw: raw });
+    });
+    out.sort(function (a, b) {
+      var pinDelta = Number(!!b.raw.pinned) - Number(!!a.raw.pinned);
+      if (pinDelta) return pinDelta;
+      var bt = Number(b.raw.last_ts) || 0;
+      var at = Number(a.raw.last_ts) || 0;
+      if (bt !== at) return bt - at;
+      return String(b.raw.last_contact || '').localeCompare(String(a.raw.last_contact || ''));
+    });
+    return out;
+  }
+
+  function profileFor(contact) {
+    var raw = contact.raw || {};
+    var p = raw.profile && typeof raw.profile === 'object' ? raw.profile : {};
+    var archetype = text(raw.archetype);
+    var fallbackHeadline = archetype || 'SugarSecret 联系人';
+    return {
+      schema: SCHEMA,
+      headline: clampText(p.headline || fallbackHeadline, 120),
+      bio: clampText(p.bio || p.about || raw.bio || raw.last_message || '还没有公开简介。', 1200),
+      city: clampText(p.city, 80),
+      birthday: clampText(p.birthday, 40),
+      tags: asList(p.tags || (archetype ? [archetype] : []), 8),
+      likes: asList(p.likes, 8),
+      boundaries: asList(p.boundaries, 8),
+      pin: clampText(p.pin, 160),
+      note: clampText(p.note, 2000),
+      originalName: clampText(p.originalName, 40),
+      avatar: normalizeImageValue(p.avatar, true),
+      illustration: normalizeImageValue(p.illustration, true),
+      updatedAt: text(p.updatedAt)
+    };
+  }
+
+  function formatMoney(value) {
+    var n = Number(value) || 0;
+    try {
+      return '¥' + n.toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+    } catch (_) {
+      return '¥' + Math.round(n);
+    }
+  }
+
+  function historyOf(raw) {
+    var history = raw && Array.isArray(raw.dm_history) ? raw.dm_history : [];
+    return history.filter(function (m) { return m && m.type !== 'system' && !m.pending; });
+  }
+
+  function secretValue(value, fallback) {
+    if (value === true) return '是';
+    if (value === false) return '否';
+    if (value === undefined || value === null || value === '' || value === '待初始化') return fallback || '尚未记录';
+    if (Array.isArray(value)) return value.map(function (item) { return secretValue(item, ''); }).filter(Boolean).join('、') || fallback || '尚未记录';
+    if (typeof value === 'object') {
+      try { return JSON.stringify(value); } catch (_) { return fallback || '尚未记录'; }
+    }
+    return String(value);
+  }
+
+  function readMvuStatData() {
+    try {
+      var all = null;
+      if (typeof Mvu !== 'undefined' && Mvu && typeof Mvu.getAllVariables === 'function') {
+        all = Mvu.getAllVariables();
+      } else if (typeof getAllVariables === 'function') {
+        all = getAllVariables();
+      }
+      if (!all || typeof all !== 'object') return {};
+      return all.stat_data && typeof all.stat_data === 'object' ? all.stat_data : all;
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function findArchiveForContact(archives, contact) {
+    if (!archives || typeof archives !== 'object') return { key: '', archive: null };
+    var keys = Object.keys(archives);
+    var preferred = [
+      contact.raw && contact.raw.profile && contact.raw.profile.originalName,
+      contact.name,
+      contact.key,
+      contact.raw && contact.raw.name
+    ].map(function (item) { return text(item); }).filter(Boolean);
+    for (var p = 0; p < preferred.length; p++) {
+      if (archives[preferred[p]]) return { key: preferred[p], archive: archives[preferred[p]] };
+    }
+    for (var i = 0; i < keys.length; i++) {
+      if (personNameMatches(keys[i], contact)) return { key: keys[i], archive: archives[keys[i]] };
+    }
+    return { key: '', archive: null };
+  }
+
+  function hiddenDossierFor(contact) {
+    var stat = readMvuStatData();
+    var found = findArchiveForContact(stat['互动对象档案'], contact);
+    var raw = contact.raw || {};
+    var profile = raw.profile && typeof raw.profile === 'object' ? raw.profile : {};
+    var fallbackArchive = (raw.hiddenDossier && typeof raw.hiddenDossier === 'object')
+      ? raw.hiddenDossier
+      : (profile.hiddenDossier && typeof profile.hiddenDossier === 'object'
+        ? profile.hiddenDossier
+        : (raw.dossier && typeof raw.dossier === 'object' ? raw.dossier : null));
+    var archiveUpdated = found.archive && text(found.archive['dossier_updated_at']);
+    var fallbackUpdated = text(profile.hiddenDossierUpdatedAt || (fallbackArchive && fallbackArchive['dossier_updated_at']));
+    var archive = fallbackArchive && (!found.archive || fallbackUpdated >= archiveUpdated)
+      ? fallbackArchive
+      : (found.archive || fallbackArchive || null);
+    var body = archive && archive['身体信息'] && typeof archive['身体信息'] === 'object'
+      ? archive['身体信息']
+      : (raw['身体信息'] && typeof raw['身体信息'] === 'object' ? raw['身体信息'] : {});
+    var hasDossierData = !!archive || Object.keys(body).length > 0;
+    var status = archive && archive['状态'] && typeof archive['状态'] === 'object' ? archive['状态'] : {};
+    var pussy = body['小穴'];
+    var rank = '待判定';
+    var description = '点击右上角“更新”，生成与角色状态匹配的评级与生理档案。';
+    var trait = '点击右上角“更新”，生成与角色状态匹配的评级与生理档案。';
+    if (pussy && typeof pussy === 'object') {
+      rank = secretValue(pussy['小穴评级'] || pussy['名器评价'], '待判定');
+      var rankFallback = PUSSY_RANKS.indexOf(rank) !== -1 ? pussyFallback(rank) : null;
+      description = secretValue(pussy['描述'], rankFallback ? rankFallback.desc : description);
+      trait = secretValue(pussy['特质'], rankFallback ? rankFallback.trait : trait);
+    } else if (pussy) {
+      rank = secretValue(pussy);
+      var stringFallback = PUSSY_RANKS.indexOf(rank) !== -1 ? pussyFallback(rank) : null;
+      description = stringFallback ? stringFallback.desc : rank;
+      trait = stringFallback ? stringFallback.trait : rank;
+    }
+    return {
+      hasData: hasDossierData,
+      archiveKey: found.key,
+      relationship: secretValue(status['恋爱状态'], '尚未在记录中明确'),
+      mouth: secretValue(body['口腔'], '尚未在记录中明确'),
+      breast: secretValue(body['乳房'], '尚未在记录中明确'),
+      pussyRank: rank,
+      pussyDescription: description,
+      pussyTrait: trait,
+      anus: secretValue(body['后穴'], '尚未在记录中明确'),
+      secret: secretValue(archive && archive['秘密'], '尚未在记录中明确')
+    };
+  }
+
+  function getFriendChatId() {
+    try {
+      if (typeof getCurrentChatId === 'function') return text(getCurrentChatId(), 'default');
+    } catch (_) {}
+    try {
+      var context = HOST.SillyTavern && HOST.SillyTavern.getContext ? HOST.SillyTavern.getContext() : null;
+      if (context) {
+        return text(
+          typeof context.getCurrentChatId === 'function' ? context.getCurrentChatId() : context.chatId,
+          'default'
+        );
+      }
+    } catch (_) {}
+    return 'default';
+  }
+
+  function pussyRevealKey(contact) {
+    return 'sdfp:pussy-revealed:' + getFriendChatId() + ':' + text(contact.key || contact.name);
+  }
+
+  function isPussyRevealed(contact) {
+    try { return HOST.sessionStorage.getItem(pussyRevealKey(contact)) === 'true'; } catch (_) {}
+    return false;
+  }
+
+  function setPussyRevealed(contact, value) {
+    try { HOST.sessionStorage.setItem(pussyRevealKey(contact), value ? 'true' : 'false'); } catch (_) {}
+  }
+
+  function rarityClassFor(rank) {
+    var s = text(rank);
+    if (/SSS|极乐天人|征服王/.test(s)) return 'sdfp-rarity-myth';
+    if (/神话S|传说|名器掌门人/.test(s)) return 'sdfp-rarity-legend';
+    if (/神话/.test(s)) return 'sdfp-rarity-myth';
+    if (/珍品|珍宝|名器S|采花蜂/.test(s)) return 'sdfp-rarity-gem';
+    if (/S/.test(s) || /嗅觉家/.test(s)) return 'sdfp-rarity-s';
+    if (/A/.test(s) || /鉴肉师/.test(s)) return 'sdfp-rarity-a';
+    if (/B/.test(s) || /小菜鸟/.test(s)) return 'sdfp-rarity-b';
+    if (/C/.test(s)) return 'sdfp-rarity-c';
+    return 'sdfp-rarity-d';
+  }
+
+  function applyRarityClass(node, rank) {
+    if (!node) return;
+    ['d', 'c', 'b', 'a', 's', 'gem', 'legend', 'myth'].forEach(function (name) {
+      node.classList.remove('sdfp-rarity-' + name);
+    });
+    node.classList.add(rarityClassFor(rank));
+  }
+
+  function clearPussyCelebration() {
+    if (pussyCelebrateTimer) {
+      try { HOST.clearTimeout(pussyCelebrateTimer); } catch (_) {}
+      pussyCelebrateTimer = null;
+    }
+    if (!root) return;
+    var panel = root.querySelector('.sdfp-hidden-dossier');
+    if (panel) {
+      panel.classList.remove('sdfp-celebrate-shake', 'sdfp-myth-mega-shake');
+      var overlay = panel.querySelector('.sdfp-celebrate-overlay');
+      if (overlay) overlay.remove();
+    }
+  }
+
+  function triggerRarityCelebration(rank) {
+    if (!root) return;
+    var panel = root.querySelector('.sdfp-hidden-dossier');
+    if (!panel) return;
+    var isMyth = /神话|SSS/.test(rank);
+    var isLegend = /传说/.test(rank);
+    var isGem = /珍宝/.test(rank);
+    if (!isMyth && !isLegend && !isGem) return;
+    clearPussyCelebration();
+    panel.classList.add(isMyth ? 'sdfp-myth-mega-shake' : 'sdfp-celebrate-shake');
+    var overlay = el('div', 'sdfp-celebrate-overlay');
+    var particles = isMyth
+      ? ['✦', '★', '✧', '◆', '▲', '●']
+      : isLegend ? ['✦', '★', '✧', '◆'] : ['✦', '✧', '◆'];
+    var count = isMyth ? 36 : isLegend ? 24 : 16;
+    for (var i = 0; i < count; i++) {
+      var particle = el('span', 'sdfp-burst-particle', particles[Math.floor(Math.random() * particles.length)]);
+      var angle = Math.random() * Math.PI * 2;
+      var distance = (isMyth ? 120 : 80) + Math.random() * (isMyth ? 160 : 110);
+      particle.style.setProperty('--dx', Math.cos(angle) * distance + 'px');
+      particle.style.setProperty('--dy', Math.sin(angle) * distance - 20 + 'px');
+      particle.style.setProperty('--rot', Math.random() * 360 - 180 + 'deg');
+      particle.style.fontSize = (isMyth ? 1.6 : 1.2) + Math.random() * 0.8 + 'rem';
+      particle.style.animationDelay = Math.random() * 0.15 + 's';
+      overlay.appendChild(particle);
+    }
+    var banner = el('div', 'sdfp-trophy-banner ' + (isMyth
+      ? 'sdfp-banner-myth'
+      : isLegend ? 'sdfp-banner-legend' : 'sdfp-banner-gem'));
+    banner.textContent = isMyth
+      ? '【神话SSS·万中无一】终极异化觉醒'
+      : isLegend ? '【传说S级】六维完美·世所罕见' : '【珍宝S级】尤物天成·难得一遇';
+    overlay.appendChild(banner);
+    panel.appendChild(overlay);
+    pussyCelebrateTimer = HOST.setTimeout(function () {
+      panel.classList.remove('sdfp-celebrate-shake', 'sdfp-myth-mega-shake');
+      var current = panel.querySelector('.sdfp-celebrate-overlay');
+      if (current) current.remove();
+      pussyCelebrateTimer = null;
+    }, isMyth ? 2600 : 2400);
+  }
+
+  function stopPussyRoll() {
+    if (pussyRollTimer) {
+      try { HOST.clearTimeout(pussyRollTimer); } catch (_) {}
+      pussyRollTimer = null;
+    }
+    pussyRolling = false;
+    clearPussyCelebration();
+    if (!root) return;
+    var badge = root.querySelector('.sdfp-pussy-rank');
+    var trigger = root.querySelector('.sdfp-pussy-trigger');
+    if (badge) badge.classList.remove('sdfp-rolling-active');
+    if (trigger) trigger.classList.remove('sdfp-revealed-locked');
+  }
+
+  function startPussySlotMachine(contact, dossier) {
+    if (pussyRolling || !root || isPussyRevealed(contact)) return;
+    var trigger = root.querySelector('.sdfp-pussy-trigger');
+    var badge = root.querySelector('.sdfp-pussy-rank');
+    if (!trigger || !badge) return;
+    stopPussyRoll();
+    pussyRolling = true;
+    trigger.classList.add('sdfp-revealed-locked');
+    badge.classList.add('sdfp-rolling-active');
+    var rollingRanks = [
+      'D', 'D', 'C', 'C', 'C', 'B', 'B', 'B', 'B', 'A', 'A', 'A', 'A', 'A',
+      'S', 'S', 'S', 'S', '珍宝S', '珍宝S', '神话S',
+      '神话SSS·九曲回肠', '神话SSS·千重吸髓'
+    ];
+    var target = text(dossier.pussyRank, '待判定');
+    var totalSteps = 48 + Math.floor(Math.random() * 8);
+    var step = 0;
+    var speed = 35;
+    var run = function () {
+      if (!badge.isConnected) {
+        stopPussyRoll();
+        return;
+      }
+      step += 1;
+      var shown = rollingRanks[Math.floor(Math.random() * rollingRanks.length)];
+      badge.textContent = shown;
+      applyRarityClass(badge, shown);
+      if (step < totalSteps) {
+        if (step > totalSteps - 20) speed += 12;
+        if (step > totalSteps - 10) speed += 28;
+        if (step > totalSteps - 4) speed += 60;
+        pussyRollTimer = HOST.setTimeout(run, speed);
+        return;
+      }
+      badge.textContent = target;
+      applyRarityClass(badge, target);
+      badge.classList.remove('sdfp-rolling-active', 'sdfp-click-reveal');
+      trigger.classList.add('sdfp-revealed-locked');
+      trigger.disabled = true;
+      trigger.removeAttribute('title');
+      setPussyRevealed(contact, true);
+      pussyRolling = false;
+      pussyRollTimer = null;
+      triggerRarityCelebration(target);
+    };
+    run();
+  }
+
+  var PUSSY_RANKS = [
+    'D', 'C', 'B', 'A', 'S', '珍宝S', '神话S',
+    '神话SSS·九曲回肠', '神话SSS·千重吸髓', '神话SSS·绝壁锁关', '神话SSS·玉壶喷潮',
+    '神话SSS·地髓灼炎', '神话SSS·重瓣千叶', '神话SSS·回旋绞索', '神话SSS·三阶天梯',
+    '神话SSS·雷殛失神', '神话SSS·活体噬魂'
+  ];
+
+  function rollPussyRank() {
+    var roll = Math.floor(Math.random() * 100) + 1;
+    if (roll <= 5) return 'D';
+    if (roll <= 11) return 'C';
+    if (roll <= 26) return 'B';
+    if (roll <= 40) return 'A';
+    if (roll <= 65) return 'S';
+    if (roll <= 80) return '珍宝S';
+    if (roll <= 95) return '神话S';
+    var myths = PUSSY_RANKS.slice(7);
+    return myths[Math.floor(Math.random() * myths.length)];
+  }
+
+  function pussyRankRule(rank) {
+    var rules = {
+      'D': 'D级：入口闭合松散，进入几乎无阻力，腔壁间隙明显、摩擦和包裹不足；分泌稀薄，深层反馈迟钝，必须保留青涩平庸的生理遗憾。描述写低闭合力与少分泌，特质写被动承受、刺激很久才有轻微骨盆反应。',
+      'C': 'C级：入口有浅层裹挟，深层仍偏空；分泌缓慢稀薄，快感断续。描述写浅表摩擦与深层空洞，特质写只是偶尔收紧、难以持续。',
+      'B': 'B级：合格线。闭合与褶皱摩擦清晰，润滑稳定；收缩规律但被动，没有自主吮吸或意外锁死。描述写稳定包裹，特质写规律收缩。',
+      'A': 'A级：明显紧箍与负压，褶皱主动贴合，分泌充沛粘稠；有初步主动捕捉和联动痉挛，但还不稳定。',
+      'S': 'S级：高敏、高吸附，肉壁能主动蠕动绞合，分泌丰沛，高潮时全腔同步收紧；强度稳定但不要写成终极神话。',
+      '珍宝S': '珍宝S：接近完美，紧致、润滑、主动绞合与负压都极强，只保留一个轻微非病理短板。',
+      '神话S': '神话S：巅峰神话级，六维几乎无死角，具备精准自主吮吸、强烈负压与全盆腔联动，不要降低到普通S。',
+      '神话SSS·九曲回肠': '九曲回肠：深处多段折角，推进需要调整角度，冠状沟反复刮过斜向肉壁；角色下腹饱胀、腰肢上弓、呼吸断续。',
+      '神话SSS·千重吸髓': '千重吸髓：腔壁形成波浪式主动内吸与负压，抽拔阻力沉重；角色难以控制身体擅自挽留，双腿因高频蠕动发抖。',
+      '神话SSS·绝壁锁关': '绝壁锁关：骨盆底肌群密度极高，强入像楔进坚韧冻脂，抽出被瞬间锁住；角色腹部紧绷、呼吸停滞、泪水逼出。',
+      '神话SSS·玉壶喷潮': '玉壶喷潮：前壁与腺体极敏感，深顶后热液大量喷涌；角色羞耻崩解、夹腿遮掩却引发更猛烈热流。',
+      '神话SSS·地髓灼炎': '地髓灼炎：入口温凉、深处滚烫，宫颈热浆般包裹；角色耳垂锁骨发烫，身体被深层热流软化失神。',
+      '神话SSS·重瓣千叶': '重瓣千叶：腔壁密布立体肉芽，微观刮蹭强烈；角色神经被细密麻痒贯穿，四肢抽动、脚趾蜷缩。',
+      '神话SSS·回旋绞索': '回旋绞索：推入较顺、拔出发作螺旋反向绞锁；角色身体主动锁死对方，羞耻与生理挽留形成强烈反差。',
+      '神话SSS·三阶天梯': '三阶天梯：入口、中段与宫颈外口形成三道窄关，每次深顶都有阶梯式顿挫；角色小腹出现三段起伏。',
+      '神话SSS·雷殛失神': '雷殛失神：神经末梢高度外露，轻微摩擦也触发全骨盆痉挛；角色瞳孔涣散、言语断裂、身体如通电般震颤。',
+      '神话SSS·活体噬魂': '活体噬魂：宫颈口可主动含吮，前庭与深层形成双重绞咬；角色被彻底填满后出现近乎虚脱的极致悸动。'
+    };
+    return rules[rank] || rules.D;
+  }
+
+  function pussyFallback(rank) {
+    if (rank === 'D') return { desc: '静息时闭合较松，进入阻力低，腔壁平整且润滑偏少。', trait: '受刺激后只有轻微、不连贯的骨盆收缩，需要较长时间才出现明显反馈。' };
+    if (rank === 'C') return { desc: '入口有基础张力，浅层能产生轻微摩擦，但深处包裹感偏弱。', trait: '分泌缓慢，刺激断续累积，偶尔收紧后很快又失去持续阻力。' };
+    if (rank === 'B') return { desc: '闭合紧密度高于基准，褶皱充血后有清晰摩擦，润滑稳定。', trait: '产生规律而被动的高频夹紧，回馈连贯但缺少主动吮吸。' };
+    if (rank === 'A') return { desc: '入口紧箍明显，褶皱能主动贴合，腺体分泌充沛粘稠。', trait: '受刺激后出现主动包裹与数秒联动痉挛，深层顶撞会触发局部剧烈收缩。' };
+    if (rank === 'S') return { desc: '入口与深层兼具高摩擦和强吸附，腔壁饱满，润滑充沛。', trait: '肉壁会随节奏主动蠕动绞合，高潮时全腔同步收紧。' };
+    if (rank === '珍宝S') return { desc: '闭合、纹理、温度和分泌都接近完美，只保留一处轻微短板。', trait: '多层褶皱主动锁死，拔出有沉重负压，高潮反馈极强。' };
+    if (rank === '神话S') return { desc: '六维几近无死角，闭合、纹理、分泌与温度反馈都达到巅峰。', trait: '自主吮吸精准咬合节奏，盆底与大范围肌群持续联动。' };
+    return {
+      desc: '腔壁结构与神经、腺体反馈出现极端异化，进入和抽送都有独特而强烈的物理阻力。',
+      trait: '深层肌肉产生难以自主控制的异化反馈，角色身体会在极短时间内被推至过载。'
+    };
+  }
+
+  function isMissingDossierValue(value) {
+    var out = text(value);
+    if (!out) return true;
+    if (/^(未探知|待初始化|未知|未记录|尚未记录|尚未建档)$/.test(out)) return true;
+    if (/^点击右上角.{0,20}(?:更新|生成)/.test(out)) return true;
+    return /^.{0,24}尚未在.{0,16}(?:记录|档案).{0,12}(?:描写|展开|明确|记录)/.test(out);
+  }
+
+  function dossierString(value, fallback, maxLength) {
+    var out = text(value);
+    if (isMissingDossierValue(out)) out = text(fallback, '');
+    return maxLength ? out.slice(0, maxLength) : out;
+  }
+
+  function clonePlain(value) {
+    try { return JSON.parse(JSON.stringify(value)); } catch (_) { return {}; }
+  }
+
+  function mergePlain(base, patch) {
+    var out = base && typeof base === 'object' && !Array.isArray(base) ? clonePlain(base) : {};
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return out;
+    Object.keys(patch).forEach(function (key) {
+      var value = patch[key];
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        out[key] = mergePlain(out[key], value);
+      } else if (value !== undefined && value !== null) {
+        out[key] = value;
+      }
+    });
+    return out;
+  }
+
+  function stripDossierMemo(value) {
+    return String(value || '')
+      .replace(/<div[^>]*data-sbmemo[\s\S]*?<\/div>/gi, '')
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function extractEvidenceSnippet(source, pattern, maxLength, preferredNames) {
+    var clean = stripDossierMemo(source);
+    if (!clean) return '';
+    var parts = clean.split(/[。！？!?\n；;]+/).map(function (part) { return text(part); }).filter(Boolean);
+    var preferred = [];
+    var fallback = [];
+    for (var i = 0; i < parts.length; i++) {
+      if (!pattern.test(parts[i])) continue;
+      var context = parts[i];
+      var target = (preferredNames || []).some(function (name) {
+        return name && parts[i].toLowerCase().indexOf(name.toLowerCase()) !== -1;
+      }) ? preferred : fallback;
+      if (target.indexOf(context) === -1) target.push(context);
+    }
+    // 1.9.0：给了人名就只认提到这个人的句子，不拿别人的身材凑数
+    var result = ((preferredNames && preferredNames.length) ? preferred : fallback).slice(0, 3).join('。');
+    return maxLength ? result.slice(0, maxLength) : result;
+  }
+
+  function bodyEvidenceFromPlot(source, contact) {
+    var profile = contact ? profileFor(contact) : {};
+    var preferredNames = [contact && contact.name, profile.originalName, contact && contact.key, contact && contact.raw && contact.raw.name]
+      .map(function (item) { return text(item); })
+      .filter(function (item, index, list) { return item && list.indexOf(item) === index; });
+    return {
+      breast: extractEvidenceSnippet(source, /(?:[A-Ha-h]\s*(?:罩杯|杯)|罩杯|胸围|乳房|胸部|乳量|乳头|乳晕)/, 900, preferredNames),
+      mouth: extractEvidenceSnippet(source, /(?:口腔|舌头|亲吻|嘴唇|牙齿|唾液)/, 700, preferredNames),
+      pussy: extractEvidenceSnippet(source, /(?:小穴|名器|阴道|花穴|蜜穴|腔壁|褶皱)/, 900, preferredNames),
+      anus: extractEvidenceSnippet(source, /(?:后穴|后庭|肛门)/, 700, preferredNames)
+    };
+  }
+
+  async function dossierChatMessages() {
+    try {
+      var ctx = HOST.SillyTavern && HOST.SillyTavern.getContext ? HOST.SillyTavern.getContext() : null;
+      var chat = ctx && Array.isArray(ctx.chat) ? ctx.chat : [];
+      if (chat.length) {
+        return chat.map(function (message, index) {
+          return {
+            index: index,
+            name: text(message && message.name),
+            isUser: !!(message && message.is_user),
+            text: text(message && (message.mes || message.message))
+          };
+        }).filter(function (message) { return message.text; });
+      }
+    } catch (_) {}
+    try {
+      if (typeof getChatMessages === 'function') {
+        var rows = await getChatMessages('0-{{lastMessageId}}');
+        return (rows || []).map(function (message, index) {
+          return {
+            index: index,
+            name: text(message && message.name),
+            isUser: !!(message && (message.is_user || message.role === 'user')),
+            text: text(message && (message.message || message.mes))
+          };
+        }).filter(function (message) { return message.text; });
+      }
+    } catch (_) {}
+    return [];
+  }
+
+  function serializeDmForDossier(contact) {
+    var history = historyOf(contact.raw);
+    var lines = [];
+    var used = 0;
+    for (var i = history.length - 1; i >= 0; i--) {
+      var message = history[i] || {};
+      if (message.type === 'recall' || message.type === 'dossier') continue;
+      var body = text(message.content || message.text || message.zh);
+      if (!body) continue;
+      var line = '[' + text(message.time) + '] ' + (message.sender === 'USER' ? 'User' : contact.name) + '：' + body.slice(0, 600);
+      if (used + line.length > 8000) break;
+      lines.unshift(line);
+      used += line.length;
+    }
+    return { text: lines.join('\n'), total: history.length, used: lines.length };
+  }
+
+  async function deepPlotForDossier(contact, budget) {
+    budget = budget || 34000;
+    var rows = await dossierChatMessages();
+    if (!rows.length) return { text: '', hits: 0, bodyHits: 0, scanned: 0, used: 0, evidence: bodyEvidenceFromPlot('', contact) };
+    var profile = profileFor(contact);
+    var names = [contact.name, profile.originalName, contact.key, contact.raw && contact.raw.name]
+      .map(function (item) { return text(item).toLowerCase(); })
+      .filter(function (item, index, list) { return item && list.indexOf(item) === index; });
+    var take = {};
+    for (var t = Math.max(0, rows.length - 8); t < rows.length; t++) take[t] = true;
+    var hits = 0;
+    var bodyHits = 0;
+    for (var i = rows.length - 1; i >= 0; i--) {
+      var hay = stripDossierMemo(rows[i].text).toLowerCase();
+      var named = names.some(function (name) { return hay.indexOf(name) !== -1; });
+      var bodyRelated = BODY_EVIDENCE_RE.test(hay);
+      if (!named) continue;   // 1.9.0：只收提到这个人的楼层（和它前后几楼），没点名的身体描写可能是别人的
+      if (named) hits++;
+      if (bodyRelated) bodyHits++;
+      take[i] = true;
+      if (i + 1 < rows.length) take[i + 1] = true;
+      if (i + 2 < rows.length) take[i + 2] = true;
+      if (i - 1 >= 0) take[i - 1] = true;
+    }
+    var indices = Object.keys(take).map(Number).sort(function (a, b) { return a - b; });
+    var picked = [];
+    var used = 0;
+    for (var j = indices.length - 1; j >= 0; j--) {
+      var row = rows[indices[j]];
+      var body = stripDossierMemo(row.text);
+      if (!body) continue;
+      if (body.length > 1800) body = body.slice(0, 1800) + '…';
+      var line = '〔第' + (row.index + 1) + '楼' + (row.isUser ? ' · User' : '') + '〕' + body;
+      if (used + line.length > budget) break;
+      picked.unshift(line);
+      used += line.length;
+    }
+    var formatted = picked.join('\n\n');
+    return {
+      text: formatted,
+      hits: hits,
+      bodyHits: bodyHits,
+      scanned: rows.length,
+      used: picked.length,
+      evidence: bodyEvidenceFromPlot(formatted, contact)
+    };
+  }
+
+  async function readChatWorldbookDossier(contact) {
+    if (typeof getWorldbook !== 'function') {
+      return {
+        found: false,
+        chatFound: false,
+        pussyFound: false,
+        pussyText: '',
+        text: '',
+        worldbooks: [],
+        entryNames: [],
+        chatWorldbook: '',
+        score: 0
+      };
+    }
+    var names = [];
+    var chatWorldbook = '';
+    var addName = function (name) {
+      var value = text(name);
+      if (value && names.indexOf(value) === -1) names.push(value);
+    };
+    try {
+      if (typeof getChatWorldbookName === 'function') {
+        chatWorldbook = text(getChatWorldbookName('current'));
+        addName(chatWorldbook);
+      }
+    } catch (_) {}
+    try {
+      if (typeof getCharWorldbookNames === 'function') {
+        var charBooks = getCharWorldbookNames('current') || {};
+        addName(charBooks.primary);
+        (charBooks.additional || []).forEach(addName);
+      }
+    } catch (_) {}
+    var profile = profileFor(contact);
+    var aliases = [contact.name, profile.originalName, contact.key, contact.raw && contact.raw.name]
+      .map(normalizePersonName)
+      .filter(function (item, index, list) { return item && list.indexOf(item) === index; });
+    var matches = [];
+    for (var i = 0; i < names.length; i++) {
+      var worldbookName = names[i];
+      var entries = [];
+      try {
+        entries = await getWorldbook(worldbookName);
+      } catch (_) {
+        continue;
+      }
+      (entries || []).forEach(function (entry, index) {
+        if (!entry || !text(entry.content)) return;
+        var content = text(entry.content);
+        var entryName = text(entry.name);
+        var keys = entry.strategy && Array.isArray(entry.strategy.keys) ? entry.strategy.keys : [];
+        var keyText = keys.map(function (key) { return text(key); }).join(' ');
+        var extraDossier = text(entry.extra && entry.extra.sb_dossier);
+        var extraPussy = text(entry.extra && entry.extra.sb_pussy_dossier);
+        var pussyArchiveHit = /^小穴档案[-－—]/.test(entryName) || !!extraPussy;
+        var normalizedEntryName = normalizePersonName(entryName);
+        var normalizedKeys = normalizePersonName(keyText);
+        var normalizedContent = normalizePersonName(content);
+        var dossierHit = false;
+        var score = 0;
+        aliases.forEach(function (alias) {
+          if (extraDossier && personNameMatches(extraDossier, contact)) {
+            score = Math.max(score, 140);
+            dossierHit = true;
+          }
+          if (normalizedEntryName.indexOf(alias) !== -1) {
+            var namedDossier = /档案|旧识|dossier|资料|人物|角色/i.test(entryName);
+            score = Math.max(score, pussyArchiveHit ? 135 : (namedDossier ? 110 : 60));
+            if (namedDossier && !pussyArchiveHit) dossierHit = true;
+          }
+          if (normalizedKeys.indexOf(alias) !== -1) score = Math.max(score, 80);
+          if (normalizedContent.indexOf(alias) !== -1) score = Math.max(score, 35);
+        });
+        if (score > 0) {
+          matches.push({
+            worldbook: worldbookName,
+            entryName: entryName || '未命名条目',
+            index: index,
+            score: score,
+            dossierHit: dossierHit,
+            pussyArchiveHit: pussyArchiveHit,
+            content: content
+          });
+        }
+      });
+    }
+    matches.sort(function (a, b) { return b.score - a.score; });
+    var selected = [];
+    var used = 0;
+    for (var m = 0; m < matches.length; m++) {
+      if (selected.length >= 5 || used >= 16000) break;
+      var block = '【世界书：' + matches[m].worldbook + ' / ' + matches[m].entryName + '】\n' + matches[m].content.slice(0, 10000);
+      if (used + block.length > 18000 && selected.length) break;
+      selected.push(block);
+      used += block.length;
+    }
+    var selectedMatches = matches.slice(0, selected.length);
+    var selectedPussy = selectedMatches.filter(function (item) { return item.pussyArchiveHit; });
+    return {
+      found: selectedMatches.some(function (item) { return item.dossierHit; }),
+      chatFound: selectedMatches.some(function (item) {
+        return item.dossierHit && !!chatWorldbook && item.worldbook === chatWorldbook;
+      }),
+      text: selected.join('\n\n'),
+      pussyFound: selectedPussy.length > 0,
+      pussyText: selected.filter(function (_block, index) {
+        return !!selectedMatches[index] && selectedMatches[index].pussyArchiveHit;
+      }).join('\n\n'),
+      worldbooks: names,
+      entryNames: selectedMatches.map(function (item) { return item.entryName; }),
+      chatWorldbook: chatWorldbook,
+      score: matches.length ? matches[0].score : 0
+    };
+  }
+
+  function pussyArchiveNameFor(contact) {
+    var profile = profileFor(contact);
+    var suffix = text(profile.originalName, text(contact.name, contact.key));
+    return suffix ? '小穴档案-' + suffix : '';
+  }
+
+  function pussyArchiveAliasesFor(contact) {
+    var profile = profileFor(contact);
+    return [contact.name, profile.originalName, contact.key, contact.raw && contact.raw.name]
+      .map(function (item) { return text(item); })
+      .filter(function (item, index, list) { return item && list.indexOf(item) === index; });
+  }
+
+  function pussyArchiveContentFor(contact, dossier) {
+    var profile = profileFor(contact);
+    var aliases = pussyArchiveAliasesFor(contact);
+    return [
+      '【小穴档案】',
+      '角色：' + text(profile.originalName, contact.name),
+      '识别名：' + aliases.join('、'),
+      '',
+      '小穴评级：' + dossier.pussyRank,
+      '小穴描述：' + dossier.pussyDescription,
+      '小穴特质：' + dossier.pussyTrait,
+      '',
+      '【正文怎么用】',
+      '- 这是该角色在这局里的身体档案。写到和她的亲密场景时，照这里的评级、描述和特质来写，前后保持一致；其他场景用不上就不提。',
+      '- 正文里明确发生了新的身体变化，以正文最新的事实为准。'
+    ].join('\n');
+  }
+
+  // 1.9.0：聊天已经绑了世界书就用那本；没有才新建，并且给个认得出的名字（不给名字酒馆会拿时间戳当书名）
+  async function friendBookName() {
+    try {
+      if (typeof getChatWorldbookName === 'function') {
+        var existing = text(getChatWorldbookName('current'));
+        if (existing) return existing;
+      }
+    } catch (_) {}
+    var prefix = '';
+    try {
+      var names = typeof getCharWorldbookNames === 'function' ? await getCharWorldbookNames('current') : null;
+      if (names && names.primary) prefix = String(names.primary).replace(/\s*·?\s*World\s*[\d.]+\s*$/i, '').trim();
+    } catch (_) {}
+    var d = new Date();
+    return ((prefix || '一掷千金') + ' · 聊天档案 · ' + (d.getMonth() + 1) + '月' + d.getDate() + '日').slice(0, 80);
+  }
+
+  async function savePussyArchive(contact, dossier, button) {
+    if (!contact || !dossier || pussyArchiving) return;
+    if (PUSSY_RANKS.indexOf(text(dossier.pussyRank)) === -1 ||
+      isMissingDossierValue(dossier.pussyDescription) ||
+      isMissingDossierValue(dossier.pussyTrait)) {
+      setStatus('请先更新隐秘档案，生成有效的小穴评级、描述和特质', 'error');
+      return;
+    }
+    if (typeof getWorldbook !== 'function' || typeof createWorldbookEntries !== 'function' || typeof updateWorldbookWith !== 'function') {
+      setStatus('当前酒馆助手版本不支持聊天世界书写入', 'error');
+      return;
+    }
+    var entryName = pussyArchiveNameFor(contact);
+    if (!entryName) {
+      setStatus('角色名称为空，无法建立小穴档案', 'error');
+      return;
+    }
+    pussyArchiving = true;
+    if (button) {
+      button.disabled = true;
+      button.textContent = '写入中…';
+    }
+    setStatus('正在写入聊天世界书：' + entryName, 'info');
+    var chatAtStart = getFriendChatId();   // SD 内置：写到一半换了聊天，就别写进新聊天的世界书
+    try {
+      var worldbookName = '';
+      if (typeof getOrCreateChatWorldbook === 'function') {
+        var newBookName = await friendBookName();
+        if (destroyed || getFriendChatId() !== chatAtStart) throw new Error('聊天已经换了，没有写入');   // SD 内置
+        worldbookName = text(await getOrCreateChatWorldbook('current', newBookName));
+      } else if (typeof getChatWorldbookName === 'function') {
+        worldbookName = text(getChatWorldbookName('current'));
+      }
+      if (!worldbookName) throw new Error('当前聊天没有可用的聊天世界书');
+      var aliases = pussyArchiveAliasesFor(contact);
+      var profile = profileFor(contact);
+      var archiveSuffix = text(profile.originalName, text(contact.name, contact.key));
+      var content = pussyArchiveContentFor(contact, dossier);
+      var entries = await getWorldbook(worldbookName);
+      if (destroyed || getFriendChatId() !== chatAtStart) throw new Error('聊天已经换了，没有写入');   // SD 内置
+      var existing = (entries || []).filter(function (entry) {
+        return text(entry.name) === entryName ||
+          text(entry.extra && entry.extra.sb_pussy_dossier) === archiveSuffix;
+      });
+      var patch = {
+        name: entryName,
+        content: content,
+        enabled: true,
+        strategy: {
+          type: 'selective',
+          keys: aliases,
+          scan_depth: 8
+        },
+        position: {
+          type: 'after_character_definition',
+          role: 'system',
+          depth: 4,
+          order: 120
+        },
+        extra: {
+          sb_pussy_dossier: archiveSuffix,
+          source: 'friend-profile'
+        }
+      };
+      if (existing.length) {
+        var uids = existing.map(function (entry) { return entry.uid; });
+        await updateWorldbookWith(worldbookName, function (currentEntries) {
+          return currentEntries.map(function (entry) {
+            if (uids.indexOf(entry.uid) === -1) return entry;
+            return Object.assign({}, entry, patch, {
+              uid: entry.uid,
+              extra: Object.assign({}, entry.extra || {}, patch.extra)
+            });
+          });
+        });
+      } else {
+        await createWorldbookEntries(worldbookName, [patch]);
+      }
+      pussyArchiving = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = '隐秘建档';
+      }
+      setStatus('小穴档案已写入聊天世界书：' + entryName, 'ok');
+    } catch (error) {
+      pussyArchiving = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = '隐秘建档';
+      }
+      setStatus('小穴档案写入失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    }
+  }
+
+  function parseDossierJson(raw) {
+    var source = typeof raw === 'string' ? raw : (raw && raw.content) || '';
+    source = String(source || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    var start = source.indexOf('{');
+    var end = source.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new Error('AI 没有返回 JSON 对象');
+    return JSON.parse(source.slice(start, end + 1));
+  }
+
+  function stripRemovedDossierFields(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    if (value['状态'] && typeof value['状态'] === 'object' && !Array.isArray(value['状态'])) {
+      delete value['状态']['处女状态'];
+    }
+    delete value['性爱经历'];
+    return value;
+  }
+
+  function normalizeGeneratedDossier(raw, existing, forcedRank, evidenceSource) {
+    var base = existing && typeof existing === 'object' ? clonePlain(existing) : {};
+    var source = raw && typeof raw === 'object' ? raw : {};
+    var evidence = evidenceSource && evidenceSource.evidence && typeof evidenceSource.evidence === 'object'
+      ? evidenceSource.evidence
+      : {};
+    var body = source['身体信息'] && typeof source['身体信息'] === 'object' ? source['身体信息'] : {};
+    var oldBody = base['身体信息'] && typeof base['身体信息'] === 'object' ? base['身体信息'] : {};
+    var pussy = body['小穴'] && typeof body['小穴'] === 'object' ? body['小穴'] : {};
+    var oldPussy = oldBody['小穴'] && typeof oldBody['小穴'] === 'object' ? oldBody['小穴'] : {};
+    var status = source['状态'] && typeof source['状态'] === 'object' ? source['状态'] : {};
+    var clothes = source['服装'] && typeof source['服装'] === 'object' ? source['服装'] : {};
+    var rank = dossierString(forcedRank, pussy['小穴评级'] || pussy['名器评价'] || oldPussy['小穴评级'] || 'D', 80);
+    if (PUSSY_RANKS.indexOf(rank) === -1) {
+      rank = PUSSY_RANKS.indexOf(oldPussy['小穴评级']) !== -1 ? oldPussy['小穴评级'] : 'D';
+    }
+    var rankFallback = pussyFallback(rank);
+    var oldRank = text(oldPussy['小穴评级'] || oldPussy['名器评价']);
+    var reusableOldPussy = !oldRank || oldRank === rank;
+    var rankDescription = dossierString(
+      pussy['描述'],
+      evidence.pussy || (reusableOldPussy ? oldPussy['描述'] : '') || rankFallback.desc,
+      800
+    );
+    var rankTrait = dossierString(
+      pussy['特质'],
+      evidence.pussy || (reusableOldPussy ? oldPussy['特质'] : '') || rankFallback.trait,
+      800
+    );
+    if ((rank === 'D' || rank === 'C' || rank === 'B') &&
+      /主动吮吸|主动绞合|锁死|强负压|喷潮|全腔同步|六维|闭合紧致|强吸附|高摩擦/.test(rankDescription + rankTrait)) {
+      rankDescription = rankFallback.desc;
+      rankTrait = rankFallback.trait;
+    }
+    var number = function (value, fallback, max) {
+      var n = Number(value);
+      if (!isFinite(n)) n = Number(fallback) || 0;
+      return Math.max(0, Math.min(max, Math.round(n)));
+    };
+    var generated = {
+      '年龄': Math.max(18, number(source['年龄'], base['年龄'], 120)),   // 1.9.0：所有角色都是成年人
+      '与玩家关系': dossierString(source['与玩家关系'], base['与玩家关系'] || '刚认识', 300),
+      '社会身份': dossierString(source['社会身份'], base['社会身份'] || '未探知', 500),
+      '外貌': dossierString(source['外貌'], base['外貌'] || '未探知', 800),
+      '性格': dossierString(source['性格'], base['性格'] || '未探知', 500),
+      '好感度': number(source['好感度'], base['好感度'], 100),
+      '堕落度': number(source['堕落度'], base['堕落度'], 100),
+      '服装': {
+        '上身': dossierString(clothes['上身'], (base['服装'] || {})['上身'] || '未探知', 500),
+        '下身': dossierString(clothes['下身'], (base['服装'] || {})['下身'] || '未探知', 500),
+        '鞋袜': dossierString(clothes['鞋袜'], (base['服装'] || {})['鞋袜'] || '未探知', 500),
+        '配饰': dossierString(clothes['配饰'], (base['服装'] || {})['配饰'] || '未探知', 500)
+      },
+      '身体信息': {
+        '口腔': dossierString(body['口腔'], evidence.mouth || oldBody['口腔'] || '口腔与接吻细节尚未在既有记录中展开。', 800),
+        '乳房': dossierString(body['乳房'], evidence.breast || oldBody['乳房'] || '罩杯与触感尚未在既有记录中具体描写。', 800),
+        '小穴': {
+          '小穴评级': rank,
+          '描述': rankDescription,
+          '特质': rankTrait
+        },
+        '后穴': dossierString(body['后穴'], evidence.anus || oldBody['后穴'] || '后穴外观与开发程度尚未在既有记录中展开。', 800)
+      },
+      '状态': {
+        '恋爱状态': dossierString(status['恋爱状态'], (base['状态'] || {})['恋爱状态'] || '未探知', 400)
+      },
+      '秘密': dossierString(source['秘密'], base['秘密'] || '该角色的反差秘密尚未在既有记录中明确展开。', 1600),
+      'dossier_updated_at': new Date().toISOString()
+    };
+    return stripRemovedDossierFields(mergePlain(base, generated));
+  }
+
+  function dossierPrompt(contact, dmSource, plotSource, existing, forcedRank, worldbookSource) {
+    var worldbook = worldbookSource && typeof worldbookSource === 'object' ? worldbookSource : {};
+    var cleanExisting = stripRemovedDossierFields(clonePlain(existing || {}));
+    var current = cleanExisting && Object.keys(cleanExisting).length
+      ? JSON.stringify(cleanExisting, null, 2)
+      : '（尚未建档）';
+    var profile = profileFor(contact);
+    var raw = contact.raw || {};
+    var tagsForDossier = [];
+    var addTags = function (value) {
+      asList(value, 16).forEach(function (tag) {
+        if (tag && tagsForDossier.indexOf(tag) === -1) tagsForDossier.push(tag);
+      });
+    };
+    addTags(profile.tags);
+    addTags(raw.tags || raw.tag);
+    addTags(raw.archetype);
+    addTags(raw.type);
+    addTags(raw.personality);
+    addTags(raw.identity);
+    var gifts = showcaseFor(contact).slice(0, 10).map(function (item) { return item.name + (item.fake ? '（其实是高仿）' : ''); });   // SD 内置：高仿不当真品写给模型
+    var worldbookInstruction = worldbook.found
+      ? [
+        '- 聊天世界书中的对应角色档案：主依据。所有已明确的身份、经历、关系、身体与秘密必须优先保留。',
+        '- 正文相关楼层：用于补证世界书档案已经发生的状态变化与新增事件。',
+        '- 私信聊天：用于补证关系变化、称呼、偏好与近期互动。',
+        '- 正文明确写出的身体数据（例如罩杯、触感、体香、口腔、后穴）属于最新事实，必须覆盖世界书或旧档案中的缺失、占位和“尚未描写”。',
+        '- 角色标签、简介和旧档案：仅用于补全世界书没有覆盖的细节，不得覆盖世界书与正文已明确的事实。',
+        '- 如果世界书与正文发生明确冲突，以聊天中已经发生的正文事实更新状态；不得凭空推翻世界书设定。'
+      ].join('\n')
+      : [
+        '- 当前聊天世界书未发现该角色的独立档案，不能假装世界书已经建档。',
+        '- 先以角色标签、简介和旧档案确定稳定人设，再用正文与私信归纳已经发生的事实。',
+        '- 私信和正文都很少时，依据角色标签随机生成完整、可信且能驱动剧情的档案，不留空字段。'
+      ].join('\n');
+    var worldbookMaterial = worldbook.found
+      ? '【聊天世界书角色档案（主依据）】\n' + (worldbook.text || '')
+      : [
+        '【聊天世界书检索结果】未发现该角色的独立建档条目。',
+        worldbook.text ? '以下是同名或相关世界书条目，只作背景补证：\n' + worldbook.text : '（没有可用的世界书补证）'
+      ].join('\n');
+    var pussyWorldbookMaterial = worldbook.pussyFound
+      ? '【聊天世界书小穴档案（固定身体设定）】\n' + (worldbook.pussyText || '')
+      : '';
+    var evidence = plotSource && plotSource.evidence && typeof plotSource.evidence === 'object'
+      ? plotSource.evidence
+      : {};
+    var bodyEvidence = [
+      evidence.breast ? '乳房 / 罩杯证据：' + evidence.breast : '',
+      evidence.mouth ? '口腔证据：' + evidence.mouth : '',
+      evidence.pussy ? '小穴证据：' + evidence.pussy : '',
+      evidence.anus ? '后穴证据：' + evidence.anus : ''
+    ].filter(Boolean).join('\n');
+    return [
+      '你是「反差异闻录2.0」的隐秘档案师，同时执行 SugarElite™ 管家 S. 的调查建档流程。',
+      '先读聊天世界书，再结合正文、私信与角色标签，为当前角色刷新完整、可直接驱动剧情与状态栏的隐秘档案。',
+      '',
+      '【归档原则】',
+      '- 世界书与聊天中已经明确的事实是硬设定，只能归纳和延续，不能改写。',
+      '- “罩杯与触感尚未在既有记录中具体描写”等句子只是缺省提示，不是角色设定；正文出现过明确罩杯或触感时必须写回真实资料。',
+      '- 表面身份、性格与私密经历要写出真实反差，但不得推翻已经发生的剧情。',
+      '- 没有独立建档或材料稀少时，允许依据角色标签生成可信细节，不允许使用“待初始化”“未探查”。',
+      '- 只输出一个合法 JSON 对象，不要 Markdown、代码块、解释或任何 JSON 以外文字。',
+      '',
+      '【数据源优先级】',
+      worldbookInstruction,
+      '',
+      '【字段格式】',
+      '{',
+      '  "年龄": 18到120的整数（所有角色都是成年人）,',
+      '  "与玩家关系": "和 User 的当前关系",',
+      '  "社会身份": "社会/职业身份",',
+      '  "外貌": "发型、面容、身材与可识别特征",',
+      '  "性格": "性格底色与行为方式",',
+      '  "好感度": 0到100整数,',
+      '  "堕落度": 0到100整数,',
+      '  "服装": {"上身":"", "下身":"", "鞋袜":"", "配饰":""},',
+      '  "身体信息": {',
+      '    "口腔":"", "乳房":"必须写罩杯、触感与体香",',
+      '    "小穴":{"小穴评级":"", "描述":"基础形态、紧度、温湿度与客观遗憾", "特质":"受刺激后的动态反馈"},',
+      '    "后穴":"外观、褶皱、紧致度与开发潜质"',
+      '  },',
+      '  "状态": {"恋爱状态":"情感事实与反差"},',
+      '  "秘密": "一件有时间、地点、行为与对象的具体反差事件"',
+      '}',
+      '',
+      '【小穴评级枚举】',
+      'D、C、B、A、S、珍宝S、神话S、神话SSS·九曲回肠、神话SSS·千重吸髓、神话SSS·绝壁锁关、神话SSS·玉壶喷潮、神话SSS·地髓灼炎、神话SSS·重瓣千叶、神话SSS·回旋绞索、神话SSS·三阶天梯、神话SSS·雷殛失神、神话SSS·活体噬魂。',
+      '若上下文或玩家设定已经明确评级，必须保留；没有明确评级时按整体气质和既有证据判断，不得无依据地都给最高档。',
+      '【本次锁定小穴评级】' + forcedRank + '。这是硬约束，返回 JSON 的小穴评级必须与之完全一致。',
+      '【本次评级描写规则】' + pussyRankRule(forcedRank),
+      '乳房、小穴描述、小穴特质、后穴、秘密都必须写出具体内容，禁止返回空字符串、未探知、待初始化或未知。',
+      '',
+      '【当前角色】' + contact.name,
+      tagsForDossier.length ? '【角色标签/建档线索】' + tagsForDossier.join('、') : '',
+      raw.bio ? '【现有简介】' + raw.bio : '',
+      raw.dossier ? '【SugarElite 已有建档】\n' + String(raw.dossier).slice(0, 4000) : '',
+      gifts.length ? '【User 送过的礼物】' + gifts.join('、') : '',
+      '【现有档案】\n' + current,
+      '',
+      worldbookMaterial,
+      '',
+      pussyWorldbookMaterial,
+      '',
+      bodyEvidence
+        ? '【正文身体资料直接摘录（最高事实优先级）】\n' + bodyEvidence +
+          '\n若摘录本身没有角色名，必须结合相邻正文确认属于当前角色；无法确认归属时不得采用。'
+        : '',
+      '',
+      '【私信材料】共 ' + dmSource.total + ' 条，取最近 ' + dmSource.used + ' 条：',
+      dmSource.text || '（没有私信材料）',
+      '',
+      '【正文材料】通读 ' + plotSource.scanned + ' 层，角色名命中 ' + plotSource.hits + ' 次，身体资料线索命中 ' + (plotSource.bodyHits || 0) + ' 次，取 ' + plotSource.used + ' 层：',
+      plotSource.text || '（正文没有找到该角色）'
+    ].filter(Boolean).join('\n');
+  }
+
+  async function callDossierModel(prompt) {
+    if (typeof generateRaw !== 'function') throw new Error('当前 Tavern Helper 不支持 generateRaw');
+    dossierGenerationId = 'sdfp-dossier-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    // SD 内置：不再 120 秒后自动 stopGenerationById——慢一点的模型（或带思考的）写到一半被掐，JSON 就断了，
+    // 等于给输出加了长度上限。关脚本时 destroy 里照样会停掉这一次生成。
+    try {
+      return await generateRaw({
+        user_input: prompt,
+        should_silence: true,
+        max_chat_history: 0,
+        generation_id: dossierGenerationId,
+        ordered_prompts: [{
+          role: 'system',
+          content: '你是隐秘档案更新器。严格依据给定素材输出一个合法 JSON 对象，不要输出任何其他内容。'
+        }]
+      });
+    } finally {
+      dossierGenerationId = '';
+    }
+  }
+
+  async function commitDossier(contact, key, next) {
+    var now = new Date().toISOString();
+    var missing = false;
+    await updateVariablesWith(function (vars) {
+      // SD 内置：没有 sb / npcs 就不建（以前会凭空建空的 sb，手机就跳过「等待游戏数据」）
+      var npc = vars && vars.sb && vars.sb.npcs ? vars.sb.npcs[contact.name] : null;
+      if (!npc) { missing = true; return vars; }
+      if (!npc.profile || typeof npc.profile !== 'object') npc.profile = {};
+      npc.profile.hiddenDossier = stripRemovedDossierFields(clonePlain(next));
+      npc.profile.hiddenDossierUpdatedAt = now;
+      npc.profile.updatedAt = now;
+      return vars;
+    }, { type: 'chat' });
+    if (missing) throw new Error('「' + contact.name + '」已经不在手机里了，档案没有写入');
+    // SD 内置：不再写 MVU 的 stat_data['互动对象档案']。一掷千金不用 MVU；写进最新一楼的 message 变量，
+    // 那一楼一重 roll 就没了，和 profile 里这份对不上。读的时候 hiddenDossierFor 仍然认 MVU 里已有的档案。
+    return '聊天档案';
+  }
+
+  async function updateHiddenDossier(contact, button, selectedRank) {
+    if (!contact || dossierUpdating) return;
+    dossierUpdating = true;
+    if (button) {
+      button.disabled = true;
+      button.textContent = '更新中…';
+    }
+    setStatus('正在读取当前聊天世界书中的角色档案…', 'info');
+    var chatAtStart = getFriendChatId();   // SD 内置：生成途中换了聊天，结果不写进新聊天
+    try {
+      var worldbook = await readChatWorldbookDossier(contact);
+      setStatus(worldbook.found
+        ? '已找到世界书角色档案，正在核对正文与私信…'
+        : '世界书未发现独立建档，正在根据角色标签与聊天生成…', 'info');
+      var dm = serializeDmForDossier(contact);
+      var plot = await deepPlotForDossier(contact);
+      var stat = readMvuStatData();
+      var found = findArchiveForContact(stat['互动对象档案'], contact);
+      var profile = profileFor(contact);
+      // SD 内置：只往 profile.hiddenDossier 写了，MVU 里要是有更老的那份，别拿它当底稿把新写的盖回去
+      var ownDossier = contact.raw && contact.raw.profile && contact.raw.profile.hiddenDossier;
+      var ownNewer = ownDossier && typeof ownDossier === 'object' && (!found.archive ||
+        text(contact.raw.profile.hiddenDossierUpdatedAt || ownDossier['dossier_updated_at']) >= text(found.archive['dossier_updated_at']));
+      var existing = (ownNewer ? ownDossier : found.archive) || ownDossier || {};
+      var key = found.key || profile.originalName || contact.name;
+      var forcedRank = PUSSY_RANKS.indexOf(selectedRank) !== -1 ? selectedRank : rollPussyRank();
+      var prompt = dossierPrompt(contact, dm, plot, existing, forcedRank, worldbook);
+      // SD 内置：点一次只调一次模型。以前解析失败会自动再调一次——玩家的 API 按次数算钱，第二次是没点就花的。
+      var raw = await callDossierModel(prompt);
+      if (destroyed) return;
+      if (getFriendChatId() !== chatAtStart) throw new Error('生成途中换了聊天，这次的档案没有写入');
+      var parsed = null;
+      try {
+        parsed = parseDossierJson(raw);
+      } catch (parseError) {
+        throw new Error('模型这次没按 JSON 回（' + (parseError && parseError.message ? parseError.message : '解析失败') + '），什么都没写；可以再点一次「更新」');
+      }
+      var next = normalizeGeneratedDossier(parsed, existing, forcedRank, plot);
+      var destination = await commitDossier(contact, key, next);
+      if (destroyed) return;
+      setPussyRevealed(contact, false);
+      dossierUpdating = false;
+      lastDataRevision = null;
+      render();
+      setStatus(
+        '隐秘档案已更新 · 建档依据：' +
+        (worldbook.found ? (worldbook.chatFound ? '聊天世界书' : '角色世界书') : '角色标签与聊天') +
+        ' · 写入：' + destination + ' · 点击小穴评级重新鉴赏',
+        'ok'
+      );
+    } catch (error) {
+      dossierUpdating = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = '更新';
+      }
+      setStatus('隐秘档案更新失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    }
+  }
+
+  function normalizePersonName(value) {
+    return text(value)
+      .replace(/[（(][^）)]*[）)]/g, '')
+      .replace(/[\s\-—–·•.。,:：'"“”‘’]/g, '')
+      .replace(/[^0-9A-Za-z\u3400-\u9fff]/g, '')
+      .toLowerCase();
+  }
+
+  function personNameMatches(value, contact) {
+    var target = normalizePersonName(value);
+    if (!target) return false;
+    var profile = contact.raw && contact.raw.profile && typeof contact.raw.profile === 'object'
+      ? contact.raw.profile
+      : {};
+    var candidates = [contact.name, contact.key, contact.raw && contact.raw.name, profile.originalName];
+    var names = [];
+    candidates.forEach(function (candidate) {
+      var normalized = normalizePersonName(candidate);
+      if (normalized && names.indexOf(normalized) === -1) names.push(normalized);
+      var short = normalizePersonName(String(candidate || '').split(/[_＿]/, 1)[0]);
+      if (short.length >= 2 && names.indexOf(short) === -1) names.push(short);
+    });
+    for (var i = 0; i < names.length; i++) {
+      var name = names[i];
+      if (target === name || (name.length >= 2 && target.indexOf(name) !== -1)) return true;
+    }
+    return false;
+  }
+
+  function ledgerKey(amount, time, counterparty, channel) {
+    var channelText = text(channel);
+    var counterpartyText = text(counterparty);
+    if (channelText.indexOf('转账') !== -1 || counterpartyText.indexOf('转给') !== -1) {
+      return ['transfer', amount, text(time)].join('|');
+    }
+    return ['spend', amount, text(time), normalizePersonName(counterpartyText)].join('|');
+  }
+
+  // SD 内置：总账 allTransactions（带 id、gameDay，最多 500 笔）+ 钱包卡片上的最近 20 笔（没 id），按先后合成一本；
+  // 同一笔两边都有只留总账那条。退款配对要看先后，所以单独拿出来。
+  function walletRecordsOf(vars) {
+    var wallet = vars && vars.sb && vars.sb.wallet;
+    var all = wallet && Array.isArray(wallet.allTransactions) ? wallet.allTransactions : [];
+    var recent = wallet && Array.isArray(wallet.transactions) ? wallet.transactions : [];
+    var inAll = Object.create(null);
+    var out = [];
+    var sig = function (t) { return [t.direction, Number(t.amount) || 0, text(t.time), text(t.counterparty)].join('|'); };
+    all.forEach(function (t) {
+      if (!t || typeof t !== 'object') return;
+      out.push(t);
+      inAll[sig(t)] = (inAll[sig(t)] || 0) + 1;
+    });
+    recent.forEach(function (t) {
+      if (!t || typeof t !== 'object') return;
+      var k = sig(t);
+      if (inAll[k]) { inAll[k]--; return; }
+      out.push(t);
+    });
+    return out;
+  }
+
+  // SD 内置：退款那笔（手机记法：channel '回退'；counterparty 「正文重roll回退」或「消息回退 · 名字」）
+  function isRefundRecord(t) {
+    return !!t && (text(t.channel) === '回退' || /^(?:正文重roll回退|消息回退)/.test(text(t.counterparty)));
+  }
+
+  // SD 内置：哪些流水已经退了款。返回和 records 同下标的 true/空。
+  //  · 手机 10-28 起：正文重 roll 时原记录标 reversed:true，退款那笔 reverses 指回原记录的 id。
+  //  · 老存档没有标记：「正文重roll回退」按同金额、方向相反，往前找最近一笔正文记的账配对。
+  //  · 私信「消息回退 · 名字」只记一笔合计：方向「+」是 User 转给她的钱退回来——同金额的往前配一笔，
+  //    配不上就配紧挨着往前的连续几笔转账（加起来正好等于退款）。方向「-」是她转来的钱被扣回，原记录本来就不在往来里。
+  //  配不上的（原记录已经滚出 500 笔总账，或一次回退里两个方向混在一起）就不管，不倒扣。
+  function markRefunds(records) {
+    var refunded = [];
+    var byId = Object.create(null);
+    records.forEach(function (t, i) {
+      if (t.id) byId[String(t.id)] = i;
+      if (t.reversed) refunded[i] = true;
+    });
+    var open = function (j) { return !refunded[j] && !isRefundRecord(records[j]); };
+    records.forEach(function (t, i) {
+      if (!isRefundRecord(t)) return;
+      var amount = Number(t.amount) || 0;
+      if (!amount) return;
+      var target = text(t.reverses);
+      if (target) {
+        if (byId[target] !== undefined) refunded[byId[target]] = true;
+        return;
+      }
+      var cp = text(t.counterparty);
+      var opposite = t.direction === '+' ? '-' : '+';
+      var j;
+      if (/^正文重roll回退/.test(cp)) {
+        for (j = i - 1; j >= 0; j--) {
+          var o = records[j];
+          if (!open(j) || o.direction !== opposite || (Number(o.amount) || 0) !== amount) continue;
+          if (text(o.channel) && text(o.channel) !== '正文') continue;
+          refunded[j] = true;
+          return;
+        }
+        return;
+      }
+      if (!/^消息回退/.test(cp) || t.direction !== '+') return;
+      var who = normalizePersonName(cp.replace(/^消息回退\s*[·•]?\s*/, ''));
+      if (!who) return;
+      var mine = [];
+      for (j = i - 1; j >= 0; j--) {
+        var r = records[j];
+        if (!open(j) || r.direction !== '-') continue;
+        var rc = text(r.counterparty);
+        if (text(r.channel) !== '转账' && rc.indexOf('转给') !== 0) continue;
+        if (normalizePersonName(rc.replace(/^转给\s*/, '')) !== who) continue;
+        mine.push(j);
+      }
+      for (var a = 0; a < mine.length; a++) {
+        if ((Number(records[mine[a]].amount) || 0) === amount) { refunded[mine[a]] = true; return; }
+      }
+      var sum = 0;
+      for (var b = 0; b < mine.length; b++) {
+        sum += Number(records[mine[b]].amount) || 0;
+        if (sum === amount) {
+          for (var c = 0; c <= b; c++) refunded[mine[c]] = true;
+          return;
+        }
+        if (sum > amount) return;
+      }
+    });
+    return refunded;
+  }
+
+  function walletItemsBelongTo(contact, vars) {
+    var records = walletRecordsOf(vars);   // SD 内置
+    var refunded = markRefunds(records);   // SD 内置
+    var byKey = Object.create(null);
+    var items = [];
+    records.forEach(function (item, index) {
+      if (!item || item.direction !== '-') return;
+      if (isRefundRecord(item)) return;   // SD 内置：回退那笔自己不列（「消息回退 · 她」方向 - 的是她转来的钱被扣回，不是花在她身上）
+      var counterparty = text(item.counterparty);
+      var note = text(item.note);
+      if (!personNameMatches(counterparty, contact) && !personNameMatches(note, contact)) return;
+      var amount = Number(item.amount) || 0;
+      if (!amount) return;
+      var key = ledgerKey(amount, item.time, counterparty, item.channel);
+      if (byKey[key]) {
+        if (!byKey[key].gameDay && Number(item.gameDay)) byKey[key].gameDay = Number(item.gameDay);
+        return;
+      }
+      var entry = {
+        id: text(item.id),
+        amount: amount,
+        counterparty: counterparty || '往来',
+        channel: text(item.channel, '正文'),
+        time: text(item.time),
+        gameDay: Number(item.gameDay) || 0,
+        reversed: !!refunded[index],   // SD 内置：退了款，照样列出来但不算进累计
+        source: 'wallet'
+      };
+      byKey[key] = entry;
+      items.push(entry);
+    });
+    return items;
+  }
+
+  function transferLedgerFor(contact) {
+    var vars = readChatVariables();
+    var items = walletItemsBelongTo(contact, vars);
+    var seen = Object.create(null);
+    items.forEach(function (item) {
+      seen[ledgerKey(item.amount, item.time, item.counterparty, item.channel)] = true;
+    });
+    historyOf(contact.raw).forEach(function (message) {
+      if (message.sender !== 'USER' || message.type !== 'transfer') return;
+      var amount = Number(message.amount) || Number(String(message.content || '').replace(/[^0-9.]/g, '')) || 0;
+      if (!amount) return;
+      var time = text(message.time);
+      var gameDay = Number(message.gameDay) || 0;
+      var key = ledgerKey(amount, time, '转给 ' + contact.name, '转账');
+      if (seen[key]) return;
+      seen[key] = true;
+      items.push({
+        amount: amount,
+        counterparty: '转给 ' + contact.name,
+        channel: '转账',
+        time: time,
+        gameDay: gameDay,
+        source: 'message'
+      });
+    });
+    items.sort(function (a, b) {
+      if (b.gameDay !== a.gameDay) return b.gameDay - a.gameDay;
+      return String(b.time || '').localeCompare(String(a.time || ''));
+    });
+    if (!items.length && Number(contact.raw.total_transfers) > 0) {
+      items.push({
+        amount: Number(contact.raw.total_transfers),
+        counterparty: '旧版累计往来',
+        channel: '历史记录',
+        time: '',
+        gameDay: 0,
+        source: 'legacy'
+      });
+    }
+    var hidden = hiddenKeysFor(contact, 'hiddenLedger');
+    var hiddenCount = 0;
+    items = items.filter(function (item) {
+      if (!isLedgerHidden(hidden, item)) return true;   // SD 内置：原记录滚出总账、换成私信那条时也认得出是藏过的
+      hiddenCount++;
+      return false;
+    });
+    // SD 内置：退了款的照样列出来（标「已退款」），累计和笔数不算它们
+    var live = items.filter(function (item) { return !item.reversed; });
+    var total = live.reduce(function (sum, item) { return sum + item.amount; }, 0);
+    return { items: items, total: total, count: live.length, hidden: hiddenCount, refunded: items.length - live.length };
+  }
+
+  function normalizeImageValue(value, allowData) {
+    var v = text(value);
+    if (!v) return '';
+    if (allowData && /^idb:[\w-]{4,80}$/.test(v)) return v;   // 1.9.0：本地图片存在 IndexedDB，变量里只留这个引用
+    if (allowData && /^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(v)) return v;
+    try {
+      var url = new URL(v, HOST.location.href);
+      if (url.protocol === 'http:' || url.protocol === 'https:') return url.href;
+    } catch (_) {}
+    return '';
+  }
+
+  // 1.9.0：本地上传的图片存浏览器 IndexedDB，聊天变量里只放「idb:编号」。
+  // 以前整张图转成 base64 塞进聊天变量，存几张聊天文件就涨到十几 MB，手机每写一次变量都要连图存盘。
+  // 代价：IndexedDB 只在这台设备的浏览器里，换设备看不到——想多设备同步就用图床链接。
+  var IDB_NAME = 'sdfp-media';
+  var IDB_STORE = 'images';
+  // SD 内置：原来的 idbCache 存整张图的 dataURL 字符串；改成按编号缓存一份 objectURL，同一张图一直是同一个地址。
+  // 手机每次重画都是新的 <img>：地址没变，浏览器直接拿已经解码好的图，同一拍就显示；每次换地址就得重新解码，会空一下。
+  var idbUrlCache = Object.create(null);     // 编号 → blob: 地址；'' = 这台设备上没有这张图
+  var idbUrlPending = Object.create(null);   // 编号 → 正在读的 Promise
+  var idbDb = null;                          // SD 内置：关脚本时把连接关掉
+  var idbPromise = null;
+  function idbOpen() {
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise(function (resolve, reject) {
+      var factory = null;
+      try { factory = HOST.indexedDB; } catch (_) {}
+      if (!factory) { reject(new Error('当前浏览器不支持本地图片存储，请用图床链接')); return; }
+      var req = factory.open(IDB_NAME, 1);
+      req.onupgradeneeded = function () { req.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = function () {
+        idbDb = req.result;
+        if (destroyed) { idbClose(); reject(new Error('脚本已关闭')); return; }   // SD 内置：开到一半脚本关了
+        resolve(req.result);
+      };
+      req.onerror = function () { reject(req.error || new Error('本地图片库打不开')); };
+    });
+    idbPromise.catch(function () { idbPromise = null; });
+    return idbPromise;
+  }
+  function idbClose() {   // SD 内置
+    try { if (idbDb) idbDb.close(); } catch (_) {}
+    idbDb = null;
+    idbPromise = null;
+  }
+  function idbKeyOf(ref) {
+    return String(ref || '').replace(/^idb:/, '');
+  }
+  // SD 内置：图片编号带上「哪个聊天建的」。分支聊天会把父聊天的变量原样复制过来，换图时只删本聊天建的那张，
+  // 不然父聊天的头像就没了。老编号（img-时间-随机）不知道是谁建的，一律不删。
+  function chatImageTag() {
+    var s = getFriendChatId();
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return 'c' + (h >>> 0).toString(36);
+  }
+  function dataUrlToBlob(dataUrl) {
+    var m = /^data:([^;,]*)(;base64)?,([\s\S]*)$/i.exec(String(dataUrl || ''));
+    if (!m) return null;
+    var bin = m[2] ? atob(m[3]) : decodeURIComponent(m[3]);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: m[1] || 'application/octet-stream' });
+  }
+  function cacheObjectUrl(key, value) {
+    if (idbUrlCache[key]) return idbUrlCache[key];   // 已经有地址就一直用它，不重建
+    var blob = null;
+    try {
+      if (value && typeof value === 'object' && typeof value.size === 'number' && typeof value.type === 'string') blob = value;
+      else if (typeof value === 'string' && /^data:image\//i.test(value)) blob = dataUrlToBlob(value);
+    } catch (_) { blob = null; }
+    if (!blob) return '';
+    var url = '';
+    try { url = URL.createObjectURL(blob); } catch (_) { url = ''; }
+    if (url) idbUrlCache[key] = url;
+    return url;
+  }
+  // 同步查缓存：地址 / ''（这台设备没有这张图）/ null（还没读过）
+  function idbCachedUrl(ref) {
+    var key = idbKeyOf(ref);
+    return Object.prototype.hasOwnProperty.call(idbUrlCache, key) ? idbUrlCache[key] : null;
+  }
+  function idbObjectUrl(ref) {
+    var key = idbKeyOf(ref);
+    if (!key) return Promise.resolve('');
+    var cached = idbCachedUrl(key);
+    if (cached !== null) return Promise.resolve(cached);
+    if (idbUrlPending[key]) return idbUrlPending[key];
+    var pending = idbRequest('readonly', function (store) { return store.get(key); }).then(function (value) {
+      delete idbUrlPending[key];
+      if (destroyed) return '';
+      var url = cacheObjectUrl(key, value);
+      if (!url) idbUrlCache[key] = '';   // 图在另一台设备上：记下来，别每次重画都去读一遍
+      return url;
+    }).catch(function () {
+      delete idbUrlPending[key];
+      return '';
+    });
+    idbUrlPending[key] = pending;
+    return pending;
+  }
+  function releaseObjectUrls() {   // SD 内置：关脚本时全部 revoke
+    Object.keys(idbUrlCache).forEach(function (key) {
+      try { if (idbUrlCache[key]) URL.revokeObjectURL(idbUrlCache[key]); } catch (_) {}
+    });
+    idbUrlCache = Object.create(null);
+    idbUrlPending = Object.create(null);
+  }
+  function idbRequest(mode, work) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(IDB_STORE, mode);
+        var req = work(tx.objectStore(IDB_STORE));
+        tx.oncomplete = function () { resolve(req ? req.result : undefined); };
+        tx.onerror = tx.onabort = function () { reject(tx.error || new Error('本地图片库读写失败')); };
+      });
+    });
+  }
+  function idbSaveImage(dataUrl) {
+    var key = 'img-' + chatImageTag() + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);   // SD 内置：带聊天标记
+    return idbRequest('readwrite', function (store) { return store.put(dataUrl, key); }).then(function () {
+      cacheObjectUrl(key, dataUrl);   // SD 内置：存好就备一份地址，列表和页头马上用得上
+      return 'idb:' + key;
+    });
+  }
+  function idbDeleteImage(ref) {
+    if (!/^idb:/.test(String(ref || ''))) return Promise.resolve();
+    var key = idbKeyOf(ref);
+    if (key.indexOf('img-' + chatImageTag() + '-') !== 0) return Promise.resolve();   // SD 内置：不是本聊天建的不删
+    if (idbUrlCache[key]) {
+      try { URL.revokeObjectURL(idbUrlCache[key]); } catch (_) {}
+    }
+    delete idbUrlCache[key];
+    return idbRequest('readwrite', function (store) { return store.delete(key); }).catch(function () {});
+  }
+  function setImageSource(img, src) {
+    if (!/^idb:/.test(src)) { img.src = src; return; }
+    var quick = idbCachedUrl(src);   // SD 内置：缓存里有地址就同一拍放上
+    if (quick) { img.src = quick; return; }
+    idbObjectUrl(src).then(function (url) {
+      if (url) img.src = url;
+      else img.dispatchEvent(new (DOC.defaultView || HOST).Event('error'));   // 图存在另一台设备上：走加载失败的兜底
+    });
+  }
+
+  function applyImage(node, value, fallbackText, className) {
+    if (!node) return;
+    var src = normalizeImageValue(value, true);
+    if (node.dataset.sdfpImageSrc === src) return;
+    node.dataset.sdfpImageSrc = src;
+    node.replaceChildren();
+    if (!src) {
+      if (fallbackText) node.appendChild(DOC.createTextNode(fallbackText));
+      return;
+    }
+    // SD 内置：IndexedDB 的图这次开机还没读过——先放首字母，读出来再换上，不留一个空圈
+    if (/^idb:/.test(src) && !idbCachedUrl(src)) {
+      if (fallbackText) node.appendChild(DOC.createTextNode(fallbackText));
+      idbObjectUrl(src).then(function (url) {
+        if (!url || destroyed || node.dataset.sdfpImageSrc !== src) return;
+        node.dataset.sdfpImageSrc = '';
+        applyImage(node, value, fallbackText, className);
+      });
+      return;
+    }
+    var img = DOC.createElement('img');
+    img.className = className || 'sdfp-media-image';
+    img.alt = '';
+    if (className !== 'sdfp-avatar-img') img.loading = 'lazy';   // SD 内置：头像不懒加载，重画时同一拍就要显示
+    img.referrerPolicy = 'no-referrer';
+    img.addEventListener('error', function () {
+      node.dataset.sdfpImageSrc = '';
+      node.replaceChildren();
+      if (fallbackText) node.appendChild(DOC.createTextNode(fallbackText));
+    }, { once: true });
+    setImageSource(img, src);
+    node.appendChild(img);
+  }
+
+  function applyAvatar(node, value, name) {
+    applyImage(node, value, initialOf(name), 'sdfp-avatar-img');
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new DOC.defaultView.FileReader();
+      reader.onload = function () { resolve(String(reader.result || '')); };
+      reader.onerror = function () { reject(reader.error || new Error('本地图片读取失败')); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImageElement(src) {
+    return new Promise(function (resolve, reject) {
+      var img = new DOC.defaultView.Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = function () { reject(new Error('图片无法解码')); };
+      img.src = src;
+    });
+  }
+
+  async function prepareLocalImage(file, target) {
+    if (!file || !/^image\//i.test(String(file.type || ''))) throw new Error('请选择图片文件');
+    if (file.size > 12 * 1024 * 1024) throw new Error('图片不能超过 12MB');
+    var dataUrl = await fileToDataUrl(file);
+    var img = await loadImageElement(dataUrl);
+    var canvas = DOC.createElement('canvas');
+    var context = canvas.getContext('2d');
+    if (!context) throw new Error('当前浏览器无法处理图片');
+
+    if (target === 'avatar') {
+      var side = Math.min(img.naturalWidth || img.width, img.naturalHeight || img.height);
+      var sourceX = ((img.naturalWidth || img.width) - side) / 2;
+      var sourceY = ((img.naturalHeight || img.height) - side) / 2;
+      canvas.width = 360;
+      canvas.height = 360;
+      context.fillStyle = '#182536';
+      context.fillRect(0, 0, 360, 360);
+      context.drawImage(img, sourceX, sourceY, side, side, 0, 0, 360, 360);
+      return canvas.toDataURL('image/jpeg', 0.84);
+    }
+
+    var sourceWidth = img.naturalWidth || img.width;
+    var sourceHeight = img.naturalHeight || img.height;
+    var scale = Math.min(1, 1200 / sourceWidth, 1800 / sourceHeight);
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    context.fillStyle = '#111820';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(img, 0, 0, canvas.width, canvas.height);
+    var webp = canvas.toDataURL('image/webp', 0.86);
+    if (/^data:image\/webp/i.test(webp) && webp.length < 1800000) return webp;
+    return canvas.toDataURL('image/jpeg', 0.82);
+  }
+
+  function giftNameFromMessage(message) {
+    var body = text(message && (message.content || message.text));
+    if (message && message.type === 'toy' && body) {
+      return '遥控玩具 · ' + clampText(body.replace(/^送了你一个遥控玩具：\s*/, ''), 90);
+    }
+    if (!body || (message.type !== 'gift' && body.indexOf('[送礼物]') === -1)) return '';
+    var name = body.replace(/^🎁\s*/, '').replace(/^\[送礼物\]\s*/, '');
+    name = name.split('——')[0].split('(')[0].split('（')[0];
+    return clampText(name, 100);
+  }
+
+  function normalizeGiftText(value) {
+    return text(value)
+      .toLowerCase()
+      .replace(/^(?:高仿|租借|礼物|赠品)\s*[·:：-]?\s*/, '')
+      .replace(/[与和及]/g, '')
+      .replace(/[^\u3400-\u9fffa-z0-9]/g, '');
+  }
+
+  function giftNameSimilarity(a, b) {
+    var left = normalizeGiftText(a);
+    var right = normalizeGiftText(b);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+    if (left.indexOf(right) !== -1 || right.indexOf(left) !== -1) return 0.86;
+    var counts = Object.create(null);
+    for (var i = 0; i < left.length; i++) counts[left.charAt(i)] = (counts[left.charAt(i)] || 0) + 1;
+    var overlap = 0;
+    for (var j = 0; j < right.length; j++) {
+      var ch = right.charAt(j);
+      if (!counts[ch]) continue;
+      overlap++;
+      counts[ch]--;
+    }
+    return overlap / Math.max(left.length, right.length);
+  }
+
+  function walletGiftItemName(item, contact) {
+    var channel = text(item && item.channel);
+    var raw = text(item && (item.note || item.counterparty));
+    if (!raw || channel.indexOf('转账') !== -1 || /^(?:转给|消息回退|正文重roll回退)/.test(raw)) return '';
+    var parts = raw.split(/\s*(?:[·•]|→)\s*/).map(function (part) { return text(part); }).filter(Boolean);
+    if (parts.length > 1 && personNameMatches(parts[parts.length - 1], contact)) parts.pop();
+    return clampText(parts.join(' · '), 120);
+  }
+
+  // SD 内置：这些频道的钱不是「买了一件东西」，不拿来给礼物补价钱（频道名照 phone_panel / dm_generator 的实际写法）
+  var NOT_GIFT_CHANNELS = ['回退', '二手', '校正', '账单', '税务', '一日租借', 'SugarElite体验', 'SugarElite代订', 'DM'];
+
+  function walletGiftRecordsFor(contact, vars) {
+    var merged = walletRecordsOf(vars);    // SD 内置
+    var refunded = markRefunds(merged);    // SD 内置：退了款的不算
+    var seenIds = Object.create(null);
+    var seenComposite = Object.create(null);
+    var records = [];
+    var addRecord = function (item, allowId, index) {
+      if (!item || item.direction !== '-') return;
+      if (refunded[index] || NOT_GIFT_CHANNELS.indexOf(text(item.channel)) !== -1) return;   // SD 内置
+      var amount = Number(item.amount) || 0;
+      if (!amount) return;
+      var name = walletGiftItemName(item, contact);
+      if (!name) return;
+      var id = text(item.id);
+      var compositeKey = [
+        amount,
+        text(item.time),
+        normalizeGiftText(item.counterparty),
+        normalizeGiftText(item.note),
+        normalizeGiftText(name)
+      ].join('|');
+      if (allowId && id) {
+        if (seenIds[id]) return;
+      } else if (seenComposite[compositeKey]) {
+        return;
+      }
+      if (id) seenIds[id] = true;
+      seenComposite[compositeKey] = true;
+      records.push({
+        name: name,
+        amount: amount,
+        time: text(item.time),
+        gameDay: Number(item.gameDay) || 0,
+        channel: text(item.channel),
+        // SD 内置：莆田直发买的是高仿（流水记「高仿 · 品名」）
+        fake: text(item.channel) === '莆田直发' || /^高仿\s*[·:：-]/.test(text(item.counterparty)),
+        index: records.length
+      });
+    };
+    merged.forEach(function (item, index) { addRecord(item, true, index); });   // SD 内置：总账和最近 20 笔已经合好
+    return records;
+  }
+
+  function giftTimeKey(value) {
+    var match = text(value).match(/(\d{1,2}:\d{2})/);
+    return match ? match[1] : '';
+  }
+
+  function giftTimeMatches(item, record) {
+    if (item.gameDay > 0 && record.gameDay > 0 && item.gameDay !== record.gameDay) return false;
+    var left = giftTimeKey(item.time);
+    var right = giftTimeKey(record.time);
+    return !!left && left === right;
+  }
+
+  function fillGiftPricesFromWallet(items, records) {
+    if (!items.length || !records.length) return items;
+    var used = Object.create(null);
+    items.forEach(function (item) {
+      if (!(item.price > 0)) return;
+      var best = null;
+      records.forEach(function (record) {
+        if (used[record.index] || record.amount !== item.price || !giftTimeMatches(item, record)) return;
+        var score = giftNameSimilarity(item.name, record.name);
+        if (!best || score > best.score) best = { record: record, score: score };
+      });
+      if (best) used[best.record.index] = true;
+    });
+    items.forEach(function (item) {
+      if (item.price > 0) return;
+      var best = null;
+      records.forEach(function (record) {
+        if (used[record.index]) return;
+        var similarity = giftNameSimilarity(item.name, record.name);
+        if (similarity < 0.55) return;
+        var score = similarity * 100 + (giftTimeMatches(item, record) ? 35 : 0);
+        if (!best || score > best.score) best = { record: record, score: score };
+      });
+      if (!best) return;
+      item.price = best.record.amount;
+      item.channel = item.channel || best.record.channel;
+      if (best.record.fake) item.fake = true;   // SD 内置：对上的是莆田直发那笔，就是高仿
+      used[best.record.index] = true;
+    });
+
+    var groups = Object.create(null);
+    items.forEach(function (item) {
+      if (item.price > 0 || !giftTimeKey(item.time)) return;
+      var key = (item.gameDay || 0) + '|' + giftTimeKey(item.time);
+      if (!groups[key]) groups[key] = { items: [], records: [] };
+      groups[key].items.push(item);
+    });
+    records.forEach(function (record) {
+      if (used[record.index] || !giftTimeKey(record.time)) return;
+      var key = (record.gameDay || 0) + '|' + giftTimeKey(record.time);
+      if (!groups[key]) return;
+      groups[key].records.push(record);
+    });
+    Object.keys(groups).forEach(function (key) {
+      var group = groups[key];
+      if (!group.items.length || !group.records.length) return;
+      if (group.items.length === 1 || group.items.length === group.records.length) {
+        group.items.forEach(function (item, index) {
+          var record = group.records[index] || group.records[0];
+          if (!record || used[record.index]) return;
+          item.price = record.amount;
+          item.channel = item.channel || record.channel;
+          if (record.fake) item.fake = true;   // SD 内置
+          used[record.index] = true;
+        });
+      }
+    });
+    return items;
+  }
+
+  function showcaseFor(contact) {
+    var vars = readChatVariables();
+    var closet = vars && vars.sb && Array.isArray(vars.sb.closet) ? vars.sb.closet : [];
+    var items = [];
+    var seen = Object.create(null);
+    closet.forEach(function (item) {
+      if (!item || !personNameMatches(item.to, contact)) return;
+      var name = clampText(item.name, 120);
+      if (!name) return;
+      var key = name.toLowerCase();
+      seen[key] = true;
+      items.push({
+        name: name,
+        price: Number(item.price) || 0,
+        channel: text(item.from),
+        image: normalizeImageValue(item.img, true),
+        time: text(item.time),
+        gameDay: Number(item.gameDay) || 0,
+        fake: !!item.fake,
+        source: 'closet'
+      });
+    });
+    historyOf(contact.raw).forEach(function (message) {
+      if (message.sender !== 'USER') return;
+      var name = giftNameFromMessage(message);
+      if (!name || seen[name.toLowerCase()]) return;
+      seen[name.toLowerCase()] = true;
+      // SD 内置：手机送礼的私信写着价钱（「[送礼物] 品名 —— ¥38,000（…）」），衣橱和流水都被挤掉以后还能显示价值
+      var priceMatch = text(message.content || message.text).match(/——\s*[¥￥$]?\s*([\d,]+(?:\.\d+)?)/);
+      items.push({
+        name: name,
+        price: priceMatch ? Number(priceMatch[1].replace(/,/g, '')) || 0 : 0,
+        channel: '私信礼物',
+        image: '',
+        time: text(message.time),
+        gameDay: Number(message.gameDay) || 0,
+        // SD 内置：衣橱那条被挤出 60 件以后只剩私信这条。手机送高仿时私信写的是「（专柜买的，寄到你那了）」
+        fake: /（专柜买的/.test(text(message.content || message.text)),
+        source: 'message'
+      });
+    });
+    items.reverse();
+    fillGiftPricesFromWallet(items, walletGiftRecordsFor(contact, vars));
+    var hiddenGifts = hiddenKeysFor(contact, 'hiddenGifts');
+    var shown = items.filter(function (item) { return !isGiftHidden(hiddenGifts, item); });   // SD 内置
+    shown.hiddenCount = items.length - shown.length;
+    return shown;
+  }
+
+  function showcaseMeta(items) {
+    var clothing = 0;
+    var total = 0;
+    items.forEach(function (item) {
+      if (CLOTHING_RE.test(item.name)) clothing++;
+      total += item.price;
+    });
+    return { clothing: clothing, total: total, count: items.length };
+  }
+
+  function mutateChatVariables(updater) {
+    try {
+      if (typeof updateVariablesWith === 'function') {
+        return Promise.resolve(updateVariablesWith(updater, { type: 'chat' }));
+      }
+      var vars = readChatVariables();
+      updater(vars);
+      if (typeof replaceVariables !== 'function') throw new Error('酒馆变量接口不可用');
+      replaceVariables(vars, { type: 'chat' });
+      return Promise.resolve(true);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  // 1.9.0：往来、橱窗只是钱包、衣橱、私信的一个视图。以前的「删除」按金额和几点几分去删原记录，
+  // 同一分钟同金额别人的那笔也会被删，余额也不退，流水、税务、榜单全对不上；橱窗删礼物还会删掉衣橱里的东西。
+  // 现在改成从主页隐藏：只在这个人的 profile 里记一笔，原记录一个字不动，随时能恢复。
+  function ledgerItemKey(item) {
+    if (item.id) return 'id:' + item.id;
+    return [item.source, item.amount, text(item.time), item.gameDay || 0, normalizePersonName(item.counterparty), text(item.channel)].join('|');
+  }
+
+  function showcaseItemKey(item) {
+    return [item.source, normalizeGiftText(item.name), giftTimeKey(item.time) || text(item.time), item.gameDay || 0].join('|');
+  }
+
+  // SD 内置：备用键。总账只留 500 笔、衣橱只留 60 件，原记录被挤掉以后，往来/橱窗会改用私信里那条备份
+  // （source 'message'），主键跟着变，藏过的又冒出来。隐藏时把备用键一起记下；只有私信备份那条才认备用键。
+  function ledgerAltKey(item) {
+    return 'k:' + ledgerKey(item.amount, item.time, item.counterparty, item.channel);
+  }
+
+  function showcaseAltKey(item) {
+    return 'n:' + normalizeGiftText(item.name);
+  }
+
+  function isLedgerHidden(hidden, item) {
+    return !!(hidden[ledgerItemKey(item)] || (item.source === 'message' && hidden[ledgerAltKey(item)]));
+  }
+
+  function isGiftHidden(hidden, item) {
+    return !!(hidden[showcaseItemKey(item)] || (item.source === 'message' && hidden[showcaseAltKey(item)]));
+  }
+
+  function hiddenKeysFor(contact, field) {
+    var p = contact && contact.raw && contact.raw.profile;
+    var set = Object.create(null);
+    (p && Array.isArray(p[field]) ? p[field] : []).forEach(function (key) { set[String(key)] = true; });
+    return set;
+  }
+
+  function setHiddenKeys(contact, field, keys, message) {
+    var patch = {};
+    patch[field] = keys.slice(-500);
+    patch.updatedAt = new Date().toISOString();
+    return saveProfile(contact.name, patch, null).then(function (ok) {
+      if (ok && message) setStatus(message, 'ok');
+      return ok;
+    });
+  }
+
+  function hideItem(contact, field, key, message, button) {
+    if (button) {
+      button.disabled = true;
+      button.textContent = '…';
+    }
+    var fresh = readRawContacts().filter(function (c) { return c.name === contact.name; })[0] || contact;   // 连点两下别用旧名单把前一笔盖掉
+    var p = fresh.raw && fresh.raw.profile;
+    var list = p && Array.isArray(p[field]) ? p[field].slice() : [];
+    (Array.isArray(key) ? key : [key]).forEach(function (k) {   // SD 内置：主键 + 备用键
+      if (k && list.indexOf(k) === -1) list.push(k);
+    });
+    return setHiddenKeys(fresh, field, list, message).then(function (ok) {
+      if (!ok && button) {
+        button.disabled = false;
+        button.textContent = field === 'hiddenLedger' ? '−' : '×';
+      }
+      return ok;
+    });
+  }
+
+  function deleteLedgerItem(contact, item, button) {
+    if (!contact || !item) return;
+    hideItem(contact, 'hiddenLedger', [ledgerItemKey(item), ledgerAltKey(item)], '已从主页隐藏：' + formatMoney(item.amount) + '（钱包流水没动）', button);   // SD 内置：连备用键
+  }
+
+  function deleteShowcaseItem(contact, item, button) {
+    if (!contact || !item) return;
+    hideItem(contact, 'hiddenGifts', [showcaseItemKey(item), showcaseAltKey(item)], '已从橱窗隐藏：' + item.name + '（衣橱和私信没动）', button);   // SD 内置：连备用键
+  }
+
+  function appendRestore(container, contact, field, count, unit) {
+    if (!count) return;
+    var restore = el('button', 'sdfp-restore-hidden', '恢复已隐藏的 ' + count + ' ' + unit);
+    restore.type = 'button';
+    restore.addEventListener('click', function () {
+      restore.disabled = true;
+      setHiddenKeys(contact, field, [], '已恢复隐藏的' + unit);
+    });
+    container.appendChild(restore);
+  }
+
+  function currentPhoneName() {
+    // 1.9.0：问手机接口，不再读页头文字（日历、流水这些页也有页头）
+    try {
+      var api = HOST.SugarOS;
+      if (api && typeof api.getCurrentChat === 'function') return text(api.getCurrentChat());
+    } catch (_) {}
+    return '';
+  }
+
+  function rememberedName() {
+    try { return text(HOST.localStorage.getItem(LAST_CONTACT_KEY)); } catch (_) {}
+    return '';
+  }
+
+  function rememberName(name) {
+    try { HOST.localStorage.setItem(LAST_CONTACT_KEY, text(name)); } catch (_) {}
+  }
+
+  function chooseInitialName(preferred) {
+    var wanted = text(preferred) || currentPhoneName() || rememberedName();
+    if (wanted) {
+      for (var i = 0; i < contacts.length; i++) {
+        if (contacts[i].name === wanted) return wanted;
+      }
+    }
+    return contacts.length ? contacts[0].name : '';
+  }
+
+  function findContact(name) {
+    for (var i = 0; i < contacts.length; i++) {
+      if (contacts[i].name === name) return contacts[i];
+    }
+    return null;
+  }
+
+  function el(tag, className, value) {
+    var node = DOC.createElement(tag);
+    if (className) node.className = className;
+    if (value !== undefined && value !== null) node.textContent = String(value);
+    return node;
+  }
+
+  function append(parent) {
+    for (var i = 1; i < arguments.length; i++) {
+      var child = arguments[i];
+      if (child === null || child === undefined) continue;
+      parent.appendChild(typeof child === 'string' ? DOC.createTextNode(child) : child);
+    }
+    return parent;
+  }
+
+  function setStatus(message, kind) {
+    if (!statusEl) return;
+    statusEl.textContent = text(message);
+    statusEl.dataset.kind = kind || 'info';
+  }
+
+  function installStyle() {
+    var existing = DOC.getElementById(STYLE_ID);
+    if (existing && existing.dataset.version === VERSION) return;
+    if (existing) existing.remove();
+    var style = DOC.createElement('style');
+    style.id = STYLE_ID;
+    style.dataset.version = VERSION;
+    style.textContent = [
+      // SD 内置：配色改成变量，跟手机主题走。--sdfp-ink 等 10 个在打开/重画时从 #sbnyc-panel 抄（含夜间，见 applyPhoneTheme）；
+      // 下面是抄不到时的默认值（= 手机白天配色），.sdfp-night 那组是夜间默认值和几样派生色。
+      // 隐秘档案的粉（--sdfp-rose*）、建档按钮的紫（--sdfp-plum*）各有一组夜间色；立绘框和图片预览本来就是深底，不跟着变；稀有度徽章保持原色。
+      '#sdfp-root{--sdfp-ink:#1f2937;--sdfp-ink-sub:#6b7280;--sdfp-ink-faint:#a8acb3;--sdfp-paper:#f5f3ee;--sdfp-paper-2:#fbf9f4;--sdfp-paper-3:#ece8dd;--sdfp-line:rgba(26,42,58,.14);--sdfp-gold:#b89968;--sdfp-red:#9a1b29;--sdfp-green:#4f6b5c;',
+      '  --sdfp-head:#1f2937;--sdfp-head-ink:#f5f0e6;--sdfp-head-line:rgba(255,255,255,.22);--sdfp-head-btn:rgba(255,255,255,.07);--sdfp-head-field:#2b3442;--sdfp-field:#fffdf8;--sdfp-primary:#1f2937;--sdfp-primary-ink:#fbf9f4;--sdfp-edge:rgba(177,148,97,.55);--sdfp-gold-ink:#7d6438;',
+      '  --sdfp-rose:#87405b;--sdfp-rose-sub:#9a6176;--sdfp-rose-ink:#66444f;--sdfp-rose-faint:#8d737d;--sdfp-rose-bg:#fff9fb;--sdfp-rose-bg-2:#fffafb;--sdfp-rose-line:#ddc2ce;--sdfp-rose-line-2:#ead8df;--sdfp-rose-edge:#c99aae;--sdfp-rose-btn:#fff7fa;--sdfp-rose-head:#2a2027;--sdfp-rose-strong:#8d4963;',
+      '  --sdfp-plum:#62458a;--sdfp-plum-bg:#f1ecfb;--sdfp-plum-line:#b7a1d4;--sdfp-tint-green:#edf1ed;--sdfp-tint-red:#f2e7de;}',
+      '#sdfp-root.sdfp-night{--sdfp-ink:#ece7db;--sdfp-ink-sub:#9a968c;--sdfp-ink-faint:#615e57;--sdfp-paper:#16181e;--sdfp-paper-2:#1e212a;--sdfp-paper-3:#262a34;--sdfp-line:rgba(212,184,138,.16);--sdfp-gold:#cba86a;--sdfp-red:#c65a63;--sdfp-green:#79a68c;',
+      '  --sdfp-head:#0e1015;--sdfp-head-ink:#ece7db;--sdfp-head-line:rgba(203,168,106,.3);--sdfp-head-btn:rgba(255,255,255,.05);--sdfp-head-field:#1a1d24;--sdfp-field:#262a34;--sdfp-primary:#cba86a;--sdfp-primary-ink:#16181e;--sdfp-edge:rgba(203,168,106,.38);--sdfp-gold-ink:#d9c08a;',
+      '  --sdfp-rose:#e3a6be;--sdfp-rose-sub:#c98fa6;--sdfp-rose-ink:#e8d3db;--sdfp-rose-faint:#a08a94;--sdfp-rose-bg:#211c22;--sdfp-rose-bg-2:#1b171c;--sdfp-rose-line:rgba(227,166,190,.26);--sdfp-rose-line-2:rgba(227,166,190,.14);--sdfp-rose-edge:rgba(227,166,190,.45);--sdfp-rose-btn:#2a2129;--sdfp-rose-head:#0e1015;--sdfp-rose-strong:#b4607f;',
+      '  --sdfp-plum:#cdb6ee;--sdfp-plum-bg:#26212f;--sdfp-plum-line:rgba(183,161,212,.45);--sdfp-tint-green:rgba(121,166,140,.16);--sdfp-tint-red:rgba(198,90,99,.16);}',
+      '#sdfp-root{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;z-index:2147483646;display:grid;place-items:center;padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));box-sizing:border-box;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI","Noto Sans SC",sans-serif;color:var(--sdfp-ink);}',
+      '#sdfp-root[hidden]{display:none!important;}',
+      '#sdfp-root .sdfp-backdrop{position:absolute;inset:0;background:rgba(6,10,16,.72);-webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px);}',
+      '#sdfp-root .sdfp-dialog{position:relative;width:min(840px,calc(100vw - 20px));max-height:min(88vh,780px);max-height:min(88dvh,780px);display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--sdfp-edge);border-radius:8px;background:var(--sdfp-paper);color:var(--sdfp-ink);box-shadow:0 24px 90px rgba(0,0,0,.46);}',
+      '#sdfp-root .sdfp-head{display:flex;align-items:center;gap:14px;min-height:56px;padding:10px 14px;border-bottom:1px solid var(--sdfp-line);background:var(--sdfp-head);color:var(--sdfp-head-ink);flex:none;}',
+      '#sdfp-root .sdfp-brand{min-width:0;flex:1;}',
+      '#sdfp-root .sdfp-kicker{display:block;color:var(--sdfp-gold);font-size:10px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;}',
+      '#sdfp-root .sdfp-title{margin:2px 0 0;font:600 18px/1.2 ui-serif,Georgia,"Noto Serif SC",serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '#sdfp-root .sdfp-head-actions{display:flex;align-items:center;gap:8px;min-width:0;}',
+      '#sdfp-root .sdfp-select{max-width:230px;min-width:112px;height:34px;border:1px solid var(--sdfp-head-line);border-radius:6px;background:var(--sdfp-head-field);color:var(--sdfp-head-ink);padding:0 9px;font:500 12px/1 system-ui,sans-serif;}',
+      '#sdfp-root .sdfp-select option{background:var(--sdfp-paper-2);color:var(--sdfp-ink);}',
+      '#sdfp-root .sdfp-close{width:34px;height:34px;border:1px solid var(--sdfp-head-line);border-radius:6px;background:var(--sdfp-head-btn);color:var(--sdfp-head-ink);font:400 22px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-close:hover,#sdfp-root .sdfp-close:focus-visible{border-color:var(--sdfp-gold);outline:2px solid var(--sdfp-edge);outline-offset:1px;}',
+      '#sdfp-root .sdfp-body{min-height:0;overflow:auto;overscroll-behavior:contain;}',
+      '#sdfp-root .sdfp-hero{display:grid;grid-template-columns:96px minmax(0,1fr);gap:18px;padding:22px 24px 18px;background:var(--sdfp-paper-3);border-bottom:1px solid var(--sdfp-line);}',
+      '#sdfp-root .sdfp-avatar{position:relative;width:96px;height:96px;padding:0;border-radius:8px;display:grid;place-items:center;overflow:hidden;background:linear-gradient(135deg,var(--sdfp-paper-3),var(--sdfp-paper-2));color:var(--sdfp-gold);border:1px solid var(--sdfp-gold);font:600 34px/1 ui-serif,Georgia,"Noto Serif SC",serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-avatar:hover,#sdfp-root .sdfp-avatar:focus-visible{outline:2px solid var(--sdfp-gold);outline-offset:2px;}',
+      '#sdfp-root .sdfp-avatar-media{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden;}',
+      '#sdfp-root .sdfp-avatar-img{width:100%;height:100%;object-fit:cover;display:block;}',
+      '#sdfp-root .sdfp-media-edit-badge{position:absolute;right:4px;bottom:4px;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--sdfp-head);border:1px solid var(--sdfp-gold);color:var(--sdfp-head-ink);font-size:11px;z-index:2;}',
+      '#sdfp-root .sdfp-hero-copy{min-width:0;align-self:center;}',
+      '#sdfp-root .sdfp-name-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}',
+      '#sdfp-root .sdfp-name{margin:0;font:600 clamp(24px,4vw,34px)/1.08 ui-serif,Georgia,"Noto Serif SC",serif;color:var(--sdfp-ink);overflow-wrap:anywhere;}',
+      '#sdfp-root .sdfp-original-name{min-height:28px;padding:0 9px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-field);color:var(--sdfp-gold-ink);font:600 10px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-original-name:hover,#sdfp-root .sdfp-original-name:focus-visible{outline:2px solid var(--sdfp-edge);outline-offset:1px;}',
+      '#sdfp-root .sdfp-original-editor{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;}',
+      '#sdfp-root .sdfp-original-editor input{width:150px;min-width:0;height:30px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-field);color:var(--sdfp-ink);padding:0 8px;font:500 11px/1 system-ui,sans-serif;}',
+      '#sdfp-root .sdfp-original-editor button{height:30px;padding:0 9px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-paper-2);color:var(--sdfp-ink);font:700 10px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-original-editor button.primary{background:var(--sdfp-primary);border-color:var(--sdfp-primary);color:var(--sdfp-primary-ink);}',
+      '#sdfp-root .sdfp-headline{margin:7px 0 0;color:var(--sdfp-ink-sub);font-size:13px;line-height:1.55;overflow-wrap:anywhere;}',
+      '#sdfp-root .sdfp-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}',
+      '#sdfp-root .sdfp-tag{padding:4px 8px;border-radius:4px;background:var(--sdfp-paper-2);border:1px solid var(--sdfp-line);color:var(--sdfp-gold-ink);font-size:11px;}',
+      '#sdfp-root .sdfp-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-bottom:1px solid var(--sdfp-line);background:var(--sdfp-paper-2);}',
+      '#sdfp-root .sdfp-stat{min-width:0;padding:12px 14px;border-right:1px solid var(--sdfp-line);}',
+      '#sdfp-root .sdfp-stat:last-child{border-right:0;}',
+      '#sdfp-root .sdfp-stat b{display:block;color:var(--sdfp-ink);font:700 15px/1.2 system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '#sdfp-root .sdfp-stat span{display:block;margin-top:3px;color:var(--sdfp-ink-sub);font-size:10px;letter-spacing:.05em;text-transform:uppercase;}',
+      '#sdfp-root .sdfp-tabs{display:flex;gap:2px;padding:0 18px;border-bottom:1px solid var(--sdfp-line);background:var(--sdfp-paper-2);position:sticky;top:0;z-index:3;}',
+      '#sdfp-root .sdfp-tab{position:relative;min-height:44px;padding:0 16px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--sdfp-ink-sub);font:600 12px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-tab[aria-selected="true"]{color:var(--sdfp-ink);border-bottom-color:var(--sdfp-gold);}',
+      '#sdfp-root .sdfp-tab:focus-visible{outline:2px solid var(--sdfp-gold);outline-offset:-3px;}',
+      '#sdfp-root .sdfp-panel{padding:18px 22px 24px;}',
+      '#sdfp-root .sdfp-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;align-items:start;}',
+      '#sdfp-root .sdfp-home-grid{align-items:stretch;}',
+      '#sdfp-root .sdfp-home-grid>.sdfp-section{min-width:0;min-height:0;}',
+      '#sdfp-root .sdfp-section{border:1px solid var(--sdfp-line);border-radius:8px;background:var(--sdfp-paper-2);padding:14px;}',
+      '#sdfp-root .sdfp-section h3{margin:0 0 9px;color:var(--sdfp-ink);font:700 13px/1.3 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#sdfp-root .sdfp-copy{margin:0;color:var(--sdfp-ink-sub);font-size:13px;line-height:1.72;white-space:pre-wrap;overflow-wrap:anywhere;}',
+      '#sdfp-root .sdfp-hidden-dossier{position:relative;display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;border-color:var(--sdfp-rose-line);background:var(--sdfp-rose-bg);}',
+      '#sdfp-root .sdfp-hidden-dossier>h3{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--sdfp-rose);}',
+      '#sdfp-root .sdfp-dossier-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap;}',
+      '#sdfp-root .sdfp-dossier-update,#sdfp-root .sdfp-dossier-archive{min-height:26px;padding:0 8px;border:1px solid var(--sdfp-rose-edge);border-radius:5px;font:700 10px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-dossier-update{background:var(--sdfp-rose-btn);color:var(--sdfp-rose);}',
+      '#sdfp-root .sdfp-dossier-archive{background:var(--sdfp-plum-bg);border-color:var(--sdfp-plum-line);color:var(--sdfp-plum);}',
+      '#sdfp-root .sdfp-dossier-update:hover,#sdfp-root .sdfp-dossier-update:focus-visible,#sdfp-root .sdfp-dossier-archive:hover,#sdfp-root .sdfp-dossier-archive:focus-visible{outline:2px solid rgba(190,24,93,.2);outline-offset:1px;}',
+      '#sdfp-root .sdfp-dossier-update:disabled,#sdfp-root .sdfp-dossier-archive:disabled{opacity:.6;cursor:wait;}',
+      '#sdfp-root .sdfp-secret-empty{flex:1;min-height:0;display:grid;place-content:center;gap:8px;padding:24px;text-align:center;border:1px dashed var(--sdfp-rose-line);border-radius:6px;background:var(--sdfp-rose-bg-2);}',
+      '#sdfp-root .sdfp-secret-empty b{color:var(--sdfp-rose);font:600 20px/1.3 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#sdfp-root .sdfp-secret-empty span{max-width:260px;color:var(--sdfp-rose-faint);font-size:11px;line-height:1.6;}',
+      '#sdfp-root .sdfp-secret-list{flex:1;min-height:0;display:grid;align-content:start;gap:1px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--sdfp-rose-line-2);border-radius:6px;background:var(--sdfp-rose-line-2);}',
+      '#sdfp-root .sdfp-secret-row{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;padding:8px 10px;background:var(--sdfp-rose-bg-2);}',
+      '#sdfp-root .sdfp-secret-name{color:var(--sdfp-rose-sub);font-size:10.5px;font-weight:700;line-height:1.5;}',
+      '#sdfp-root .sdfp-secret-value{min-width:0;color:var(--sdfp-rose-ink);font-size:11.5px;line-height:1.5;text-align:right;overflow-wrap:anywhere;}',
+      '#sdfp-root .sdfp-secret-long .sdfp-secret-value{text-align:left;}',
+      '#sdfp-root .sdfp-secret-rank-row{align-items:center;}',
+      '#sdfp-root .sdfp-pussy-wrap{display:flex;justify-content:flex-end;}',
+      '#sdfp-root .sdfp-pussy-trigger{padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;touch-action:manipulation;}',
+      '#sdfp-root .sdfp-pussy-trigger:not(.sdfp-revealed-locked):hover{filter:brightness(1.12);}',
+      '#sdfp-root .sdfp-pussy-trigger:not(.sdfp-revealed-locked):active{transform:scale(.94);}',
+      '#sdfp-root .sdfp-pussy-trigger.sdfp-revealed-locked{cursor:default;pointer-events:none;}',
+      '#sdfp-root .sdfp-pussy-trigger:focus-visible{outline:2px solid var(--sdfp-gold);outline-offset:3px;}',
+      '#sdfp-root .sdfp-rarity-badge{display:inline-flex;align-items:center;justify-content:center;padding:2px 9px;border-radius:12px;font-size:11px;font-weight:700;letter-spacing:.3px;white-space:nowrap;transition:all .3s ease;}',
+      '#sdfp-root .sdfp-rarity-d{background:#1e2022;color:#e2e8f0;border:1px solid #3d4246;box-shadow:0 1px 4px rgba(0,0,0,.25);}',
+      '#sdfp-root .sdfp-rarity-c{background:#e2e8f0;color:#475569;border:1px solid #cbd5e1;box-shadow:0 1px 4px rgba(100,116,139,.15);}',
+      '#sdfp-root .sdfp-rarity-b{background:#e8f8f0;color:#166534;border:1px solid #bbf7d0;box-shadow:0 1px 4px rgba(22,101,52,.12);}',
+      '#sdfp-root .sdfp-rarity-a{background:#22c55e;color:#fff;border:1px solid #16a34a;box-shadow:0 2px 6px rgba(34,197,94,.28);}',
+      '#sdfp-root .sdfp-rarity-s{background:linear-gradient(120deg,#1d4ed8,#3b82f6,#60a5fa,#3b82f6,#1d4ed8);background-size:260% 260%;color:#fff;border:1px solid #60a5fa;animation:sdfpBlueGlow 4s ease infinite;text-shadow:0 1px 2px rgba(0,0,0,.4);}',
+      '#sdfp-root .sdfp-rarity-gem{background:linear-gradient(120deg,#047857,#10b981,#34d399,#059669,#047857);background-size:260% 260%;color:#fff;border:1px solid #34d399;animation:sdfpEmeraldGlow 4s ease infinite;text-shadow:0 1px 2px rgba(0,0,0,.4);}',
+      '#sdfp-root .sdfp-rarity-legend{background:linear-gradient(120deg,#6d28d9,#8b5cf6,#c084fc,#7c3aed,#6d28d9);background-size:260% 260%;color:#fff;border:1px solid #c084fc;animation:sdfpVioletGlow 4s ease infinite;text-shadow:0 1px 2px rgba(0,0,0,.4);}',
+      '#sdfp-root .sdfp-rarity-myth{background:linear-gradient(120deg,#ff007f,#ff7b00,#ffe600,#00f2fe,#4facfe,#7928ca,#ff007f);background-size:300% 300%;color:#fff;font-weight:800;border:1px solid rgba(255,255,255,.85);animation:sdfpRainbowGlow 4s ease infinite;text-shadow:0 1px 2px rgba(0,0,0,.5);letter-spacing:.6px;}',
+      '#sdfp-root .sdfp-click-reveal{background:linear-gradient(135deg,#9a5a74,#c47b98);color:#fff;border:1px solid #b26b88;box-shadow:0 2px 7px rgba(154,90,116,.28);cursor:pointer;}',
+      '#sdfp-root .sdfp-rolling-active{animation:sdfpSlotPulse .12s infinite alternate!important;}',
+      '#sdfp-root .sdfp-hidden-dossier.sdfp-celebrate-shake{animation:sdfpCelebrateShake .6s ease-in-out!important;}',
+      '#sdfp-root .sdfp-hidden-dossier.sdfp-myth-mega-shake{animation:sdfpMythMegaShake .9s cubic-bezier(.36,.07,.19,.97)!important;}',
+      '#sdfp-root .sdfp-celebrate-overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;overflow:hidden;pointer-events:none;}',
+      '#sdfp-root .sdfp-burst-particle{position:absolute;pointer-events:none;will-change:transform,opacity;animation:sdfpParticleFly 1.6s cubic-bezier(.12,.82,.38,1) forwards;}',
+      '#sdfp-root .sdfp-trophy-banner{position:absolute;top:40%;left:50%;z-index:21;padding:10px 22px;border-radius:16px;font-weight:800;text-align:center;pointer-events:none;opacity:0;transform:translate(-50%,-50%) scale(.3);box-shadow:0 10px 30px rgba(0,0,0,.4);animation:sdfpBannerPopup 2.2s cubic-bezier(.34,1.56,.64,1) forwards;}',
+      '#sdfp-root .sdfp-banner-gem{background:linear-gradient(135deg,#1f2340,#3a2266);border:2px solid #b87aff;color:#e5caff;font-size:14px;box-shadow:0 0 20px rgba(184,122,255,.5);}',
+      '#sdfp-root .sdfp-banner-legend{background:linear-gradient(135deg,#38240a,#613e0e);border:2px solid #ffbe3b;color:#fff1cc;font-size:15px;box-shadow:0 0 26px rgba(255,190,59,.65);}',
+      '#sdfp-root .sdfp-banner-myth{background:linear-gradient(135deg,#420822,#1f0b3b 50%,#062b3b);border:3px solid #ff4b91;color:#fff;font-size:16px;letter-spacing:1px;box-shadow:0 0 35px rgba(255,75,145,.85),inset 0 0 15px rgba(255,215,0,.5);}',
+      '@keyframes sdfpSlotPulse{0%{transform:scale(1);filter:brightness(1);}100%{transform:scale(1.08);filter:brightness(1.35) drop-shadow(0 0 6px rgba(255,215,0,.6));}}',
+      '@keyframes sdfpCelebrateShake{0%,100%{transform:translate(0,0) rotate(0);}15%{transform:translate(-4px,3px) rotate(-1deg);}30%{transform:translate(4px,-3px) rotate(1deg);}45%{transform:translate(-3px,-2px) rotate(-.5deg);}60%{transform:translate(3px,2px) rotate(.5deg);}75%{transform:translate(-2px,1px) rotate(0);}90%{transform:translate(2px,-1px) rotate(0);}}',
+      '@keyframes sdfpMythMegaShake{0%,100%{transform:translate(0,0) scale(1) rotate(0);}10%{transform:translate(-7px,5px) scale(1.02) rotate(-1.5deg);}20%{transform:translate(7px,-6px) scale(1.02) rotate(1.5deg);}30%{transform:translate(-6px,-4px) scale(1.03) rotate(-1deg);}40%{transform:translate(6px,4px) scale(1.03) rotate(1deg);}55%{transform:translate(-4px,3px) scale(1.01) rotate(-.5deg);}70%{transform:translate(4px,-3px) scale(1.01) rotate(.5deg);}85%{transform:translate(-2px,1px) scale(1) rotate(0);}}',
+      '@keyframes sdfpParticleFly{0%{transform:translate(0,0) scale(.2) rotate(0);opacity:0;}15%{opacity:1;transform:translate(calc(var(--dx) * .35),calc(var(--dy) * .35)) scale(1.3) rotate(calc(var(--rot) * .3));}65%{opacity:.9;transform:translate(calc(var(--dx) * .85),calc(var(--dy) * .85)) scale(1.1) rotate(calc(var(--rot) * .8));}100%{transform:translate(var(--dx),var(--dy)) scale(.4) rotate(var(--rot));opacity:0;}}',
+      '@keyframes sdfpBannerPopup{0%{transform:translate(-50%,-50%) scale(.3);opacity:0;}18%{transform:translate(-50%,-50%) scale(1.15);opacity:1;}28%{transform:translate(-50%,-50%) scale(1);opacity:1;}80%{transform:translate(-50%,-50%) scale(1);opacity:1;}100%{transform:translate(-50%,-60%) scale(.8);opacity:0;}}',
+      '@keyframes sdfpBlueGlow{0%{background-position:0 50%;box-shadow:0 0 6px rgba(37,99,235,.4);}50%{background-position:100% 50%;box-shadow:0 0 12px rgba(96,165,250,.65);}100%{background-position:0 50%;box-shadow:0 0 6px rgba(37,99,235,.4);}}',
+      '@keyframes sdfpEmeraldGlow{0%{background-position:0 50%;box-shadow:0 0 7px rgba(5,150,105,.45);}50%{background-position:100% 50%;box-shadow:0 0 13px rgba(52,211,153,.7);}100%{background-position:0 50%;box-shadow:0 0 7px rgba(5,150,105,.45);}}',
+      '@keyframes sdfpVioletGlow{0%{background-position:0 50%;box-shadow:0 0 8px rgba(124,58,237,.5);}50%{background-position:100% 50%;box-shadow:0 0 14px rgba(192,132,252,.75);}100%{background-position:0 50%;box-shadow:0 0 8px rgba(124,58,237,.5);}}',
+      '@keyframes sdfpRainbowGlow{0%{background-position:0 50%;box-shadow:0 0 10px rgba(255,75,145,.5),0 0 16px rgba(255,215,0,.4);}50%{background-position:100% 50%;box-shadow:0 0 14px rgba(0,242,254,.6),0 0 20px rgba(121,40,202,.5);}100%{background-position:0 50%;box-shadow:0 0 10px rgba(255,75,145,.5),0 0 16px rgba(255,215,0,.4);}}',
+      '#sdfp-root .sdfp-ledger{display:grid;gap:1px;overflow:hidden;border:1px solid var(--sdfp-line);border-radius:6px;background:var(--sdfp-line);}',
+      '#sdfp-root .sdfp-ledger-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:14px;}',
+      '#sdfp-root .sdfp-ledger-summary div{padding:10px 11px;border-radius:6px;background:var(--sdfp-paper-3);}',
+      '#sdfp-root .sdfp-ledger-summary b{display:block;color:var(--sdfp-ink);font:700 15px/1.2 system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '#sdfp-root .sdfp-ledger-summary span{display:block;margin-top:3px;color:var(--sdfp-ink-sub);font-size:10px;}',
+      '#sdfp-root .sdfp-ledger-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 11px;background:var(--sdfp-paper-2);}',
+      '#sdfp-root .sdfp-ledger-delete{width:22px;height:22px;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:var(--sdfp-tint-red);color:var(--sdfp-red);font:700 13px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-ledger-delete:hover,#sdfp-root .sdfp-ledger-delete:focus-visible{background:var(--sdfp-red);color:#fff;outline:2px solid var(--sdfp-tint-red);outline-offset:1px;}',
+      '#sdfp-root .sdfp-ledger-copy{min-width:0;}',
+      '#sdfp-root .sdfp-ledger-copy b{display:block;color:var(--sdfp-ink);font-size:12px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+      '#sdfp-root .sdfp-ledger-copy small{display:block;margin-top:2px;color:var(--sdfp-ink-sub);font-size:10px;}',
+      '#sdfp-root .sdfp-ledger-row strong{color:var(--sdfp-red);font:700 13px/1.2 system-ui,sans-serif;white-space:nowrap;}',
+      // SD 内置：退了款的那几笔（照样列出来，不算进累计）
+      '#sdfp-root .sdfp-ledger-reversed .sdfp-ledger-copy b,#sdfp-root .sdfp-ledger-reversed strong{color:var(--sdfp-ink-faint);}',
+      '#sdfp-root .sdfp-ledger-reversed strong{text-decoration:line-through;}',
+      '#sdfp-root .sdfp-ledger-tag{display:inline-block;margin-top:4px;padding:1px 7px;border:1px solid var(--sdfp-line);border-radius:999px;color:var(--sdfp-ink-sub);font-size:9.5px;line-height:1.5;}',
+      '#sdfp-root .sdfp-ledger-note{margin:10px 0 0;color:var(--sdfp-ink-sub);font-size:11px;line-height:1.6;}',
+      '#sdfp-root .sdfp-illustration{position:relative;display:block;width:100%;min-height:360px;max-height:620px;aspect-ratio:3/4;padding:0;overflow:hidden;border:1px solid var(--sdfp-line);border-radius:8px;background:#111820;color:#dfd4c2;cursor:pointer;text-align:center;}',
+      '#sdfp-root .sdfp-illustration:hover,#sdfp-root .sdfp-illustration:focus-visible{outline:2px solid var(--sdfp-gold);outline-offset:2px;}',
+      '#sdfp-root .sdfp-illustration-media{position:absolute;inset:0;display:grid;place-items:center;overflow:hidden;}',
+      '#sdfp-root .sdfp-illustration-media img{width:100%;height:100%;object-fit:contain;display:block;background:#111820;}',
+      '#sdfp-root .sdfp-illustration-placeholder{display:grid;place-items:center;gap:10px;padding:28px;color:#cfc2ae;}',
+      '#sdfp-root .sdfp-illustration-placeholder i{font-size:34px;color:#bda77f;}',
+      '#sdfp-root .sdfp-illustration-placeholder b{font:600 17px/1.3 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#sdfp-root .sdfp-illustration-placeholder span{color:#938b80;font-size:11px;line-height:1.55;}',
+      '#sdfp-root .sdfp-showcase-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px;}',
+      '#sdfp-root .sdfp-showcase-summary div{padding:12px 14px;border:1px solid var(--sdfp-line);border-radius:8px;background:var(--sdfp-paper-2);}',
+      '#sdfp-root .sdfp-showcase-summary b{display:block;color:var(--sdfp-ink);font:700 18px/1.1 system-ui,sans-serif;}',
+      '#sdfp-root .sdfp-showcase-summary span{display:block;margin-top:4px;color:var(--sdfp-ink-sub);font-size:10px;letter-spacing:.05em;text-transform:uppercase;}',
+      '#sdfp-root .sdfp-showcase-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(145px,1fr));gap:10px;}',
+      '#sdfp-root .sdfp-showcase-card{position:relative;display:grid;grid-template-rows:96px auto;width:100%;max-width:170px;min-width:0;justify-self:start;overflow:hidden;border:1px solid var(--sdfp-line);border-radius:8px;background:var(--sdfp-paper-2);}',
+      '#sdfp-root .sdfp-showcase-delete{position:absolute;top:6px;right:6px;z-index:4;width:24px;height:24px;padding:0;border:1px solid rgba(255,255,255,.72);border-radius:50%;display:grid;place-items:center;background:rgba(68,28,31,.82);color:#fff;font-size:10px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.22);}',
+      '#sdfp-root .sdfp-showcase-delete:hover,#sdfp-root .sdfp-showcase-delete:focus-visible{background:#963c43;outline:2px solid rgba(150,60,67,.3);outline-offset:1px;}',
+      '#sdfp-root .sdfp-showcase-media{display:grid;place-items:center;overflow:hidden;background:var(--sdfp-paper-3);color:var(--sdfp-gold-ink);font-size:34px;}',
+      '#sdfp-root .sdfp-showcase-media img{width:100%;height:100%;object-fit:cover;display:block;}',
+      '#sdfp-root .sdfp-showcase-glyph{font:700 17px/1 ui-serif,Georgia,"Noto Serif SC",serif;letter-spacing:.12em;color:var(--sdfp-gold-ink);}',
+      '#sdfp-root .sdfp-showcase-copy{min-width:0;padding:9px 10px 11px;}',
+      '#sdfp-root .sdfp-showcase-copy b{display:block;color:var(--sdfp-ink);font-size:12px;line-height:1.4;overflow-wrap:anywhere;}',
+      '#sdfp-root .sdfp-showcase-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;color:var(--sdfp-ink-sub);font-size:9px;}',
+      '#sdfp-root .sdfp-showcase-meta span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+      '#sdfp-root .sdfp-showcase-tag{display:inline-block;margin-top:8px;padding:3px 7px;border-radius:4px;background:var(--sdfp-tint-green);color:var(--sdfp-green);font-size:10px;}',
+      '#sdfp-root .sdfp-showcase-tag.sdfp-fake{background:transparent;border:1px solid var(--sdfp-red);color:var(--sdfp-red);font-weight:700;}',   // SD 内置：高仿
+      '#sdfp-root .sdfp-status{min-height:18px;color:var(--sdfp-ink-sub);font-size:11px;}',
+      '#sdfp-root .sdfp-status[data-kind="ok"]{color:var(--sdfp-green);}',
+      '#sdfp-root .sdfp-status[data-kind="error"]{color:var(--sdfp-red);}',
+      '#sdfp-confirm-root{position:absolute;inset:0;z-index:33;display:grid;place-items:center;padding:16px;box-sizing:border-box;}',
+      '#sdfp-confirm-root[hidden]{display:none!important;}',
+      '#sdfp-confirm-root .sdfp-confirm-backdrop{position:absolute;inset:0;background:rgba(8,12,18,.66);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);}',
+      '#sdfp-confirm-root .sdfp-confirm-dialog{position:relative;width:min(420px,calc(100vw - 24px));overflow:hidden;border:1px solid var(--sdfp-edge);border-radius:8px;background:var(--sdfp-paper-2);color:var(--sdfp-ink);box-shadow:0 22px 70px rgba(0,0,0,.46);}',
+      '#sdfp-confirm-root .sdfp-confirm-head{padding:12px 15px;border-bottom:1px solid var(--sdfp-line);background:var(--sdfp-head);color:var(--sdfp-head-ink);}',
+      '#sdfp-confirm-root .sdfp-confirm-head h3{margin:0;font:600 17px/1.25 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#sdfp-confirm-root .sdfp-confirm-message{margin:0;padding:15px;color:var(--sdfp-ink-sub);font-size:12px;line-height:1.7;white-space:pre-line;overflow-wrap:anywhere;}',
+      '#sdfp-confirm-root .sdfp-confirm-actions{display:flex;justify-content:flex-end;gap:8px;padding:0 15px 15px;}',
+      '#sdfp-confirm-root .sdfp-confirm-cancel,#sdfp-confirm-root .sdfp-confirm-ok{min-height:36px;padding:0 13px;border:1px solid var(--sdfp-edge);border-radius:6px;background:var(--sdfp-field);color:var(--sdfp-ink);font:700 11px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-confirm-root .sdfp-confirm-ok{background:var(--sdfp-primary);border-color:var(--sdfp-primary);color:var(--sdfp-primary-ink);}',
+      '#sdfp-confirm-root .sdfp-confirm-ok.danger{background:var(--sdfp-red);border-color:var(--sdfp-red);color:#fff;}',
+      '#sdfp-confirm-root .sdfp-confirm-cancel:hover,#sdfp-confirm-root .sdfp-confirm-cancel:focus-visible,#sdfp-confirm-root .sdfp-confirm-ok:hover,#sdfp-confirm-root .sdfp-confirm-ok:focus-visible{outline:2px solid var(--sdfp-edge);outline-offset:1px;}',
+      '#sdfp-root .sdfp-empty{display:grid;place-items:center;gap:8px;min-height:340px;padding:32px;text-align:center;}',
+      '#sdfp-root .sdfp-empty b{font:600 22px/1.3 ui-serif,Georgia,"Noto Serif SC",serif;color:var(--sdfp-ink);}',
+      '#sdfp-root .sdfp-empty p{max-width:430px;margin:0;color:var(--sdfp-ink-sub);font-size:13px;line-height:1.65;}',
+      '#sdfp-dossier-options{position:absolute;inset:0;z-index:31;display:grid;place-items:center;padding:16px;box-sizing:border-box;}',
+      '#sdfp-dossier-options[hidden]{display:none!important;}',
+      '#sdfp-dossier-options .sdfp-dossier-backdrop{position:absolute;inset:0;background:rgba(10,15,22,.62);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);}',
+      '#sdfp-dossier-options .sdfp-dossier-dialog{position:relative;width:min(430px,calc(100vw - 24px));overflow:hidden;border:1px solid var(--sdfp-rose-edge);border-radius:8px;background:var(--sdfp-rose-bg);color:var(--sdfp-ink);box-shadow:0 22px 70px rgba(0,0,0,.42);}',
+      '#sdfp-dossier-options .sdfp-dossier-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;background:var(--sdfp-rose-head);color:var(--sdfp-head-ink);}',
+      '#sdfp-dossier-options .sdfp-dossier-head h3{margin:0;font:600 16px/1.2 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#sdfp-dossier-options .sdfp-dossier-close{width:32px;height:32px;border:1px solid var(--sdfp-head-line);border-radius:5px;background:var(--sdfp-head-btn);color:var(--sdfp-head-ink);font:400 20px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-dossier-options .sdfp-dossier-content{padding:15px;}',
+      '#sdfp-dossier-options .sdfp-dossier-content label{display:block;margin-bottom:6px;color:var(--sdfp-rose);font-size:11px;font-weight:700;}',
+      '#sdfp-dossier-options select{width:100%;height:38px;border:1px solid var(--sdfp-rose-line);border-radius:6px;background:var(--sdfp-field);color:var(--sdfp-ink);padding:0 9px;font:600 12px/1 system-ui,sans-serif;}',
+      '#sdfp-dossier-options .sdfp-dossier-content p{margin:9px 0 14px;color:var(--sdfp-rose-faint);font-size:10.5px;line-height:1.55;}',
+      '#sdfp-dossier-options .sdfp-dossier-actions{display:flex;justify-content:flex-end;gap:8px;}',
+      '#sdfp-dossier-options .sdfp-dossier-actions button{min-height:36px;padding:0 13px;border:1px solid var(--sdfp-rose-edge);border-radius:6px;background:var(--sdfp-field);color:var(--sdfp-rose);font:700 11px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-dossier-options .sdfp-dossier-actions .sdfp-dossier-confirm{background:var(--sdfp-rose-strong);border-color:var(--sdfp-rose-strong);color:#fff;}',
+      '#sdfp-media-root{position:absolute;inset:0;z-index:30;display:grid;place-items:center;padding:16px;box-sizing:border-box;}',
+      '#sdfp-media-root[hidden]{display:none!important;}',
+      '#sdfp-media-root .sdfp-media-backdrop{position:absolute;inset:0;background:rgba(10,15,22,.62);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);}',
+      '#sdfp-media-root .sdfp-media-dialog{position:relative;width:min(680px,calc(100vw - 24px));max-height:min(86vh,720px);max-height:min(86dvh,720px);overflow:auto;border:1px solid var(--sdfp-edge);border-radius:8px;background:var(--sdfp-paper);color:var(--sdfp-ink);box-shadow:0 22px 70px rgba(0,0,0,.42);}',
+      '#sdfp-media-root .sdfp-media-head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 15px;background:var(--sdfp-head);color:var(--sdfp-head-ink);}',
+      '#sdfp-media-root .sdfp-media-head h3{margin:0;font:600 17px/1.2 ui-serif,Georgia,"Noto Serif SC",serif;}',
+      '#sdfp-media-root .sdfp-media-close{width:34px;height:34px;border:1px solid var(--sdfp-head-line);border-radius:6px;background:var(--sdfp-head-btn);color:var(--sdfp-head-ink);font:400 21px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-media-root .sdfp-media-content{padding:14px 15px 16px;}',
+      '#sdfp-media-root .sdfp-media-slots{display:grid;grid-template-columns:1fr 1fr;gap:12px;}',
+      '#sdfp-media-root .sdfp-media-slot{padding:8px;border:1px solid var(--sdfp-line);border-radius:8px;background:var(--sdfp-paper-2);color:var(--sdfp-ink-sub);cursor:pointer;text-align:left;}',
+      '#sdfp-media-root .sdfp-media-slot[aria-pressed="true"]{border-color:var(--sdfp-gold);box-shadow:0 0 0 2px var(--sdfp-edge);}',
+      '#sdfp-media-root .sdfp-media-slot-preview{height:158px;display:grid;place-items:center;overflow:hidden;border-radius:6px;background:#172231;color:#c8b99f;}',
+      '#sdfp-media-root .sdfp-media-slot-preview img{width:100%;height:100%;object-fit:contain;display:block;}',
+      '#sdfp-media-root .sdfp-media-slot[data-sdfp-media-target="avatar"] .sdfp-media-slot-preview img{object-fit:cover;}',
+      '#sdfp-media-root .sdfp-media-slot-preview b{font:600 34px/1 ui-serif,Georgia,"Noto Serif SC",serif;color:#ead6ab;}',
+      '#sdfp-media-root .sdfp-media-slot-preview span{max-width:220px;padding:14px;text-align:center;color:#beb09b;font-size:11px;line-height:1.55;}',
+      '#sdfp-media-root .sdfp-media-slot b{display:block;margin:9px 2px 2px;font:700 13px/1.3 system-ui,sans-serif;}',
+      '#sdfp-media-root .sdfp-media-slot small{display:block;margin:0 2px;color:var(--sdfp-ink-sub);font-size:10px;line-height:1.45;}',
+      '#sdfp-media-root .sdfp-media-controls{display:grid;gap:10px;margin-top:14px;}',
+      '#sdfp-media-root .sdfp-media-url{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;}',
+      '#sdfp-media-root .sdfp-media-url input{min-width:0;border:1px solid var(--sdfp-line);border-radius:6px;background:var(--sdfp-field);color:var(--sdfp-ink);padding:9px 10px;font:400 12px/1.4 system-ui,sans-serif;}',
+      '#sdfp-media-root .sdfp-media-actions{display:flex;gap:8px;flex-wrap:wrap;}',
+      '#sdfp-media-root .sdfp-media-btn{min-height:38px;padding:0 13px;border:1px solid var(--sdfp-edge);border-radius:6px;background:var(--sdfp-field);color:var(--sdfp-ink);font:700 11px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-media-root .sdfp-media-btn.primary{background:var(--sdfp-primary);border-color:var(--sdfp-primary);color:var(--sdfp-primary-ink);}',
+      '#sdfp-media-root .sdfp-media-btn.danger{color:var(--sdfp-red);border-color:var(--sdfp-red);}',
+      '#sdfp-media-root .sdfp-media-btn:disabled{opacity:.55;cursor:wait;}',
+      '#sdfp-media-root .sdfp-media-note{margin-top:8px;color:var(--sdfp-ink-sub);font-size:10.5px;line-height:1.5;}',
+      '#sdfp-media-root .sdfp-media-status{min-height:18px;margin-top:8px;color:var(--sdfp-ink-sub);font-size:11px;}',
+      '#sdfp-root .sdfp-restore-hidden{display:block;margin:10px auto 0;padding:6px 12px;border:1px dashed var(--sdfp-rose-edge);border-radius:6px;background:transparent;color:var(--sdfp-rose);font-size:11.5px;cursor:pointer;}',
+      '#sdfp-media-root .sdfp-media-status[data-kind="ok"]{color:var(--sdfp-green);}',
+      '#sdfp-media-root .sdfp-media-status[data-kind="error"]{color:var(--sdfp-red);}',
+      '#sdfp-root.sdfp-open body,#sdfp-root.sdfp-open{overscroll-behavior:contain;}',
+      // SD 内置：贴进手机的头像直接用手机的配色变量（和列表里的 .sb-ava 一个样），夜间自动跟着变
+      '#sbnyc-panel .sdfp-phone-avatar{width:34px;height:34px;border-radius:50%;border:.5px solid var(--gold,#b89968);background:linear-gradient(135deg,var(--paper-3,#ece8dd),var(--paper-2,#fbf9f4));color:var(--gold,#b89968);font:600 13px/1 var(--font-cn,serif);display:grid;place-items:center;cursor:pointer;flex:none;touch-action:manipulation;}',
+      '#sbnyc-panel .sdfp-phone-avatar,#sbnyc-panel .sb-ava.sdfp-has-image{overflow:hidden;padding:0;}',
+      '#sbnyc-panel .sdfp-phone-avatar img,#sbnyc-panel .sb-ava.sdfp-has-image img{width:100%;height:100%;object-fit:cover;display:block;border-radius:50%;}',
+      '#sbnyc-panel .sdfp-phone-avatar:hover,#sbnyc-panel .sdfp-phone-avatar:focus-visible{outline:2px solid var(--gold,#b89968);outline-offset:2px;}',
+      '#sbnyc-panel .sb-ch-name.sdfp-has-avatar{display:grid!important;grid-template-columns:34px minmax(0,1fr);grid-template-rows:auto auto;column-gap:8px;align-items:center;}',
+      '#sbnyc-panel .sb-ch-name.sdfp-has-avatar>.sdfp-phone-avatar{grid-row:1/3;align-self:center;}',
+      '#sbnyc-panel .sb-ch-name.sdfp-has-avatar>b,#sbnyc-panel .sb-ch-name.sdfp-has-avatar>small{grid-column:2;min-width:0;}',
+      '#sbnyc-panel .sb-dmrow .sb-ava{cursor:pointer;}',
+      'body.sdfp-modal-open{overflow:hidden!important;}',
+      '@media (max-width:640px){',
+      '#sdfp-root{padding:0;}',
+      '#sdfp-root .sdfp-dialog{width:100vw;height:100vh;height:100dvh;max-height:none;border:0;border-radius:0;}',
+      '#sdfp-root .sdfp-head{padding:8px 10px;min-height:52px;}',
+      '#sdfp-root .sdfp-title{font-size:16px;}',
+      '#sdfp-root .sdfp-select{max-width:145px;min-width:90px;height:32px;}',
+      '#sdfp-root .sdfp-hero{grid-template-columns:68px minmax(0,1fr);gap:12px;padding:16px;}',
+      '#sdfp-root .sdfp-avatar{width:68px;height:68px;font-size:25px;}',
+      '#sdfp-root .sdfp-name{font-size:25px;}',
+      '#sdfp-root .sdfp-stats{grid-template-columns:repeat(2,minmax(0,1fr));}',
+      '#sdfp-root .sdfp-stat:nth-child(2){border-right:0;}',
+      '#sdfp-root .sdfp-stat:nth-child(-n+2){border-bottom:1px solid var(--sdfp-line);}',
+      '#sdfp-root .sdfp-tabs{padding:0 8px;}',
+      '#sdfp-root .sdfp-tab{flex:1;padding:0 8px;min-height:42px;}',
+      '#sdfp-root .sdfp-panel{padding:14px 12px 20px;}',
+      '#sdfp-root .sdfp-grid{grid-template-columns:1fr;}',
+      '#sdfp-root .sdfp-ledger-summary{grid-template-columns:1fr;}',
+      '#sdfp-root .sdfp-illustration{min-height:330px;max-height:none;}',
+      '#sdfp-root .sdfp-hidden-dossier{height:330px!important;}',
+      '#sdfp-root .sdfp-secret-row{grid-template-columns:68px minmax(0,1fr);}',
+      '#sdfp-root .sdfp-showcase-summary{grid-template-columns:1fr;}',
+      '#sdfp-root .sdfp-showcase-grid{grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;}',
+      '#sdfp-root .sdfp-showcase-card{grid-template-rows:84px auto;max-width:150px;}',
+      '#sdfp-media-root{padding:0;}',
+      '#sdfp-media-root .sdfp-media-dialog{width:100vw;height:100vh;height:100dvh;max-height:none;border:0;border-radius:0;}',
+      '#sdfp-media-root .sdfp-media-slots{grid-template-columns:1fr 1fr;gap:8px;}',
+      '#sdfp-media-root .sdfp-media-slot-preview{height:126px;}',
+      '#sdfp-media-root .sdfp-media-url{grid-template-columns:1fr;}',
+      '}',
+      '@media (prefers-reduced-motion:reduce){#sdfp-root *{scroll-behavior:auto!important;transition:none!important;animation:none!important;}}'
+    ].join('\n');
+    (DOC.head || DOC.documentElement).appendChild(style);
+  }
+
+  function createShell() {
+    if (DOC.getElementById(ROOT_ID)) {
+      root = DOC.getElementById(ROOT_ID);
+      bodyEl = root.querySelector('.sdfp-body');
+      switchEl = root.querySelector('.sdfp-select');
+      statusEl = root.querySelector('.sdfp-status');
+      mediaRoot = root.querySelector('#sdfp-media-root');
+      mediaStatusEl = root.querySelector('.sdfp-media-status');
+      mediaFileInput = root.querySelector('#sdfp-media-file');
+      dossierOptionsRoot = root.querySelector('#sdfp-dossier-options');
+      confirmRoot = root.querySelector('#sdfp-confirm-root');
+      return;
+    }
+    root = DOC.createElement('div');
+    root.id = ROOT_ID;
+    root.hidden = true;
+    root.innerHTML = [
+      '<div class="sdfp-backdrop" data-sdfp-close="1"></div>',
+      '<section class="sdfp-dialog" role="dialog" aria-modal="true" aria-labelledby="sdfp-title">',
+      '  <header class="sdfp-head">',
+      '    <div class="sdfp-brand"><span class="sdfp-kicker">SugarOS · Contacts</span><h2 class="sdfp-title" id="sdfp-title">好友个人主页</h2></div>',
+      '    <div class="sdfp-head-actions"><label class="sdfp-sr-only" for="sdfp-contact-select" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">切换好友</label><select class="sdfp-select" id="sdfp-contact-select" aria-label="切换好友"></select><button class="sdfp-close" type="button" aria-label="关闭个人主页" data-sdfp-close="1">×</button></div>',
+      '  </header>',
+      '  <div class="sdfp-body"></div>',
+      '  <div class="sdfp-status" role="status" aria-live="polite"></div>',
+      '  <div id="sdfp-media-root" hidden>',
+      '    <div class="sdfp-media-backdrop" data-sdfp-media-close="1"></div>',
+      '    <section class="sdfp-media-dialog" role="dialog" aria-modal="true" aria-labelledby="sdfp-media-title">',
+      '      <header class="sdfp-media-head"><h3 id="sdfp-media-title">头像与立绘</h3><button class="sdfp-media-close" type="button" aria-label="关闭图片设置" data-sdfp-media-close="1">×</button></header>',
+      '      <div class="sdfp-media-content">',
+      '        <div class="sdfp-media-slots">',
+      '          <button class="sdfp-media-slot" type="button" data-sdfp-media-target="avatar" aria-pressed="true"><span class="sdfp-media-slot-preview"></span><b>头像</b><small>同步到个人主页、通讯录和私聊标题</small></button>',
+      '          <button class="sdfp-media-slot" type="button" data-sdfp-media-target="illustration" aria-pressed="false"><span class="sdfp-media-slot-preview"></span><b>角色立绘</b><small>显示在个人主页的角色立绘栏</small></button>',
+      '        </div>',
+      '        <div class="sdfp-media-controls">',
+      '          <div class="sdfp-media-actions"><button class="sdfp-media-btn primary" id="sdfp-media-local" type="button">选择本地图片</button><button class="sdfp-media-btn danger" id="sdfp-media-reset" type="button">恢复默认</button></div>',
+      '          <div class="sdfp-media-url"><input id="sdfp-media-url" type="url" inputmode="url" autocomplete="off" placeholder="粘贴图床 URL，例如 https://..."><button class="sdfp-media-btn" id="sdfp-media-url-use" type="button">使用链接</button></div>',
+      '          <div class="sdfp-media-note">本地图片只存在这台设备的浏览器里，换设备看不到；想多设备同步请用图床链接。</div>',
+      '          <div class="sdfp-media-status" role="status" aria-live="polite"></div>',
+      '          <input id="sdfp-media-file" type="file" accept="image/*" hidden>',
+      '        </div>',
+      '      </div>',
+      '    </section>',
+      '  </div>',
+      '  <div id="sdfp-dossier-options" hidden>',
+      '    <div class="sdfp-dossier-backdrop" data-sdfp-dossier-close="1"></div>',
+      '    <section class="sdfp-dossier-dialog" role="dialog" aria-modal="true" aria-labelledby="sdfp-dossier-title">',
+      '      <header class="sdfp-dossier-head"><h3 id="sdfp-dossier-title">更新隐秘档案</h3><button class="sdfp-dossier-close" type="button" aria-label="关闭评级选择" data-sdfp-dossier-close="1">×</button></header>',
+      '      <div class="sdfp-dossier-content">',
+      '        <label for="sdfp-rank-choice">名器品质</label>',
+      '        <select id="sdfp-rank-choice"></select>',
+      '        <p>默认随机。随机概率按反差异闻录2.0：D 5%、C 6%、B 15%、A 14%、S 25%、珍宝S 15%、神话S 15%、神话SSS 5%。</p>',
+      '        <div class="sdfp-dossier-actions"><button type="button" class="sdfp-dossier-cancel" data-sdfp-dossier-close="1">取消</button><button type="button" class="sdfp-dossier-confirm">确认更新</button></div>',
+      '      </div>',
+      '    </section>',
+      '  </div>',
+      '  <div id="sdfp-confirm-root" hidden>',
+      '    <div class="sdfp-confirm-backdrop" data-sdfp-confirm-close="1"></div>',
+      '    <section class="sdfp-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="sdfp-confirm-title" aria-describedby="sdfp-confirm-message">',
+      '      <header class="sdfp-confirm-head"><h3 id="sdfp-confirm-title"></h3></header>',
+      '      <p class="sdfp-confirm-message" id="sdfp-confirm-message"></p>',
+      '      <div class="sdfp-confirm-actions"><button class="sdfp-confirm-cancel" type="button">取消</button><button class="sdfp-confirm-ok" type="button">确认</button></div>',
+      '    </section>',
+      '  </div>',
+      '</section>'
+    ].join('');
+    DOC.body.appendChild(root);
+    bodyEl = root.querySelector('.sdfp-body');
+    switchEl = root.querySelector('.sdfp-select');
+    statusEl = root.querySelector('.sdfp-status');
+    mediaRoot = root.querySelector('#sdfp-media-root');
+    mediaStatusEl = root.querySelector('.sdfp-media-status');
+    mediaFileInput = root.querySelector('#sdfp-media-file');
+    dossierOptionsRoot = root.querySelector('#sdfp-dossier-options');
+    confirmRoot = root.querySelector('#sdfp-confirm-root');
+    root.addEventListener('click', onRootClick);
+    mediaRoot.addEventListener('click', onMediaRootClick);
+    mediaRoot.querySelector('#sdfp-media-local').addEventListener('click', function () {
+      mediaFileInput.click();
+    });
+    mediaRoot.querySelector('#sdfp-media-url-use').addEventListener('click', applyMediaUrl);
+    mediaRoot.querySelector('#sdfp-media-reset').addEventListener('click', resetMediaValue);
+    mediaRoot.querySelector('#sdfp-media-url').addEventListener('keydown', function (event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        applyMediaUrl();
+      }
+    });
+    mediaFileInput.addEventListener('change', applyLocalMediaFile);
+    confirmRoot.addEventListener('click', onConfirmRootClick);
+    confirmRoot.querySelector('.sdfp-confirm-cancel').addEventListener('click', function () {
+      closeConfirm(true);
+    });
+    confirmRoot.querySelector('.sdfp-confirm-ok').addEventListener('click', function () {
+      var action = confirmAction;
+      closeConfirm(false);
+      if (action) {
+        try {
+          Promise.resolve(action()).catch(function (error) {
+            setStatus('操作失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+          });
+        } catch (error) {
+          setStatus('操作失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+        }
+      }
+    });
+    var rankChoice = dossierOptionsRoot.querySelector('#sdfp-rank-choice');
+    var randomOption = el('option', '', '随机生成（默认）');
+    randomOption.value = 'random';
+    rankChoice.appendChild(randomOption);
+    PUSSY_RANKS.forEach(function (rank) {
+      var option = el('option', '', rank);
+      option.value = rank;
+      rankChoice.appendChild(option);
+    });
+    dossierOptionsRoot.addEventListener('click', onDossierOptionsClick);
+    dossierOptionsRoot.querySelector('.sdfp-dossier-confirm').addEventListener('click', function () {
+      var value = rankChoice.value || 'random';
+      var contact = dossierOptionsContact;
+      var button = dossierOptionsButton;
+      closeDossierOptions(true);
+      if (value === 'random') value = rollPussyRank();
+      updateHiddenDossier(contact, button, value);
+    });
+    switchEl.addEventListener('change', function () {
+      if (destroyed) return;
+      stopPussyRoll();
+      closeDossierOptions(false);
+      closeMediaSettings(false);
+      activeName = text(switchEl.value);
+      activeTab = 'home';
+      rememberName(activeName);
+      render();
+      if (bodyEl) bodyEl.scrollTop = 0;
+    });
+  }
+
+  function onRootClick(event) {
+    var closer = event.target.closest ? event.target.closest('[data-sdfp-close]') : null;
+    if (closer) {
+      event.preventDefault();
+      closeProfile();
+    }
+  }
+
+  function isConfirmOpen() {
+    return !!confirmRoot && !confirmRoot.hidden;
+  }
+
+  function onConfirmRootClick(event) {
+    var closer = event.target.closest ? event.target.closest('[data-sdfp-confirm-close]') : null;
+    if (!closer) return;
+    event.preventDefault();
+    closeConfirm(true);
+  }
+
+  function openConfirm(options) {
+    if (!confirmRoot || !root || isConfirmOpen()) return;
+    var config = options || {};
+    var title = confirmRoot.querySelector('#sdfp-confirm-title');
+    var message = confirmRoot.querySelector('#sdfp-confirm-message');
+    var ok = confirmRoot.querySelector('.sdfp-confirm-ok');
+    var cancel = confirmRoot.querySelector('.sdfp-confirm-cancel');
+    if (title) title.textContent = text(config.title, '请确认');
+    if (message) message.textContent = text(config.message);
+    if (ok) {
+      ok.textContent = text(config.confirmText, '确认');
+      ok.classList.toggle('danger', !!config.danger);
+    }
+    confirmOpener = DOC.activeElement;
+    confirmAction = typeof config.onConfirm === 'function' ? config.onConfirm : null;
+    confirmRoot.hidden = false;
+    var head = root.querySelector('.sdfp-head');
+    if (head) head.inert = true;
+    if (bodyEl) bodyEl.inert = true;
+    if (statusEl) statusEl.inert = true;
+    HOST.setTimeout(function () {
+      try { (cancel || ok).focus({ preventScroll: true }); } catch (_) { try { (cancel || ok).focus(); } catch (__) {} }
+    }, 0);
+  }
+
+  function closeConfirm(restoreFocus) {
+    if (!confirmRoot || confirmRoot.hidden) return;
+    confirmRoot.hidden = true;
+    confirmAction = null;
+    var head = root && root.querySelector('.sdfp-head');
+    if (head) head.inert = false;
+    if (bodyEl) bodyEl.inert = false;
+    if (statusEl) statusEl.inert = false;
+    if (restoreFocus && confirmOpener && confirmOpener.isConnected) {
+      try { confirmOpener.focus({ preventScroll: true }); } catch (_) { try { confirmOpener.focus(); } catch (__) {} }
+    }
+    confirmOpener = null;
+  }
+
+  function isMediaOpen() {
+    return !!mediaRoot && !mediaRoot.hidden;
+  }
+
+  function setMediaStatus(message, kind) {
+    if (!mediaStatusEl) return;
+    mediaStatusEl.textContent = text(message);
+    mediaStatusEl.dataset.kind = kind || 'info';
+  }
+
+  function setMediaBusy(busy) {
+    if (!mediaRoot) return;
+    ['#sdfp-media-local', '#sdfp-media-url-use', '#sdfp-media-reset'].forEach(function (selector) {
+      var button = mediaRoot.querySelector(selector);
+      if (button) button.disabled = !!busy;
+    });
+  }
+
+  function renderMediaPreview(container, target, profile, contact) {
+    if (!container) return;
+    container.replaceChildren();
+    var value = target === 'avatar' ? profile.avatar : profile.illustration;
+    var src = normalizeImageValue(value, true);
+    if (src) {
+      var img = DOC.createElement('img');
+      img.alt = '';
+      img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', function () {
+        container.replaceChildren();
+        var warning = el('span', '', /^idb:/.test(src) ? '这张图存在另一台设备的浏览器里' : '图片加载失败');
+        container.appendChild(warning);
+      }, { once: true });
+      setImageSource(img, src);
+      container.appendChild(img);
+      return;
+    }
+    if (target === 'avatar') {
+      container.appendChild(el('b', '', initialOf(contact.name)));
+      return;
+    }
+    var placeholder = el('span', '', '点击“选择本地图片”或粘贴图床 URL');
+    container.appendChild(placeholder);
+  }
+
+  function renderMediaSettings() {
+    if (!mediaRoot) return;
+    var contact = findContact(activeName);
+    if (!contact) return;
+    var profile = profileFor(contact);
+    Array.prototype.forEach.call(mediaRoot.querySelectorAll('[data-sdfp-media-target]'), function (slot) {
+      var target = slot.getAttribute('data-sdfp-media-target');
+      slot.setAttribute('aria-pressed', String(target === mediaTarget));
+      renderMediaPreview(slot.querySelector('.sdfp-media-slot-preview'), target, profile, contact);
+    });
+    var urlInput = mediaRoot.querySelector('#sdfp-media-url');
+    if (urlInput) {
+      var current = mediaTarget === 'avatar' ? profile.avatar : profile.illustration;
+      urlInput.value = /^https?:\/\//i.test(current) ? current : '';
+    }
+  }
+
+  function openMediaSettings(target) {
+    if (!mediaRoot) return;
+    mediaTarget = target === 'illustration' ? 'illustration' : 'avatar';
+    mediaOpener = DOC.activeElement;
+    renderMediaSettings();
+    setMediaStatus('', 'info');
+    mediaRoot.hidden = false;
+    var head = root.querySelector('.sdfp-head');
+    if (head) head.inert = true;
+    if (bodyEl) bodyEl.inert = true;
+    if (statusEl) statusEl.inert = true;
+    var closeButton = mediaRoot.querySelector('.sdfp-media-close');
+    if (closeButton) {
+      HOST.setTimeout(function () {
+        try { closeButton.focus({ preventScroll: true }); } catch (_) { closeButton.focus(); }
+      }, 0);
+    }
+  }
+
+  function closeMediaSettings(restoreFocus) {
+    if (!mediaRoot || mediaRoot.hidden) return;
+    mediaRoot.hidden = true;
+    var head = root.querySelector('.sdfp-head');
+    if (head) head.inert = false;
+    if (bodyEl) bodyEl.inert = false;
+    if (statusEl) statusEl.inert = false;
+    if (restoreFocus !== false) {
+      var focusTarget = mediaOpener && mediaOpener.isConnected
+        ? mediaOpener
+        : root.querySelector(mediaTarget === 'avatar' ? '.sdfp-avatar' : '.sdfp-illustration');
+      if (focusTarget && typeof focusTarget.focus === 'function') {
+        try { focusTarget.focus({ preventScroll: true }); } catch (_) { try { focusTarget.focus(); } catch (__) {} }
+      }
+    }
+    mediaOpener = null;
+  }
+
+  function onMediaRootClick(event) {
+    var closer = event.target.closest ? event.target.closest('[data-sdfp-media-close]') : null;
+    if (closer) {
+      event.preventDefault();
+      closeMediaSettings(true);
+      return;
+    }
+    var slot = event.target.closest ? event.target.closest('[data-sdfp-media-target]') : null;
+    if (!slot) return;
+    mediaTarget = slot.getAttribute('data-sdfp-media-target') === 'illustration' ? 'illustration' : 'avatar';
+    renderMediaSettings();
+    setMediaStatus(mediaTarget === 'avatar' ? '当前设置：头像' : '当前设置：角色立绘', 'info');
+  }
+
+  function setMediaValue(target, value) {
+    if (!activeName) return Promise.resolve(false);
+    var oldContact = findContact(activeName);
+    var oldValue = oldContact ? (target === 'avatar' ? profileFor(oldContact).avatar : profileFor(oldContact).illustration) : '';
+    var payload = {};
+    payload[target] = normalizeImageValue(value, true);
+    payload.updatedAt = new Date().toISOString();
+    setMediaBusy(true);
+    setMediaStatus('正在保存图片…', 'info');
+    return saveProfile(activeName, payload, null).then(function (ok) {
+      setMediaBusy(false);
+      if (ok) {
+        if (oldValue && oldValue !== payload[target]) idbDeleteImage(oldValue);   // 换下来的本地图顺手从图片库删掉
+        renderMediaSettings();
+        var cleared = !payload[target];
+        setMediaStatus(cleared
+          ? (target === 'avatar' ? '头像已恢复默认' : '角色立绘已恢复默认')
+          : (target === 'avatar' ? '头像已更新' : '角色立绘已更新'), 'ok');
+      } else {
+        setMediaStatus('图片保存失败，请检查酒馆变量写入状态', 'error');
+      }
+      return ok;
+    }).catch(function (error) {
+      setMediaBusy(false);
+      setMediaStatus('图片保存失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+      return false;
+    });
+  }
+
+  function applyMediaUrl() {
+    if (!mediaRoot) return;
+    var input = mediaRoot.querySelector('#sdfp-media-url');
+    var raw = input ? input.value : '';
+    var value = normalizeImageValue(raw, false);
+    if (!value) {
+      setMediaStatus('请填写以 http:// 或 https:// 开头的图床 URL', 'error');
+      return;
+    }
+    setMediaValue(mediaTarget, value);
+  }
+
+  function resetMediaValue() {
+    setMediaValue(mediaTarget, '');
+  }
+
+  async function applyLocalMediaFile(event) {
+    var file = event && event.target && event.target.files ? event.target.files[0] : null;
+    if (event && event.target) event.target.value = '';
+    if (!file) return;
+    var target = mediaTarget;
+    setMediaBusy(true);
+    setMediaStatus('正在处理本地图片…', 'info');
+    try {
+      var dataUrl = await prepareLocalImage(file, target);
+      var ref = await idbSaveImage(dataUrl);
+      setMediaBusy(false);
+      await setMediaValue(target, ref);
+    } catch (error) {
+      setMediaBusy(false);
+      setMediaStatus('本地图片处理失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+    }
+  }
+
+  function isDossierOptionsOpen() {
+    return !!dossierOptionsRoot && !dossierOptionsRoot.hidden;
+  }
+
+  function onDossierOptionsClick(event) {
+    var closer = event.target.closest ? event.target.closest('[data-sdfp-dossier-close]') : null;
+    if (closer) {
+      event.preventDefault();
+      closeDossierOptions(true);
+    }
+  }
+
+  function openDossierOptions(contact, button) {
+    if (!dossierOptionsRoot || dossierUpdating) return;
+    dossierOptionsContact = contact;
+    dossierOptionsButton = button;
+    dossierOptionsOpener = DOC.activeElement;
+    var choice = dossierOptionsRoot.querySelector('#sdfp-rank-choice');
+    if (choice) choice.value = 'random';
+    dossierOptionsRoot.hidden = false;
+    var head = root.querySelector('.sdfp-head');
+    if (head) head.inert = true;
+    if (bodyEl) bodyEl.inert = true;
+    if (statusEl) statusEl.inert = true;
+    HOST.setTimeout(function () {
+      try { if (choice) choice.focus(); } catch (_) {}
+    }, 0);
+  }
+
+  function closeDossierOptions(restoreFocus) {
+    if (!dossierOptionsRoot || dossierOptionsRoot.hidden) return;
+    dossierOptionsRoot.hidden = true;
+    var head = root.querySelector('.sdfp-head');
+    if (head) head.inert = false;
+    if (bodyEl) bodyEl.inert = false;
+    if (statusEl) statusEl.inert = false;
+    if (restoreFocus) {
+      var target = dossierOptionsOpener && dossierOptionsOpener.isConnected
+        ? dossierOptionsOpener
+        : dossierOptionsButton;
+      if (target && typeof target.focus === 'function') {
+        try { target.focus({ preventScroll: true }); } catch (_) { try { target.focus(); } catch (__) {} }
+      }
+    }
+    dossierOptionsOpener = null;
+    dossierOptionsContact = null;
+    dossierOptionsButton = null;
+  }
+
+  function openOriginalNameEditor() {
+    var contact = findContact(activeName);
+    var row = root && root.querySelector('.sdfp-name-row');
+    if (!contact || !row) return;
+    var existing = row.querySelector('.sdfp-original-editor');
+    if (existing) {
+      var oldInput = existing.querySelector('input');
+      if (oldInput) oldInput.focus();
+      return;
+    }
+    var trigger = row.querySelector('.sdfp-original-name');
+    var profile = profileFor(contact);
+    if (trigger) trigger.hidden = true;
+    var editor = el('form', 'sdfp-original-editor');
+    var input = DOC.createElement('input');
+    input.type = 'text';
+    input.maxLength = 40;
+    input.value = profile.originalName;
+    input.placeholder = '输入正文/衣橱使用的原名';
+    input.setAttribute('aria-label', '角色原名');
+    var confirm = el('button', 'primary', '确定');
+    confirm.type = 'submit';
+    var cancel = el('button', '', '取消');
+    cancel.type = 'button';
+    append(editor, input, confirm, cancel);
+    row.appendChild(editor);
+    cancel.addEventListener('click', function () {
+      editor.remove();
+      if (trigger) trigger.hidden = false;
+      try { trigger.focus(); } catch (_) {}
+    });
+    editor.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var value = clampText(input.value, 40);
+      confirm.disabled = true;
+      saveProfile(activeName, {
+        originalName: value,
+        updatedAt: new Date().toISOString()
+      }, null).then(function (ok) {
+        if (ok) setStatus(value ? '原名已设置为：' + value : '已清除原名映射', 'ok');
+        else {
+          confirm.disabled = false;
+          if (!statusEl || statusEl.dataset.kind !== 'error') setStatus('原名保存失败', 'error');   // SD 内置：saveProfile 已经写了具体原因就别盖掉
+        }
+      });
+    });
+    HOST.setTimeout(function () {
+      try { input.focus(); input.select(); } catch (_) {}
+    }, 0);
+  }
+
+  function removeLegacyTopbar() {
+    var legacy = DOC.getElementById('sdfp-topbar-entry');
+    if (legacy) legacy.remove();
+  }
+
+  function upgradePhoneAvatars() {
+    decorateChatHeader();   // SD 内置：拆成两半，onRender 画哪页就只贴哪页
+    decorateRows();
+  }
+
+  // SD 内置：列表行里的字母照手机自己的写法（取第一个中文或英文字母），摘头像时换回去和手机一模一样
+  function phoneInitialOf(name) {
+    return (String(name || '').replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
+  }
+
+  function decorateChatHeader() {
+    var panel = DOC.getElementById('sbnyc-panel');
+    if (!panel) return;
+
+    // 1.9.0：只认手机标好的个人聊天页。日历、流水、设置这些页面的页头没有 data-npc；群和 S. 的 data-kind 不是 dm。
+    var head = panel.querySelector('#sbnyc-chat .sb-ch[data-npc]');
+    var headName = head ? text(head.getAttribute('data-npc')) : '';
+    var chatName = head && head.getAttribute('data-kind') === 'dm' && findContact(headName) ? head.querySelector('.sb-ch-name') : null;
+    // SD 内置：不在当前个人聊天页头上的（1.8.0 插在日历/流水/群页头上的老头像）顺手摘掉
+    Array.prototype.forEach.call(panel.querySelectorAll('#sbnyc-chat .sdfp-phone-avatar'), function (stale) {
+      if (chatName && stale.parentNode === chatName && stale.dataset.sdfpName === headName) return;
+      var holder = stale.parentNode;
+      stale.remove();
+      if (holder && holder.classList) holder.classList.remove('sdfp-has-avatar');
+    });
+    if (chatName && !chatName.querySelector('.sdfp-phone-avatar')) {
+      var button = DOC.createElement('button');
+      button.type = 'button';
+      button.className = 'sdfp-phone-avatar';
+      button.textContent = initialOf(headName);
+      button.title = '打开 ' + headName + ' 的个人主页';
+      button.setAttribute('aria-label', button.title);
+      button.dataset.sdfpName = headName;
+      chatName.insertBefore(button, chatName.firstChild);
+      chatName.classList.add('sdfp-has-avatar');
+    }
+    var headerAvatar = chatName && chatName.querySelector('.sdfp-phone-avatar');
+    if (headerAvatar && headerAvatar.dataset.sdfpName) {
+      var headerContact = findContact(headerAvatar.dataset.sdfpName);
+      applyAvatar(headerAvatar, headerContact ? profileFor(headerContact).avatar : '', headerAvatar.dataset.sdfpName);
+    }
+  }
+
+  function decorateRows() {
+    var panel = DOC.getElementById('sbnyc-panel');
+    if (!panel) return;
+    // 列表：只动个人行；玩家没设头像就留着手机原来的样子，只是点头像能打开主页
+    var rows = panel.querySelectorAll('.sb-dmrow[data-npc]');
+    Array.prototype.forEach.call(rows, function (row) {
+      if (row.getAttribute('data-kind') !== 'dm') return;
+      var name = text(row.getAttribute('data-npc'));
+      var avatar = row.querySelector('.sb-ava');
+      var rowContact = name ? findContact(name) : null;
+      if (!avatar || !rowContact) return;
+      avatar.dataset.sdfpName = name;
+      avatar.dataset.sdfpAvatar = '1';
+      avatar.title = '查看 ' + name + ' 的个人主页';
+      avatar.setAttribute('role', 'button');
+      avatar.setAttribute('tabindex', '0');
+      avatar.setAttribute('aria-label', avatar.title);
+      var rowProfile = profileFor(rowContact);
+      if (rowProfile.avatar) {
+        applyImage(avatar, rowProfile.avatar, phoneInitialOf(name), 'sdfp-avatar-img');   // SD 内置：字母照手机的写法
+        avatar.classList.add('sdfp-has-image');
+      } else {
+        if (avatar.dataset.sdfpImageSrc) applyImage(avatar, '', phoneInitialOf(name), 'sdfp-avatar-img');   // 刚把头像删掉：换回首字母
+        avatar.classList.remove('sdfp-has-image');
+      }
+    });
+  }
+
+  // SD 内置：SugarOS.onRender——手机把列表/聊天页的 innerHTML 落下以后，同一拍同步调过来，这时就贴上头像。
+  // 以前等下一拍的 sb_phone_rendered（再 +80ms），每次重画头像都先变回字母、再变回图，看着就是闪。
+  function phoneApi() {
+    try { return HOST.SugarOS || null; } catch (_) { return null; }
+  }
+
+  function attachRenderHook() {
+    if (destroyed) return false;
+    var os = phoneApi();
+    if (renderHookHandle && renderHookOwner === os) return true;
+    detachRenderHook();
+    if (!os || typeof os.onRender !== 'function') return false;
+    try {
+      renderHookOwner = os;
+      renderHookHandle = os.onRender(onPhoneRender) || null;
+    } catch (_) {
+      renderHookHandle = null;
+      renderHookOwner = null;
+    }
+    return !!renderHookHandle;
+  }
+
+  function detachRenderHook() {
+    if (renderHookHandle) {
+      try { renderHookHandle.stop(); } catch (_) {}
+    }
+    renderHookHandle = null;
+    renderHookOwner = null;
+  }
+
+  function onPhoneRender(d) {
+    if (destroyed || !d || (d.view !== 'list' && d.view !== 'chat')) return;
+    contacts = readRawContacts();
+    if (d.view === 'list') decorateRows();
+    else if (d.kind === 'dm') decorateChatHeader();
+  }
+
+  // SD 内置：关脚本时把贴进手机的东西摘干净（样式表一摘，留下的图会按原尺寸撑满一行）
+  function undecoratePhone() {
+    Array.prototype.forEach.call(DOC.querySelectorAll('.sdfp-phone-avatar'), function (button) {
+      var holder = button.parentNode;
+      button.remove();
+      if (holder && holder.classList) holder.classList.remove('sdfp-has-avatar');
+    });
+    Array.prototype.forEach.call(DOC.querySelectorAll('.sb-ava[data-sdfp-name]'), function (avatar) {
+      var name = avatar.dataset.sdfpName;
+      var hadImage = !!avatar.dataset.sdfpImageSrc || !!avatar.querySelector('img');
+      ['sdfpName', 'sdfpAvatar', 'sdfpImageSrc'].forEach(function (key) { delete avatar.dataset[key]; });
+      ['role', 'tabindex', 'aria-label', 'title'].forEach(function (attr) { avatar.removeAttribute(attr); });
+      avatar.classList.remove('sdfp-has-image');
+      if (hadImage) avatar.replaceChildren(DOC.createTextNode(phoneInitialOf(name)));
+    });
+  }
+
+  function phoneTargetName(node) {
+    if (!node || !node.closest) return '';
+    var direct = node.closest('.sdfp-phone-avatar,[data-sdfp-avatar="1"]');
+    if (!direct) return '';
+    return text(direct.dataset.sdfpName);
+  }
+
+  function onHostClick(event) {
+    var avatar = phoneTargetName(event.target);
+    if (!avatar) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    openProfile(avatar);
+  }
+
+  function onHostKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    var avatar = phoneTargetName(event.target);
+    if (!avatar) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    openProfile(avatar);
+  }
+
+  // SD 内置：和内置的「个人主页」（#suh-root，z-index 2147483645）叠放。两个都开着时后开的在上面：
+  // 好友主页开着、个人主页后打开 → 好友主页退到它下面（2147483644）；好友主页后打开 → 回到默认的 2147483646。
+  // 键盘（Esc、Tab）只归最上面那个；好友主页的 keydown 比个人主页先挂上，在上面时处理完就拦下，不让 Esc 一次关两个。
+  var Z_UNDER_USER_HOME = '2147483644';
+
+  function userHomeRoot() {
+    return DOC.getElementById('suh-root');
+  }
+
+  function isOnTop() {
+    var other = userHomeRoot();
+    if (!root || !other || other.hidden) return true;
+    var mine = 0;
+    var theirs = 0;
+    try {
+      mine = Number(HOST.getComputedStyle(root).zIndex) || 0;
+      theirs = Number(HOST.getComputedStyle(other).zIndex) || 0;
+    } catch (_) {}
+    return mine >= theirs;
+  }
+
+  function watchStack() {
+    unwatchStack();
+    var Observer = HOST.MutationObserver || window.MutationObserver;
+    if (!Observer || !DOC.body) return;
+    var watched = null;
+    var wasOpen = false;
+    var check = function () {
+      var other = userHomeRoot();
+      if (other !== watched) {
+        watched = other;
+        if (other) stackObserver.observe(other, { attributes: true, attributeFilter: ['hidden'] });
+      }
+      var nowOpen = !!(other && !other.hidden);
+      if (nowOpen && !wasOpen && root && open) root.style.zIndex = Z_UNDER_USER_HOME;   // 个人主页后开：让它在上面
+      wasOpen = nowOpen;
+    };
+    stackObserver = new Observer(check);
+    stackObserver.observe(DOC.body, { childList: true });   // 个人主页重建时 #suh-root 会换一个
+    watched = userHomeRoot();
+    wasOpen = !!(watched && !watched.hidden);
+    if (watched) stackObserver.observe(watched, { attributes: true, attributeFilter: ['hidden'] });
+  }
+
+  function unwatchStack() {
+    if (stackObserver) {
+      try { stackObserver.disconnect(); } catch (_) {}
+    }
+    stackObserver = null;
+  }
+
+  function onDocumentKeydown(event) {
+    if (!open) return;
+    if (!isOnTop()) return;   // SD 内置：个人主页盖在上面，键盘归它
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation();   // SD 内置：别让下面的个人主页也跟着关
+      if (isConfirmOpen()) closeConfirm(true);
+      else if (isDossierOptionsOpen()) closeDossierOptions(true);
+      else if (isMediaOpen()) closeMediaSettings(true);
+      else closeProfile();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+    if (event.stopImmediatePropagation) event.stopImmediatePropagation();   // SD 内置：Tab 只在最上面那个浮层里转
+    var scope = isConfirmOpen()
+      ? confirmRoot
+      : (isDossierOptionsOpen() ? dossierOptionsRoot : (isMediaOpen() ? mediaRoot : root));
+    if (!scope) return;
+    var focusable = scope.querySelectorAll('button:not([disabled]),select,input,textarea,[tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && DOC.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && DOC.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  function ensureMounts() {
+    if (destroyed) return;
+    installStyle();
+    var vars = readChatVariables();
+    contacts = readRawContacts();
+    var revision = profileDataRevision(vars);
+    if (open && !pussyRolling && lastDataRevision !== null && revision !== lastDataRevision) {
+      render();
+    } else if (!open) {
+      lastDataRevision = revision;
+    }
+    removeLegacyTopbar();
+    upgradePhoneAvatars();
+  }
+
+  function profileDataRevision(vars) {
+    var npcs = vars && vars.sb && vars.sb.npcs ? vars.sb.npcs : {};
+    var contact = npcs && npcs[activeName];
+    var closet = vars && vars.sb && Array.isArray(vars.sb.closet) ? vars.sb.closet : [];
+    var wallet = vars && vars.sb && vars.sb.wallet ? vars.sb.wallet : {};
+    var allTransactions = Array.isArray(wallet.allTransactions) ? wallet.allTransactions : [];
+    var history = contact && Array.isArray(contact.dm_history) ? contact.dm_history : [];
+    return JSON.stringify({
+      contactCount: Object.keys(npcs).length,
+      active: activeName,
+      contactLast: contact ? [
+        text(contact.name),
+        Number(contact.last_ts) || 0,
+        Number(contact.total_transfers) || 0,
+        history.length,
+        history.length ? text(history[history.length - 1].content || history[history.length - 1].text) : '',
+        contact.profile && text(contact.profile.updatedAt)
+      ] : null,
+      closetCount: closet.length,
+      closetTail: closet.slice(-6).map(function (item) {
+        return [text(item.name), text(item.to), Number(item.price) || 0, text(item.time)];
+      }),
+      walletCount: allTransactions.length,
+      walletTail: allTransactions.slice(-3).map(function (item) {
+        return [Number(item.amount) || 0, text(item.counterparty), text(item.time), Number(item.gameDay) || 0];
+      }),
+      // SD 内置：sb_updated 现在靠这份比对决定重不重画；很老的存档没有总账，只有钱包卡片上的最近 20 笔
+      recentTail: (Array.isArray(wallet.transactions) ? wallet.transactions : []).slice(-3).map(function (item) {
+        return [Number(item && item.amount) || 0, text(item && item.counterparty), text(item && item.time)];
+      })
+    });
+  }
+
+  function scheduleEnsure() {
+    if (destroyed || ensureTimer) return;
+    ensureTimer = HOST.setTimeout(function () {
+      ensureTimer = null;
+      ensureMounts();
+    }, 80);
+  }
+
+  function renderEmpty() {
+    bodyEl.replaceChildren();
+    var empty = el('div', 'sdfp-empty');
+    append(empty, el('b', '', '还没有可以查看的好友'));
+    append(empty, el('p', '', '先在悬浮手机里和一个人建立联系。联系人出现后，点击消息列表头像或手机私聊标题头像即可进入。'));
+    bodyEl.appendChild(empty);
+    if (switchEl) {
+      switchEl.replaceChildren();
+      var option = el('option', '', '暂无联系人');
+      option.value = '';
+      switchEl.appendChild(option);
+      switchEl.disabled = true;
+    }
+  }
+
+  function section(title) {
+    var box = el('section', 'sdfp-section');
+    box.appendChild(el('h3', '', title));
+    return box;
+  }
+
+  function renderHome(contact, profile) {
+    var grid = el('div', 'sdfp-grid sdfp-home-grid');
+    var illustrationBox = section('角色立绘');
+    var illustration = el('button', 'sdfp-illustration');
+    illustration.type = 'button';
+    illustration.setAttribute('aria-label', profile.illustration ? '更换角色立绘' : '设置角色立绘');
+    var illustrationMedia = el('span', 'sdfp-illustration-media');
+    if (profile.illustration) {
+      applyImage(illustrationMedia, profile.illustration, '');
+    } else {
+      var placeholder = el('span', 'sdfp-illustration-placeholder');
+      var icon = DOC.createElement('i');
+      icon.className = 'fa-solid fa-image';
+      icon.setAttribute('aria-hidden', 'true');
+      placeholder.appendChild(icon);
+      placeholder.appendChild(el('b', '', '角色立绘'));
+      placeholder.appendChild(el('span', '', '点击这里设置立绘，可使用本地图片或图床 URL'));
+      illustrationMedia.appendChild(placeholder);
+    }
+    illustration.appendChild(illustrationMedia);
+    var illustrationEdit = el('span', 'sdfp-media-edit-badge', '改');
+    illustrationEdit.setAttribute('aria-hidden', 'true');
+    illustration.appendChild(illustrationEdit);
+    illustration.addEventListener('click', function () { openMediaSettings('illustration'); });
+    illustrationBox.appendChild(illustration);
+
+    var dossierBox = renderHiddenDossier(contact);
+    grid.appendChild(illustrationBox);
+    grid.appendChild(dossierBox);
+    bodyEl.appendChild(grid);
+    syncHomeSideHeight(illustrationBox, dossierBox);
+  }
+
+  function renderHiddenDossier(contact) {
+    var dossier = hiddenDossierFor(contact);
+    var box = section('隐秘档案');
+    box.classList.add('sdfp-hidden-dossier');
+    var heading = box.querySelector('h3');
+    if (heading) {
+      var actions = el('div', 'sdfp-dossier-head-actions');
+      var archiveButton = el('button', 'sdfp-dossier-archive', pussyArchiving ? '写入中…' : '隐秘建档');
+      archiveButton.type = 'button';
+      archiveButton.disabled = pussyArchiving || dossierUpdating || !dossier.hasData ||
+        PUSSY_RANKS.indexOf(text(dossier.pussyRank)) === -1 ||
+        isMissingDossierValue(dossier.pussyDescription) ||
+        isMissingDossierValue(dossier.pussyTrait);
+      archiveButton.title = archiveButton.disabled
+        ? '生成有效的小穴评级、描述和特质后，可写入聊天世界书'
+        : '将小穴评级、描述和特质写入聊天世界书';
+      archiveButton.setAttribute('aria-label', archiveButton.title);
+      archiveButton.addEventListener('click', function () {
+        openConfirm({
+          title: '确认写入聊天世界书？',
+          message: [
+            '将把当前角色的以下资料写入当前聊天世界书：',
+            '小穴评级：' + dossier.pussyRank,
+            '小穴描述：' + dossier.pussyDescription,
+            '小穴特质：' + dossier.pussyTrait,
+            '',
+            '条目名称：' + pussyArchiveNameFor(contact),
+            '正文提到该角色时，AI 可读取并使用这份档案。重复建档会更新同一条目。'
+          ].join('\n'),
+          confirmText: '确认建档',
+          onConfirm: function () {
+            savePussyArchive(contact, dossier, archiveButton);
+          }
+        });
+      });
+      var updateButton = el('button', 'sdfp-dossier-update', dossierUpdating ? '更新中…' : '更新');
+      updateButton.type = 'button';
+      updateButton.disabled = dossierUpdating || pussyArchiving;
+      updateButton.title = '先读取聊天世界书角色档案，再结合正文、私信与角色标签刷新隐秘档案';
+      updateButton.setAttribute('aria-label', updateButton.title);
+      updateButton.addEventListener('click', function () {
+        openDossierOptions(contact, updateButton);
+      });
+      actions.appendChild(archiveButton);
+      actions.appendChild(updateButton);
+      heading.appendChild(actions);
+    }
+    if (!dossier.hasData) {
+      var empty = el('div', 'sdfp-secret-empty');
+      empty.appendChild(el('b', '', '尚未建档'));
+      empty.appendChild(el('span', '', '点击右上角“更新”，先读取聊天世界书角色档案，再结合正文、私信与角色标签生成。'));
+      box.appendChild(empty);
+      return box;
+    }
+    var list = el('div', 'sdfp-secret-list');
+    var addRow = function (name, value, className) {
+      var row = el('div', 'sdfp-secret-row' + (className ? ' ' + className : ''));
+      row.appendChild(el('span', 'sdfp-secret-name', name));
+      row.appendChild(el('span', 'sdfp-secret-value', value));
+      list.appendChild(row);
+      return row;
+    };
+    addRow('恋爱状态', dossier.relationship);
+    addRow('口腔', dossier.mouth);
+    addRow('乳房', dossier.breast);
+
+    var rankRow = el('div', 'sdfp-secret-row sdfp-secret-rank-row');
+    rankRow.appendChild(el('span', 'sdfp-secret-name', '小穴评级'));
+    var rankWrap = el('div', 'sdfp-secret-value sdfp-pussy-wrap');
+    var trigger = el('button', 'sdfp-pussy-trigger');
+    trigger.type = 'button';
+    var badge = el('span', 'sdfp-rarity-badge sdfp-pussy-rank');
+    var revealed = isPussyRevealed(contact);
+    if (revealed) {
+      badge.textContent = dossier.pussyRank;
+      applyRarityClass(badge, dossier.pussyRank);
+      trigger.disabled = true;
+      trigger.classList.add('sdfp-revealed-locked');
+    } else {
+      badge.textContent = '点击鉴赏';
+      badge.classList.add('sdfp-click-reveal');
+      trigger.title = '点击鉴赏揭秘名器品质';
+      trigger.addEventListener('click', function () { startPussySlotMachine(contact, dossier); });
+    }
+    trigger.appendChild(badge);
+    rankWrap.appendChild(trigger);
+    rankRow.appendChild(rankWrap);
+    list.appendChild(rankRow);
+
+    addRow('小穴描述', dossier.pussyDescription, 'sdfp-secret-long');
+    addRow('小穴特质', dossier.pussyTrait, 'sdfp-secret-long');
+    addRow('后穴', dossier.anus);
+    addRow('秘密', dossier.secret, 'sdfp-secret-long');
+    box.appendChild(list);
+    return box;
+  }
+
+  function syncHomeSideHeight(illustrationBox, sideBox) {
+    var apply = function () {
+      if (!illustrationBox.isConnected || !sideBox.isConnected) return;
+      if (HOST.innerWidth <= 640) {
+        sideBox.style.height = '';
+        return;
+      }
+      var height = Math.round(illustrationBox.getBoundingClientRect().height);
+      if (height > 0) sideBox.style.height = height + 'px';
+    };
+    try { HOST.requestAnimationFrame(apply); } catch (_) { HOST.setTimeout(apply, 0); }
+    HOST.setTimeout(apply, 100);
+  }
+
+  function renderShowcase(contact) {
+    var items = showcaseFor(contact);
+    var meta = showcaseMeta(items);
+    var summary = el('div', 'sdfp-showcase-summary');
+    [
+      [String(meta.count), '已收礼物'],
+      [String(meta.clothing), '服装与配饰'],
+      [formatMoney(meta.total), '礼物价值']
+    ].forEach(function (entry) {
+      var box = el('div');
+      box.appendChild(el('b', '', entry[0]));
+      box.appendChild(el('span', '', entry[1]));
+      summary.appendChild(box);
+    });
+    bodyEl.appendChild(summary);
+
+    if (!items.length) {
+      var empty = section('礼物陈列');
+      empty.appendChild(el('p', 'sdfp-copy', '还没有送给该角色的礼物。手机里购买实物并选择送给她后，礼物会自动出现在这里。'));
+      appendRestore(empty, contact, 'hiddenGifts', items.hiddenCount, '件');
+      bodyEl.appendChild(empty);
+      return;
+    }
+
+    var grid = el('div', 'sdfp-showcase-grid');
+    items.forEach(function (item) {
+      var card = el('article', 'sdfp-showcase-card');
+      var deleteButton = el('button', 'sdfp-showcase-delete', '×');
+      deleteButton.type = 'button';
+      deleteButton.title = '从橱窗隐藏这件礼物';
+      deleteButton.setAttribute('aria-label', '隐藏礼物：' + item.name);
+      deleteButton.addEventListener('click', function () {
+        openConfirm({
+          title: '从橱窗隐藏这件礼物？',
+          message: [
+            item.name,
+            item.price > 0 ? formatMoney(item.price) : '价值未记录',
+            '',
+            '只是不在橱窗里显示，衣橱、私信和钱包都不会变。隐藏的礼物可以在橱窗底部恢复。'
+          ].join('\n'),
+          confirmText: '隐藏',
+          danger: false,
+          onConfirm: function () {
+            deleteShowcaseItem(contact, item, deleteButton);
+          }
+        });
+      });
+      card.appendChild(deleteButton);
+      var media = el('div', 'sdfp-showcase-media');
+      if (item.image) {
+        var img = DOC.createElement('img');
+        img.src = item.image;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.referrerPolicy = 'no-referrer';
+        img.addEventListener('error', function () {
+          media.replaceChildren();
+          media.appendChild(el('span', 'sdfp-showcase-glyph', CLOTHING_RE.test(item.name) ? '服饰' : '礼物'));
+        }, { once: true });
+        media.appendChild(img);
+      } else {
+        media.appendChild(el('span', 'sdfp-showcase-glyph', CLOTHING_RE.test(item.name) ? '服饰' : '礼物'));
+      }
+      card.appendChild(media);
+      var copy = el('div', 'sdfp-showcase-copy');
+      copy.appendChild(el('b', '', item.name));
+      var metaRowEl = el('div', 'sdfp-showcase-meta');
+      metaRowEl.appendChild(el('span', '', item.channel || '礼物'));
+      metaRowEl.appendChild(el('span', '', item.price > 0 ? formatMoney(item.price) : '价值未记录'));
+      copy.appendChild(metaRowEl);
+      var tagText = CLOTHING_RE.test(item.name) ? '服装 / 配饰' : '礼物';
+      if (item.fake) tagText += ' · 高仿';
+      copy.appendChild(el('span', 'sdfp-showcase-tag' + (item.fake ? ' sdfp-fake' : ''), tagText));   // SD 内置：高仿用红框，一眼看得出
+      card.appendChild(copy);
+      grid.appendChild(card);
+    });
+    var showcase = section('礼物陈列');
+    showcase.appendChild(grid);
+    appendRestore(showcase, contact, 'hiddenGifts', items.hiddenCount, '件');
+    bodyEl.appendChild(showcase);
+  }
+
+  function renderLedger(contact) {
+    var ledger = transferLedgerFor(contact);
+    var ledgerBox = section('往来');
+    var summary = el('div', 'sdfp-ledger-summary');
+    [
+      [formatMoney(ledger.total), '累计往来'],
+      [String(ledger.count), '流水笔数'],
+      [text(contact.raw.last_contact, '未记录'), '最近联系']
+    ].forEach(function (entry) {
+      var cell = el('div');
+      cell.appendChild(el('b', '', entry[0]));
+      cell.appendChild(el('span', '', entry[1]));
+      summary.appendChild(cell);
+    });
+    ledgerBox.appendChild(summary);
+    ledgerBox.appendChild(el('h3', '', '往来流水'));
+    if (!ledger.items.length) {
+      ledgerBox.appendChild(el('p', 'sdfp-copy', '还没有检测到与该角色关联的转账或消费流水。'));
+    } else {
+      var list = el('div', 'sdfp-ledger');
+      ledger.items.slice(0, 10).forEach(function (item) {
+        var row = el('div', 'sdfp-ledger-row' + (item.reversed ? ' sdfp-ledger-reversed' : ''));   // SD 内置：退了款的
+        var deleteButton = el('button', 'sdfp-ledger-delete', '−');
+        deleteButton.type = 'button';
+        deleteButton.title = '从主页隐藏这笔（钱包流水不动）';
+        deleteButton.setAttribute('aria-label', deleteButton.title);
+        deleteButton.addEventListener('click', function () {
+          var when = [
+            item.gameDay > 0 ? '第 ' + item.gameDay + ' 天' : '',
+            item.time || '',
+            item.channel || ''
+          ].filter(Boolean).join(' · ');
+          openConfirm({
+            title: '从主页隐藏这笔往来？',
+            message: [
+              item.counterparty + ' · ' + formatMoney(item.amount),
+              when || '时间未记录',
+              '',
+              '只是不在这个主页上显示，钱包流水、余额和私信都不会变。隐藏的可以在本页底部恢复。'
+            ].join('\n'),
+            confirmText: '隐藏',
+            danger: false,
+            onConfirm: function () {
+              deleteLedgerItem(contact, item, deleteButton);
+            }
+          });
+        });
+        row.appendChild(deleteButton);
+        var copy = el('div', 'sdfp-ledger-copy');
+        copy.appendChild(el('b', '', item.counterparty));
+        var whenParts = [];
+        if (item.gameDay > 0) whenParts.push('第 ' + item.gameDay + ' 天');
+        if (item.time) whenParts.push(item.time);
+        if (item.channel) whenParts.push(item.channel);
+        var when = whenParts.join(' · ');
+        copy.appendChild(el('small', '', when || '时间未记录'));
+        if (item.reversed) copy.appendChild(el('span', 'sdfp-ledger-tag', '已退款 · 不计入'));   // SD 内置
+        row.appendChild(copy);
+        row.appendChild(el('strong', '', formatMoney(item.amount)));
+        list.appendChild(row);
+      });
+      ledgerBox.appendChild(list);
+      if (ledger.items.length > 10) {
+        ledgerBox.appendChild(el('p', 'sdfp-copy', '另有 ' + (ledger.items.length - 10) + ' 笔较早流水未展开。'));
+      }
+      if (ledger.refunded) {   // SD 内置
+        ledgerBox.appendChild(el('p', 'sdfp-ledger-note', '有 ' + ledger.refunded + ' 笔重 roll 或消息回退时退了款，列出来但不算进累计往来和笔数。'));
+      }
+    }
+    appendRestore(ledgerBox, contact, 'hiddenLedger', ledger.hidden, '笔');
+    bodyEl.appendChild(ledgerBox);
+  }
+
+  function renderTabs() {
+    var nav = el('div', 'sdfp-tabs');
+    nav.setAttribute('role', 'tablist');
+    nav.setAttribute('aria-label', '好友主页分区');
+    [
+      ['home', '主页'],
+      ['ledger', '往来'],
+      ['showcase', '橱窗']
+    ].forEach(function (def) {
+      var tab = el('button', 'sdfp-tab', def[1]);
+      tab.type = 'button';
+      tab.setAttribute('role', 'tab');
+      tab.setAttribute('aria-selected', String(activeTab === def[0]));
+      tab.tabIndex = activeTab === def[0] ? 0 : -1;
+      tab.addEventListener('click', function () {
+        stopPussyRoll();
+        activeTab = def[0];
+        render();
+        if (bodyEl) bodyEl.scrollTop = 0;
+      });
+      nav.appendChild(tab);
+    });
+    return nav;
+  }
+
+  // SD 内置：浮层挂在手机面板外面，配色从 #sbnyc-panel 抄过来（手机夜间时面板上有 .night），抄不到用 CSS 里的默认值
+  var THEME_VARS = ['ink', 'ink-sub', 'ink-faint', 'paper', 'paper-2', 'paper-3', 'line', 'gold', 'red', 'green'];
+
+  function applyPhoneTheme() {
+    if (!root) return;
+    var panel = DOC.getElementById('sbnyc-panel');
+    root.classList.toggle('sdfp-night', !!(panel && panel.classList.contains('night')));
+    var computed = null;
+    try { computed = panel && HOST.getComputedStyle ? HOST.getComputedStyle(panel) : null; } catch (_) {}
+    THEME_VARS.forEach(function (name) {
+      var value = '';
+      try { value = computed ? text(computed.getPropertyValue('--' + name)) : ''; } catch (_) {}
+      if (value) root.style.setProperty('--sdfp-' + name, value);
+      else root.style.removeProperty('--sdfp-' + name);
+    });
+  }
+
+  function render() {
+    if (!root || !bodyEl) return;
+    applyPhoneTheme();   // SD 内置
+    var keepScroll = bodyEl.scrollTop;   // SD 内置：数据变了重画时别跳回顶上（切页、打开时调用方自己归零）
+    contacts = readRawContacts();
+    activeName = chooseInitialName(activeName);
+    if (switchEl) {
+      switchEl.replaceChildren();
+      if (contacts.length) {
+        switchEl.disabled = false;
+        contacts.forEach(function (contact) {
+          var option = el('option', '', contact.name);
+          option.value = contact.name;
+          option.selected = contact.name === activeName;
+          switchEl.appendChild(option);
+        });
+      } else {
+        switchEl.disabled = true;
+        var emptyOption = el('option', '', '暂无联系人');
+        emptyOption.value = '';
+        switchEl.appendChild(emptyOption);
+      }
+    }
+    bodyEl.replaceChildren();
+    var contact = findContact(activeName);
+    if (!contact) {
+      closeMediaSettings(false);
+      renderEmpty();
+      removeLegacyTopbar();
+      return;
+    }
+    rememberName(activeName);
+    var profile = profileFor(contact);
+    var ledger = transferLedgerFor(contact);
+    var hero = el('section', 'sdfp-hero');
+    var avatarButton = el('button', 'sdfp-avatar');
+    avatarButton.type = 'button';
+    avatarButton.setAttribute('aria-label', profile.avatar ? '更换头像' : '设置头像');
+    var avatarMedia = el('span', 'sdfp-avatar-media');
+    applyAvatar(avatarMedia, profile.avatar, contact.name);
+    avatarButton.appendChild(avatarMedia);
+    var avatarEdit = el('span', 'sdfp-media-edit-badge', '改');
+    avatarEdit.setAttribute('aria-hidden', 'true');
+    avatarButton.appendChild(avatarEdit);
+    avatarButton.addEventListener('click', function () { openMediaSettings('avatar'); });
+    hero.appendChild(avatarButton);
+    var copy = el('div', 'sdfp-hero-copy');
+    var nameRow = el('div', 'sdfp-name-row');
+    nameRow.appendChild(el('h3', 'sdfp-name', contact.name));
+    var originalNameButton = el('button', 'sdfp-original-name', profile.originalName ? '原名：' + profile.originalName : '设置原名');
+    originalNameButton.type = 'button';
+    originalNameButton.title = '设置用于匹配礼物和往来流水的原名';
+    originalNameButton.addEventListener('click', openOriginalNameEditor);
+    nameRow.appendChild(originalNameButton);
+    copy.appendChild(nameRow);
+    copy.appendChild(el('p', 'sdfp-headline', profile.headline || 'SugarSecret 联系人'));
+    if (profile.tags.length) {
+      var tags = el('div', 'sdfp-tags');
+      profile.tags.forEach(function (tag) { tags.appendChild(el('span', 'sdfp-tag', tag)); });
+      copy.appendChild(tags);
+    }
+    hero.appendChild(copy);
+    bodyEl.appendChild(hero);
+
+    var stats = el('div', 'sdfp-stats');
+    [
+      [formatMoney(ledger.total), '往来'],
+      [String(ledger.count), '流水'],
+      [String(historyOf(contact.raw).length), '私信'],
+      [text(contact.raw.last_contact, '未记录'), '最近联系']
+    ].forEach(function (item) {
+      var stat = el('div', 'sdfp-stat');
+      stat.appendChild(el('b', '', item[0]));
+      stat.appendChild(el('span', '', item[1]));
+      stats.appendChild(stat);
+    });
+    bodyEl.appendChild(stats);
+    bodyEl.appendChild(renderTabs());
+    var panel = el('div', 'sdfp-panel');
+    panel.setAttribute('role', 'tabpanel');
+    bodyEl.appendChild(panel);
+    var originalBody = bodyEl;
+    bodyEl = panel;
+    if (activeTab === 'ledger') renderLedger(contact);
+    else if (activeTab === 'showcase') renderShowcase(contact);
+    else renderHome(contact, profile);
+    bodyEl = originalBody;
+    bodyEl.scrollTop = keepScroll;   // SD 内置
+    removeLegacyTopbar();
+    lastDataRevision = profileDataRevision(readChatVariables());
+  }
+
+  function saveProfile(name, patch, button) {
+    if (!name) return Promise.resolve(false);
+    if (button) {
+      button.disabled = true;
+      button.textContent = '保存中…';
+    }
+    setStatus('正在保存…', 'info');
+    var missing = false;
+    var updater = function (vars) {
+      if (!vars || typeof vars !== 'object') vars = {};
+      // SD 内置：这个人已经不在手机里（被删、被自动清理、换了聊天）就不写。以前会凭空建一个只有 name 的联系人，
+      // 没有 sb 时还会建一个空 sb，手机就跳过「等待游戏数据」。
+      if (!vars.sb || !vars.sb.npcs || !vars.sb.npcs[name] || typeof vars.sb.npcs[name] !== 'object') {
+        missing = true;
+        return vars;
+      }
+      var current = vars.sb.npcs[name].profile;
+      var base = current && typeof current === 'object' ? current : {};
+      vars.sb.npcs[name].profile = Object.assign({}, base, patch, { schema: SCHEMA, updatedAt: patch.updatedAt });
+      return vars;
+    };
+    var operation;
+    try {
+      if (typeof updateVariablesWith === 'function') {
+        operation = Promise.resolve(updateVariablesWith(updater, { type: 'chat' }));
+      } else {
+        var vars = readChatVariables();
+        updater(vars);
+        if (typeof replaceVariables !== 'function') throw new Error('酒馆变量接口不可用');
+        replaceVariables(vars, { type: 'chat' });
+        operation = Promise.resolve(true);
+      }
+    } catch (error) {
+      operation = Promise.reject(error);
+    }
+    return operation.then(function () {
+      if (missing) throw new Error('「' + name + '」已经不在手机里了');   // SD 内置
+      if (destroyed) return false;
+      setStatus('已保存到当前聊天', 'ok');
+      try { eventEmit(STORE_EVENT, { name: name }); } catch (_) {}
+      lastDataRevision = null;
+      ensureMounts();
+      render();
+      setStatus('已保存到当前聊天', 'ok');
+      return true;
+    }).catch(function (error) {
+      setStatus('保存失败：' + (error && error.message ? error.message : '未知错误'), 'error');
+      if (button) {
+        button.disabled = false;
+        button.textContent = '保存资料';
+      }
+      return false;
+    });
+  }
+
+  function openProfile(name) {
+    if (destroyed) return;
+    ensureMounts();
+    contacts = readRawContacts();
+    activeName = chooseInitialName(name);
+    activeTab = 'home';
+    mediaTarget = 'avatar';
+    createShell();
+    if (!root) return;
+    closeDossierOptions(false);
+    closeMediaSettings(false);
+    lastFocus = DOC.activeElement;
+    open = true;
+    root.style.zIndex = '';   // SD 内置：后开的在上面——回到默认层（比个人主页高一层）
+    root.hidden = false;
+    DOC.body.classList.add('sdfp-modal-open');
+    watchStack();             // SD 内置：开着的时候个人主页再打开，就让它在上面
+    render();
+    if (bodyEl) bodyEl.scrollTop = 0;
+    lastDataRevision = profileDataRevision(readChatVariables());
+    setStatus(contacts.length ? '' : '需要先在悬浮手机中建立联系人', 'info');
+    var closeButton = root.querySelector('.sdfp-close');
+    if (closeButton) {
+      HOST.setTimeout(function () {
+        try { closeButton.focus({ preventScroll: true }); } catch (_) { closeButton.focus(); }
+      }, 0);
+    }
+  }
+
+  function closeProfile() {
+    if (!open) return;
+    stopPussyRoll();
+    closeConfirm(false);
+    closeDossierOptions(false);
+    closeMediaSettings(false);
+    open = false;
+    unwatchStack();   // SD 内置
+    if (root) root.hidden = true;
+    try { DOC.body.classList.remove('sdfp-modal-open'); } catch (_) {}
+    if (lastFocus && typeof lastFocus.focus === 'function' && lastFocus.isConnected !== false) {
+      try { lastFocus.focus({ preventScroll: true }); } catch (_) { try { lastFocus.focus(); } catch (__) {} }
+    }
+    lastFocus = null;
+  }
+
+  function refresh() {
+    ensureMounts();
+    if (open) render();
+  }
+
+  // SD 内置：sb_updated 只在这个人的数据真变了才重画（ensureMounts 里比 profileDataRevision）。
+  // 以前每来一次 sb_updated 都整页重画两遍：滚动位置跳回顶上，小穴评级的转盘转到一半被打断。
+  function onPhoneUpdated() {
+    ensureMounts();
+  }
+
+  // SD 内置：reason 'pagehide' = 自己这个 iframe 在收摊（脚本被关、手机重载）；
+  // 别人调 api.destroy()（多半是独立版加载时把同 key 的旧实例关掉）时，下一拍看看接手的是不是独立版，是就重新起来、再关掉它。
+  function destroy(reason) {
+    if (destroyed) return;
+    destroyed = true;
+    open = false;
+    if (reason !== 'pagehide') {
+      try {
+        window.setTimeout(function () {
+          var current = null;
+          try { current = HOST[RUNTIME_KEY]; } catch (_) {}
+          if (current && current !== api && !current.builtin) sdfpMain();
+        }, 0);
+      } catch (_) {}
+    }
+    detachRenderHook();
+    unwatchStack();
+    if (dossierGenerationId) {
+      try { if (typeof stopGenerationById === 'function') stopGenerationById(dossierGenerationId); } catch (_) {}
+      dossierGenerationId = '';
+    }
+    dossierUpdating = false;
+    if (ensureTimer) {
+      try { HOST.clearTimeout(ensureTimer); } catch (_) {}
+      ensureTimer = null;
+    }
+    if (heartbeat) {
+      try { HOST.clearInterval(heartbeat); } catch (_) {}
+      heartbeat = null;
+    }
+    if (observer) {
+      try { observer.disconnect(); } catch (_) {}
+      observer = null;
+    }
+    stopAll();
+    stopPussyRoll();
+    try { DOC.body.classList.remove('sdfp-modal-open'); } catch (_) {}
+    if (root) root.remove();
+    removeLegacyTopbar();
+    undecoratePhone();     // SD 内置：贴进手机的头像、按钮、属性一起摘掉
+    releaseObjectUrls();   // SD 内置
+    idbClose();            // SD 内置
+    var style = DOC.getElementById(STYLE_ID);
+    if (style) style.remove();
+    try { if (HOST[RUNTIME_KEY] === api) delete HOST[RUNTIME_KEY]; } catch (_) {}   // SD 内置：按身份摘（以前按版本号，同版本的另一份会被误摘）
+    try { if (HOST.SugarFriendProfile === api) delete HOST.SugarFriendProfile; } catch (_) {}
+    try { if (window.SugarFriendProfile === api) delete window.SugarFriendProfile; } catch (_) {}
+  }
+
+  function boot() {
+    if (destroyed) return;   // SD 内置：等 body 的时候已经被关掉了
+    if (!DOC.body) {
+      HOST.setTimeout(boot, 120);
+      return;
+    }
+    installStyle();
+    createShell();
+    ensureMounts();
+    listen(DOC, 'click', onHostClick, true);
+    listen(DOC, 'keydown', onHostKeydown, true);
+    listen(DOC, 'keydown', onDocumentKeydown, false);
+    listen(HOST, OPEN_EVENT, function (event) {
+      openProfile(event && event.detail ? event.detail.name : '');
+    });
+    // 1.9.0：脚本自己的 iframe 被销毁（关脚本、切角色）时，它自己的 window 会派发 pagehide，在这里收摊
+    listen(window, 'pagehide', onPageHide);
+    if (window !== HOST) listen(HOST, 'pagehide', onPageHide);
+    // 1.9.0：手机画完一页会发 sb_phone_rendered，数据变了发 sb_updated（都走酒馆助手事件总线，window 事件收不到）。
+    // 有了这两个通知，不再需要盯整个页面的 MutationObserver 和 1.5 秒心跳。
+    try {
+      if (typeof eventOn === 'function') {
+        var onTavern = function (eventName, fn) {
+          var handle = eventOn(eventName, fn);
+          if (handle && typeof handle.stop === 'function') disposers.push(function () { handle.stop(); });
+        };
+        // SD 内置：有 onRender 就靠它同一拍贴头像；这里只负责「手机重载换了 SugarOS」时重新挂上。手机太老才退回下一拍去贴。
+        onTavern('sb_phone_rendered', function () { if (!attachRenderHook()) scheduleEnsure(); });
+        onTavern('sb_updated', onPhoneUpdated);
+        var chatEvent = window.tavern_events && window.tavern_events.CHAT_CHANGED;
+        if (chatEvent) {
+          onTavern(chatEvent, function () {
+            closeProfile();
+            scheduleEnsure();
+          });
+        }
+      }
+    } catch (_) {}
+    attachRenderHook();   // SD 内置
+    scheduleEnsure();
+  }
+
+  function onPageHide() {
+    destroy('pagehide');
+  }
+
+  var api = {
+    version: VERSION,
+    schema: SCHEMA,
+    builtin: BUILTIN,   // SD 内置：独立版看到这个也只会照常 destroy；内置版靠它认出谁是谁
+    open: openProfile,
+    close: closeProfile,
+    refresh: refresh,
+    destroy: function () { destroy('external'); },
+    getActive: function () { return activeName; },
+    getContacts: function () { return readRawContacts().map(function (item) { return item.name; }); }
+  };
+  HOST[RUNTIME_KEY] = api;
+  try { HOST.SugarFriendProfile = api; } catch (_) {}
+  try { window.SugarFriendProfile = api; } catch (_) {}
+  boot();
 })();
 
 ;
