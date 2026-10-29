@@ -9282,9 +9282,10 @@ var SBLAB_CARD = "sd";
     var viaPreset = typeof generate === 'function';
     if (!viaPreset && typeof generateRaw !== 'function') throw new Error('当前 Tavern Helper 不支持 generate');
     dossierGenerationId = 'sdfp-dossier-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-    // 走玩家预设以后，有的预设规定先写一段思考（Dramatron 之类）——不跟它打架：允许思考，但要短，思考完必须把 JSON 写完整
+    // 走玩家预设以后，有的预设规定先写一段思考（Dramatron 之类）——不跟它打架：照常思考，思考完必须把 JSON 写完整。
+    // ⛔ 不写「思考要短」这类长度要求（Fan：AI 输出不限长度，玩家按次数付钱；10-29 我写过一版被她抓到）
     var dossierSys = DOSSIER_FICTION + '\n\n你是隐秘档案更新器。严格依据给定素材输出一个合法 JSON 对象。' +
-      '如果你的预设要求先思考，可以先思考，但思考要短；思考写完一定接着把完整的 JSON 对象写出来，没有 JSON 这一次就白写了。JSON 以外不要写正文、状态栏或其他格式。';
+      '如果你的预设要求先思考，照常思考；思考写完一定接着把完整的 JSON 对象写出来，没有 JSON 这一次就白写了。JSON 以外不要写正文、状态栏或其他格式。';
     // SD 内置：不再 120 秒后自动 stopGenerationById——慢一点的模型（或带思考的）写到一半被掐，JSON 就断了，
     // 等于给输出加了长度上限。关脚本时 destroy 里照样会停掉这一次生成。
     try {
