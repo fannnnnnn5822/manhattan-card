@@ -1243,7 +1243,7 @@
     '@keyframes sbread{from{opacity:0;transform:translateY(-2px);}to{opacity:1;transform:none;}}',
     '#sbnyc-panel .sb-rd{color:var(--ink-faint);}',
     '#sbnyc-panel{transition:transform .15s ease-out;}',
-    // 论坛：排行榜行 / 帖子卡 / 深渊区暗色 / 购买按钮
+    // 论坛：排行榜行 / 帖子卡 / 匿名区暗色 / 购买按钮
     '#sbnyc-panel .sb-rank{display:flex;align-items:center;gap:10px;margin:0 12px 6px;padding:10px 12px;background:var(--paper-2);border:.5px solid var(--line);border-radius:12px;}',
     '#sbnyc-panel .sb-rank .rn{font-family:var(--font-en);font-weight:700;font-size:14px;color:var(--gold);min-width:24px;text-align:center;flex-shrink:0;}',
     '#sbnyc-panel .sb-rank .rb{flex:1;min-width:0;}',
@@ -3004,7 +3004,7 @@
       ['sb', '👑', 'Sugar Baby 排行榜', '本月捞金榜 · 她们在赚你的钱'],
       ['gossip', '☕', 'Community Gossip', '圈内八卦 · 避雷 · 吃瓜'],
       ['trend', '📈', '本季 Trend', '姐妹们在晒什么 · 种草即拔草'],
-      ['abyss', '🕳️', '深渊区', '里 BBS · 不要问，问就是不知道'],
+      ['abyss', '🕳️', '匿名区', '里 BBS · 不要问，问就是不知道'],   // 10-29 男性向改名（原「深渊区」，内部键 abyss 不动）
       ['recruit', '📋', '招聘版', 'SB/SD 互招 · 发帖招人，会有人私信你'],
     ];
     for (var i = 0; i < boards.length; i++) {
@@ -3108,7 +3108,7 @@
       body += fakesHtml();
       body += rentalHtml();
     } else if (key === 'abyss') {
-      title = '🕳️ 深渊区'; sub = 'no names. no questions.';
+      title = '🕳️ 匿名区'; sub = 'no names. no questions.';
       var l5 = mag.abyss || [];
       for (var i5 = 0; i5 < l5.length; i5++) {
         body += '<div class="sb-abyss">' + esc(l5[i5].body) + '<div class="am">anonymous · 0' + (2 + i5) + ':' + (17 + i5 * 21) % 60 + ' AM</div></div>';
@@ -7200,7 +7200,7 @@ var SBLAB_CARD = "sd";
     toast('正在合成…');
     try {
       // 语音条里的喘息句也走单独的语速（通话那边在 callSpeak 里）
-      if ((text.match(MOAN_RE) || []).length >= 2) cfg = Object.assign({}, cfg, { speed: moanSpeedOf(cfg) });
+      if ((text.match(MOAN_RE) || []).length >= 2) { cfg = Object.assign({}, cfg, { speed: moanSpeedOf(cfg) }); text = moanTag(cfg, text); }
       var dataUrl = await callTtsApi(cfg, text, info.name);
       await dbPut('blobs', k, dataUrl);
       await playRef(k, btn);
@@ -7528,6 +7528,14 @@ var SBLAB_CARD = "sd";
   // 喘息句：拟声+省略号两处以上。再慢一成，并且在省略号处拆开分段合成——模型念省略号只停一瞬，
   // 真正的停顿由我们在段与段之间空出来（Fan 10-14：「句式中间的停顿太短」）
   var MOAN_RE = /(嗯|哈啊|啊|呼|哈|mm+h?|hm+|ha+h|ngh)[….~\.]+/gi;
+  // 10-29 照声优卡（声色事务所 10-18 Fan 听过）：光写「嗯……哈啊……」Fish 念得像在读字，句首带方括号标签才会演出来。
+  // 只给 Fish 加（别家后端会把标签当字念）；几个标签轮着用，不像同一段循环素材
+  var MOAN_TAGS = ['[panting]', '[moaning]', '[panting]', '[喘息]'];
+  var moanTagI = 0;
+  function moanTag(cfg, text) {
+    if (!cfg || cfg.backend !== 'fish' || /^\s*\[/.test(text)) return text;
+    return MOAN_TAGS[(moanTagI++) % MOAN_TAGS.length] + ' ' + text;
+  }
   async function callSpeak(cfg, text, name, sig) {
     var cap = Number(cfg.maxLen) || 240;
     if (text.length > cap) text = text.slice(0, cap);       // 通话里不弹「太长」的 toast，默默截
@@ -7535,12 +7543,12 @@ var SBLAB_CARD = "sd";
     cfg = Object.assign({}, cfg, { speed: moanSpeedOf(cfg) });
     var raw = text.match(/[^….]+(?:…+|\.{3,})?/g) || [text], pieces = [];
     raw.forEach(function (p) { p = p.trim(); if (!p) return; if (pieces.length && p.replace(/[….\s]/g, '').length < 2) pieces[pieces.length - 1] += p; else pieces.push(p); });
-    if (pieces.length < 2) return speakOne(cfg, text, name, sig);
+    if (pieces.length < 2) return speakOne(cfg, moanTag(cfg, text), name, sig);
     var last = null;
     for (var i = 0; i < pieces.length; i++) {
       if (sig.aborted) throw new Error('stopped');
       if (i > 0) { var c = audioCtx(); if (c) pl.nextTime = Math.max(pl.nextTime, c.currentTime) + PAUSE_SEC; }
-      last = await speakOne(cfg, pieces[i], name, sig);
+      last = await speakOne(cfg, (pieces[i].match(MOAN_RE) ? moanTag(cfg, pieces[i]) : pieces[i]), name, sig);   // 有喘的那段才带标签，说话的那段照常念
       await waitOr(last.done, sig);                      // 等这一段放完再要下一段，停顿才落在省略号的位置
     }
     return last;
