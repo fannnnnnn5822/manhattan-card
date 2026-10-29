@@ -9008,9 +9008,34 @@ var SBLAB_CARD = "sd";
     }
   }
 
+  // 从 i 处的 { 找到配对的 }（跳过字符串里的括号）；配不上返回 -1
+  function matchBrace(s, i) {
+    var depth = 0, inStr = false, esc = false;
+    for (var j = i; j < s.length; j++) {
+      var c = s.charAt(j);
+      if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}') { depth--; if (!depth) return j; }
+    }
+    return -1;
+  }
+
   function parseDossierJson(raw) {
     var source = typeof raw === 'string' ? raw : (raw && raw.content) || '';
-    source = String(source || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    source = String(source || '').replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+      .trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    // SD 内置 10-29：走玩家预设以后，档案前后可能多出思维链、状态栏、标签（有的里面也带大括号）——
+    // 挨个 { 找能解析、而且像档案的那一段；都不像再按老办法从第一个 { 截到最后一个 }
+    var DOSSIER_KEYS = ['年龄', '外貌', '性格', '社会身份', '身体信息', '秘密'];
+    for (var bi = source.indexOf('{'); bi !== -1; bi = source.indexOf('{', bi + 1)) {
+      var be = matchBrace(source, bi);
+      if (be < 0) continue;
+      try {
+        var obj = JSON.parse(source.slice(bi, be + 1));
+        if (obj && typeof obj === 'object' && !Array.isArray(obj) && DOSSIER_KEYS.some(function (k) { return k in obj; })) return obj;
+      } catch (_) {}
+    }
     var start = source.indexOf('{');
     var end = source.lastIndexOf('}');
     if (start < 0 || end <= start) throw new Error('AI 没有返回 JSON 对象');
@@ -9247,11 +9272,30 @@ var SBLAB_CARD = "sd";
     '你的唯一任务：按下方格式要求，为这部小说里的角色整理隐秘档案，只输出一个合法 JSON 对象。';
 
   async function callDossierModel(prompt) {
-    if (typeof generateRaw !== 'function') throw new Error('当前 Tavern Helper 不支持 generateRaw');
+    var viaPreset = typeof generate === 'function';
+    if (!viaPreset && typeof generateRaw !== 'function') throw new Error('当前 Tavern Helper 不支持 generate');
     dossierGenerationId = 'sdfp-dossier-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+    var dossierSys = DOSSIER_FICTION + '\n\n你是隐秘档案更新器。严格依据给定素材输出一个合法 JSON 对象，不要输出任何其他内容。';
     // SD 内置：不再 120 秒后自动 stopGenerationById——慢一点的模型（或带思考的）写到一半被掐，JSON 就断了，
     // 等于给输出加了长度上限。关脚本时 destroy 里照样会停掉这一次生成。
     try {
+      // SD 内置 10-29 第二刀（nomansland：带上好大鱼那段后，3.1 / PG 照样回「该请求要求…我无法满足」——几秒内的英文
+      // I cannot fulfill 才是外层审查，这种带解释的是模型本体拒的）：改走玩家自己的预设（generate），和正文同一条路，
+      // 她正文能写，档案就能写。角色卡、世界书、聊天记录、作者注释全清空，只剩她的预设 + 我们这一段；好大鱼那段照旧带着
+      if (viaPreset) {
+        return await generate({
+          user_input: prompt,
+          should_silence: true,
+          max_chat_history: 0,
+          generation_id: dossierGenerationId,
+          overrides: {
+            world_info_before: '', world_info_after: '', persona_description: '',
+            char_description: '', char_personality: '', scenario: '', dialogue_examples: '',
+            chat_history: { prompts: [], with_depth_entries: false, author_note: '' }
+          },
+          injects: [{ role: 'system', content: dossierSys, position: 'in_chat', depth: 0, should_scan: false }]
+        });
+      }
       return await generateRaw({
         user_input: prompt,
         should_silence: true,
@@ -9259,10 +9303,7 @@ var SBLAB_CARD = "sd";
         generation_id: dossierGenerationId,
         // SD 内置 10-29（nomansland：正文聊天好好的，就隐秘档案一直「没按 JSON 回」）：generateRaw 给了 ordered_prompts
         // 就不走玩家预设，破限也不上车；字段表里全是身体部位，没有破限就容易被模型拒掉或空回。带上好大鱼老师那段（DOSSIER_FICTION）
-        ordered_prompts: [{
-          role: 'system',
-          content: DOSSIER_FICTION + '\n\n你是隐秘档案更新器。严格依据给定素材输出一个合法 JSON 对象，不要输出任何其他内容。'
-        }]
+        ordered_prompts: [{ role: 'system', content: dossierSys }]   // 老酒馆助手没有 generate 才走这里
       });
     } finally {
       dossierGenerationId = '';
