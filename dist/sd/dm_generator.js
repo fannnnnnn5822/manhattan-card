@@ -3296,12 +3296,14 @@ async function onMainMessage(message_id) {
       try {
         var forumMode = autoCtlOf((getVariables({ type: 'chat' }) || {}).sb).forum.mode;   // 🎚 关＝不来人；冷清 1~2 / 原生 3~5 / 活跃 5~7
         if (forumMode !== 'off' && /(?:论坛|SugarRank|sugar\s*rank)[^。\n]{0,30}(?:发[了个]?帖|发了一[个条]|帖子|贴子|发贴)|(?:招聘|召集|征人|找金主|求包养)[^。\n]{0,20}(?:帖|贴)/.test(stripMemo(text))) {   // 10-15 隐形手机记录里的私信提到发帖不算
-          var forumSnippet = stripMemo(text).slice(0, 800);   // 10-15 不带隐形记录
+          // 10-29 抄 SB 09-16 那刀：原来截没清洗的前 800 字，开头常是状态栏/思维链，帖子本身可能根本没截进去=应聘的人没看到帖子
+          var forumSnippet = cleanProse(text);   // cleanProse 里已经先 stripMemo（10-15 不带隐形记录）
           var fr = FORUM_N[forumMode] || FORUM_N.native;
           var forumN = fr[0] + Math.floor(Math.random() * (fr[1] - fr[0] + 1));   // 原生 3~5（原 2~4，和按钮侧对齐）
+          var forumFit = Math.ceil(forumN / 2);   // 10-29 同按钮侧：约一半保底真对口
           eventEmit('sb_request_dm', {
             reason: '论坛发帖后自动响应：User（金主）刚在论坛发了招聘/征人帖，生成 ' + forumN + ' 个全新陌生SB的开场，来私信应聘。' +
-              '每个女孩都从随机素材库里乱抽，抽到谁就是谁，**绝不为了贴合帖子现捏人设**——她们拿着自己本来的条件来对这条招聘：符合的强调；不符合的照样来，嘴硬、砍价、"你要的我没有但我有别的"；真抽到完美符合的，必然贵、或者带一个帖子里没提的特殊要求。每个人的开场白都要让人看出真读过帖子。' +
+              '她们都是从随机素材库里挑的真人，各有各的来历，不是照着帖子现捏的完美女孩；但来应聘的人都先读了帖子、自己掂量过：**其中 ' + forumFit + ' 个是真对口的**——帖子写明的硬条件（类型、年龄、身份、外形、时间这些）她基本都对得上，来就是因为合适，开场先亮出对得上的那几条；对口是真对口，不是嘴上对口的照骗；对上了也还是她自己，有自己的价码、脾气和底线，不必便宜，也不必顺从。' + (forumN > forumFit ? '**其余 ' + (forumN - forumFit) + ' 个**只对上一部分、或者不太对口但想来试试：对得上的强调，差的嘴硬、砍价、"你要的我没有但我有别的"。' : '') + '每个人的开场白都要让人看出真读过帖子。' +
               '不要让任何已有联系人出现。正文参考：' + forumSnippet,
             n: String(forumN)
           });
