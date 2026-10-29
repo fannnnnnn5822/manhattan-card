@@ -9048,7 +9048,14 @@ var SBLAB_CARD = "sd";
     var s = String(typeof raw === 'string' ? raw : (raw && raw.content) || '').trim();
     if (!s) return '模型回了空白：多半是平台把这类内容挡了（空回），换个模型或预设再试';
     if (s.indexOf('{') !== -1) return '模型的档案没写完整，或者格式写坏了（收到 ' + s.length + ' 字）：要是写到一半断的，多半是预设里的「最大回复长度」太小，调大一点';
-    return '模型没写档案，回的是：「' + s.replace(/\s+/g, ' ').slice(0, 60) + (s.length > 60 ? '…' : '') + '」';
+    // 10-29 第三刀（nomansland 走预设后回「<Interleaving> <thinking> 回到 Dramatron…」）：只给开头分不出是思考写到长度上限被截，
+    // 还是思考完写了别的——补上字数和结尾，思考标签没合上的直接点破
+    var flat = s.replace(/\s+/g, ' ');
+    var tail = flat.length > 100 ? '，结尾是：「…' + flat.slice(-40) + '」' : '';
+    if (/<(think|thinking|reasoning)\b/i.test(s) && !/<\/(think|thinking|reasoning)>/i.test(s)) {
+      return '模型照预设先写思考，思考还没写完就停了，档案一个字没写（收到 ' + s.length + ' 字' + tail + '）：多半是预设里的「最大回复长度」不够，调大一点再试';
+    }
+    return '模型没写档案（收到 ' + s.length + ' 字），开头是：「' + flat.slice(0, 50) + (flat.length > 50 ? '…' : '') + '」' + tail;
   }
 
   function stripRemovedDossierFields(value) {
@@ -9275,7 +9282,9 @@ var SBLAB_CARD = "sd";
     var viaPreset = typeof generate === 'function';
     if (!viaPreset && typeof generateRaw !== 'function') throw new Error('当前 Tavern Helper 不支持 generate');
     dossierGenerationId = 'sdfp-dossier-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-    var dossierSys = DOSSIER_FICTION + '\n\n你是隐秘档案更新器。严格依据给定素材输出一个合法 JSON 对象，不要输出任何其他内容。';
+    // 走玩家预设以后，有的预设规定先写一段思考（Dramatron 之类）——不跟它打架：允许思考，但要短，思考完必须把 JSON 写完整
+    var dossierSys = DOSSIER_FICTION + '\n\n你是隐秘档案更新器。严格依据给定素材输出一个合法 JSON 对象。' +
+      '如果你的预设要求先思考，可以先思考，但思考要短；思考写完一定接着把完整的 JSON 对象写出来，没有 JSON 这一次就白写了。JSON 以外不要写正文、状态栏或其他格式。';
     // SD 内置：不再 120 秒后自动 stopGenerationById——慢一点的模型（或带思考的）写到一半被掐，JSON 就断了，
     // 等于给输出加了长度上限。关脚本时 destroy 里照样会停掉这一次生成。
     try {
