@@ -9042,6 +9042,56 @@ var SBLAB_CARD = "sd";
     return JSON.parse(source.slice(start, end + 1));
   }
 
+  // SD 内置 10-29：写到一半被截断（10-29 用 PG 3.1 实测：写完口腔，在 "乳房": 后面被输出审查掐掉）——
+  // 把写完的那几格捞回来存上，不整份作废（Fan 的规矩：写到一半的东西留住）。
+  // 从截断处往回退到最近一个完整的字段，把没合上的括号补齐；断在一句话中间的，这句留着、末尾补「…」
+  var DOSSIER_TOP_KEYS = ['年龄', '与玩家关系', '社会身份', '外貌', '性格', '好感度', '堕落度', '服装', '状态', '秘密'];
+  var DOSSIER_BODY_KEYS = ['口腔', '乳房', '小穴', '后穴'];
+  function salvageDossierJson(raw) {
+    var src = String(typeof raw === 'string' ? raw : (raw && raw.content) || '')
+      .replace(/<(think|thinking|reasoning)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+    var keyAt = src.search(/"(年龄|与玩家关系|社会身份|外貌|性格)"\s*:/);
+    var start = keyAt < 0 ? -1 : src.lastIndexOf('{', keyAt);
+    if (start < 0) return null;
+    var stack = [], inStr = false, esc = false, cands = [];
+    for (var j = start; j < src.length; j++) {
+      var c = src.charAt(j);
+      if (inStr) { if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
+      if (c === '"') inStr = true;
+      else if (c === '{' || c === '[') { stack.push(c); cands.push({ at: j + 1, stack: stack.slice() }); }
+      else if (c === '}' || c === ']') { stack.pop(); if (!stack.length) return null; }   // 整个对象其实写完了＝不是截断，是格式坏了
+      else if (c === ',') cands.push({ at: j, stack: stack.slice() });
+    }
+    var closeAll = function (st) { var out = ''; for (var k = st.length - 1; k >= 0; k--) out += st[k] === '{' ? '}' : ']'; return out; };
+    var tries = [];
+    if (inStr) tries.push(src.slice(start).replace(/\s+$/, '') + '…"' + closeAll(stack));
+    for (var m = cands.length - 1; m >= 0; m--) tries.push(src.slice(start, cands[m].at) + closeAll(cands[m].stack));
+    for (var t = 0; t < tries.length; t++) {
+      try {
+        var obj = JSON.parse(tries[t]);
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) continue;
+        var got = DOSSIER_TOP_KEYS.filter(function (k) { return k in obj; });
+        if (!got.length) continue;
+        var body = obj['身体信息'] && typeof obj['身体信息'] === 'object' ? obj['身体信息'] : {};
+        var keys = src.slice(start).match(/"([^"\\]{1,12})"\s*:/g) || [];
+        return {
+          obj: obj,
+          half: t === 0 && inStr && keys.length ? keys[keys.length - 1].replace(/^"|"\s*:$/g, '') : '',
+          missing: DOSSIER_TOP_KEYS.filter(function (k) { return !(k in obj); })
+            .concat(DOSSIER_BODY_KEYS.filter(function (k) { return !(k in body); }))
+        };
+      } catch (_) {}
+    }
+    return null;
+  }
+  function salvageNote(sv) {
+    var half = sv.half && sv.missing.indexOf(sv.half) === -1 ? '「' + sv.half + '」只写了一半（末尾标了…）；' : '';
+    var miss = sv.missing.length ? '「' + sv.missing.join('」「') + '」没写上，先用原来的顶着（没有就用默认描述）；' : '';
+    var inBody = !!sv.obj['身体信息'] || DOSSIER_BODY_KEYS.indexOf(sv.half) !== -1;
+    return '隐秘档案写到一半被截断了（' + (inBody ? '多半是写到身体那几格被平台的审查掐掉' : '可能是平台的审查掐掉，也可能是预设的最大回复长度不够') + '）：' +
+      half + miss + '其余已更新。想补全，换「抗截断」版的模型再点一次「更新」';
+  }
+
   // SD 内置 10-29：解析失败时说清模型到底回了什么——空白（被挡/空回）、写到一半断了（长度上限）、还是回了别的话（拒了）。
   // 以前一律「没按 JSON 回」，玩家和我们都分不出是哪种
   function dossierReplyHint(raw) {
@@ -9215,14 +9265,16 @@ var SBLAB_CARD = "sd";
       '  "性格": "性格底色与行为方式",',
       '  "好感度": 0到100整数,',
       '  "堕落度": 0到100整数,',
+      // SD 内置 10-29：身体信息挪到最后（原来在状态、秘密前面）。Gemini 一写到身体那几格就可能被输出审查当场掐断，
+      // 排在最后，被掐也只丢身体那几格，前面的都能捞回来（见 salvageDossierJson）
       '  "服装": {"上身":"", "下身":"", "鞋袜":"", "配饰":""},',
+      '  "状态": {"恋爱状态":"情感事实与反差"},',
+      '  "秘密": "一件有时间、地点、行为与对象的具体反差事件",',
       '  "身体信息": {',
       '    "口腔":"", "乳房":"必须写罩杯、触感与体香",',
       '    "小穴":{"小穴评级":"", "描述":"基础形态、紧度、温湿度与客观遗憾", "特质":"受刺激后的动态反馈"},',
       '    "后穴":"外观、褶皱、紧致度与开发潜质"',
-      '  },',
-      '  "状态": {"恋爱状态":"情感事实与反差"},',
-      '  "秘密": "一件有时间、地点、行为与对象的具体反差事件"',
+      '  }',
       '}',
       '',
       // SD 内置 10-29（nomansland：走预设、带好大鱼都还是被拒）：原版每次把 17 档评级名全列一遍，可评级是代码先抽好的，
@@ -9369,11 +9421,13 @@ var SBLAB_CARD = "sd";
       var raw = await callDossierModel(prompt);
       if (destroyed) return;
       if (getFriendChatId() !== chatAtStart) throw new Error('生成途中换了聊天，这次的档案没有写入');
-      var parsed = null;
+      var parsed = null, salvaged = null;
       try {
         parsed = parseDossierJson(raw);
       } catch (parseError) {
-        throw new Error(dossierReplyHint(raw) + '。什么都没改，可以再点一次「更新」');
+        salvaged = salvageDossierJson(raw);   // 写到一半被截：写完的那几格照样存
+        if (!salvaged) throw new Error(dossierReplyHint(raw) + '。什么都没改，可以再点一次「更新」');
+        parsed = salvaged.obj;
       }
       var next = normalizeGeneratedDossier(parsed, existing, forcedRank, plot);
       var destination = await commitDossier(contact, key, next);
@@ -9382,7 +9436,8 @@ var SBLAB_CARD = "sd";
       dossierUpdating = false;
       lastDataRevision = null;
       render();
-      setStatus(
+      if (salvaged) setStatus(salvageNote(salvaged), 'info');
+      else setStatus(
         '隐秘档案已更新 · 建档依据：' +
         (worldbook.found ? (worldbook.chatFound ? '聊天世界书' : '角色世界书') : '角色标签与聊天') +
         ' · 写入：' + destination + ' · 点击小穴评级重新鉴赏',
