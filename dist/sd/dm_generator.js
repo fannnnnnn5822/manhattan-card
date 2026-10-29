@@ -4650,6 +4650,13 @@ function callDmLines(npc, n) {
     return (m.sender === 'USER' ? 'User' : npc.name) + (m.type === 'sticker' ? '[表情包]' : ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '')) + ': ' + String(m.content || '');
   }).join('\n');
 }
+// 10-29 Fan：句首 [轻声][耳语] 这类提示「装了 TTS 才出来」——只有开着 Fish 通话语音的人才给 AI 这条规矩：
+// 没开的人提示词里没有这句，不多花 token；别家后端听不懂这些标签，加了也白加。设置是 lab_tts 存的那份（同一个 localStorage）
+function fishCallVoiceOn() {
+  try { var c = JSON.parse(lsGet('sbnyc_tts_cfg') || 'null'); return !!(c && c.backend === 'fish' && c.key && c.callVoice !== false); } catch (e) { return false; }
+}
+var CALL_CUE_RULE = '- 对方开着语音，你的台词会被念出来：语气真的变了的那一行，可以在行首加一个方括号提示，只能从这五个里选：[轻声] [耳语] [笑] [哭腔] [喘]。' +
+  '一行最多一个，大部分台词不加；提示放在这一行最前面（外语台词也一样，§ 翻译照旧放末尾）。[画面] 行不加';
 function callRules(name, mode, invite) {
   var oneLine = '- 换行以完整句子为单位：一句话说完才换行，省略号与紧随的短句并入同一句（「……清楚。」占一行）；不要为营造停顿感把一句话砍成多行';
   var lust = '- 情欲场景不套用通用色情腔：台词忠于人物档案（寡言的寡言、嘴碎的碎、会调情的才调情）；粗口与喊话仅当人设本身就粗。禁止千人一面的默认色情嗓音，包括支配宣示与占有审问（比较、炫耀、宣示所有权）';
@@ -4751,7 +4758,7 @@ async function handleCall(p) {
         '',
         '## 一致性\n- 「' + name + '」只知道自己和 User 的私信、通话，以及自己在场的正文；看不到 User 的手机、余额和 User 跟别人的聊天。\n- 称呼、语气、分寸以人物档案和私信里已经形成的关系为准——接起电话还是同一个人。',
         '',
-        callRules(name, mode, invite)
+        callRules(name, mode, invite) + (fishCallVoiceOn() ? '\n' + CALL_CUE_RULE : '')
       ].filter(function (s) { return s !== ''; }).join('\n');
       ordered = [{ role: 'system', content: sys }];
       if (invite) instr = '（User 的' + kind + '正在呼叫「' + name + '」。请按输出要求生成对方的反应。）';
