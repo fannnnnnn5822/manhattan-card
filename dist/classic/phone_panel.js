@@ -3850,6 +3850,32 @@
 
   // ── 💳 流水（UWU 的功能）：全部交易带日期，🧾税务中心藏在右上角（设置里开了才出现）──
   var _onTaxReady = null;   // 税务题目生成完的回调钩子（全局只注册一次监听，见文件尾 SBon）
+  // 不算：原来那笔标 reversed + undone，另记一笔反向的「不算」指回去（reverses）。之后这楼再重roll，生成器看到 undone 就不会再退一次
+  function undoStoryTx(id) {
+    var got = null;
+    SBupdate(function (v) {
+      var w = v.sb && v.sb.wallet; if (!w || !Array.isArray(w.allTransactions)) return v;
+      var e = null;
+      for (var i = w.allTransactions.length - 1; i >= 0; i--) { var t = w.allTransactions[i]; if (t && t.id === id) { e = t; break; } }
+      if (!e || e.reversed || e.reverses || e.channel !== '正文') return v;
+      var back = e.direction === '-' ? '+' : '-';
+      e.reversed = true; e.undone = true;
+      w.balance = (w.balance || 0) + (back === '+' ? e.amount : -e.amount);
+      var tx = { direction: back, amount: e.amount, counterparty: '不算：' + String(e.counterparty || ''), channel: '回退', note: '', time: nowT() };
+      if (!w.transactions) w.transactions = [];
+      w.transactions.push(tx);
+      if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+      w.allTransactions.push(Object.assign({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), gameDay: (v.sb.game && v.sb.game.day) || 1, reverses: e.id }, tx));
+      if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
+      got = { dir: back, amount: e.amount };
+      return v;
+    }).then(function () {
+      if (!got) { toast('info', '这笔已经处理过了'); return; }
+      toast('success', '这笔不算了：账上' + (got.dir === '+' ? '退回 ' : '扣回 ') + fmtCNY(got.amount));
+      SBemit('sb_updated');
+      loadState(); if (currentPage === 'transactions') openTransactions();
+    });
+  }
   function openTransactions() {
     currentPage = 'transactions';
     currentChatName = null;
@@ -3864,15 +3890,21 @@
     else allTx.forEach(function (tx) {
       var minus = tx.direction === '-';
       var dateStr = tx.gameDay ? fmtMD(gameDateOf(tx.gameDay)) : '';
-      h += '<div style="padding:9px 14px;border-bottom:.5px dashed var(--line-faint);display:flex;justify-content:space-between;align-items:baseline;gap:8px;">' +
+      // 11-01 照声色片场加「不算」（三卡一起）：正文记错、记重的那笔点一下划掉，钱退回来（记错的进账扣回去）
+      var canUndo = tx.channel === '正文' && tx.id && !tx.reversed && !tx.reverses;
+      var undoH = canUndo ? ' <button class="sb-tx-undo" data-undo="' + esc(tx.id) + '" title="正文记错、记重了：这笔不算，钱退回来（进账就扣回去）" style="font-size:10px;padding:1px 7px;margin-left:4px;border:.5px solid var(--line);border-radius:8px;background:transparent;color:var(--ink-sub);cursor:pointer;">不算</button>' : '';
+      h += '<div style="padding:9px 14px;border-bottom:.5px dashed var(--line-faint);display:flex;justify-content:space-between;align-items:baseline;gap:8px;' + (tx.reversed ? 'opacity:.45;text-decoration:line-through;' : '') + '">' +
         '<div style="min-width:0;"><b class="sb-tx-a ' + (minus ? 'minus' : 'plus') + '">' + tx.direction + fmtCNY(tx.amount) + '</b> ' +
-        '<span style="font-size:11px;color:var(--ink-sub);">' + esc(tx.counterparty || '') + '</span></div>' +
+        '<span style="font-size:11px;color:var(--ink-sub);">' + esc(tx.counterparty || '') + '</span>' + undoH + '</div>' +
         '<div style="font-size:10px;color:var(--ink-faint);flex-shrink:0;">' + dateStr + (tx.time ? ' ' + esc(tx.time) : '') + (tx.channel ? ' · ' + esc(tx.channel) : '') + '</div></div>';
     });
     h += '</div>';
     h += '<div id="sb-tax-panel" style="display:none;flex:1;overflow-y:auto;padding:12px;"></div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
+    chatEl.querySelectorAll('.sb-tx-undo').forEach(function (b) {
+      b.addEventListener('click', function (ev) { ev.stopPropagation(); undoStoryTx(b.getAttribute('data-undo')); });
+    });
     var taxPanel = chatEl.querySelector('#sb-tax-panel');
     var txList = chatEl.querySelector('#sb-tx-list');
     var taxBtn = chatEl.querySelector('#sb-tax-btn');
@@ -7018,7 +7050,7 @@ var SBLAB_CARD = "classic";
       (d.lines || []).forEach(function (l) {
         if (!l || l.w !== 'them' || (l.k || 'line') !== 'line') return;   // 自己说的、视频画面描写都不念
         var t = spokenOf(l.t);
-        if (t) cq.items.push({ text: t, name: d.name || '' });
+        if (t) cq.items.push({ text: t, name: d.name || '', cue: l.cue || '' });
       });
       // 连着来的 lines 只往队尾接，不打断正在念的
       if (cq.items.length && !cq.running) callRun();
@@ -7040,7 +7072,7 @@ var SBLAB_CARD = "classic";
           if (!cfg) { cq.items = []; break; }               // 念到一半玩家关了开关
           var it = cq.items.shift();
           try {
-            var take = await callSpeak(cfg, it.text, it.name, sig);
+            var take = await callSpeak(cfg, it.text, it.name, sig, it.cue);
             cq.fails = 0;
             // 只往前多下载一句：第 i+1 句排上之后，等第 i 句念完再去要第 i+2 句
             if (prevDone) await waitOr(prevDone, sig);
@@ -7070,23 +7102,26 @@ var SBLAB_CARD = "classic";
   // 只给 Fish 加（别家后端会把标签当字念）；几个标签轮着用，不像同一段循环素材
   var MOAN_TAGS = ['[panting]', '[moaning]', '[panting]', '[喘息]'];
   var moanTagI = 0;
+  // 通话台词的句首提示（手机拆进 l.cue）→ Fish 标签。[in a whisper] 比 [whispering] 好使（声优卡 10-17 实测）
+  var CUE_TAG = { '轻声': '[in a whisper]', '耳语': '[in a whisper]', '小声': '[in a whisper]', '气声': '[in a whisper]', '笑': '[laughing]', '哭腔': '[sobbing]', '喘': '[panting]' };
   function moanTag(cfg, text) {
     if (!cfg || cfg.backend !== 'fish' || /^\s*\[/.test(text)) return text;
     return MOAN_TAGS[(moanTagI++) % MOAN_TAGS.length] + ' ' + text;
   }
-  async function callSpeak(cfg, text, name, sig) {
+  async function callSpeak(cfg, text, name, sig, cue) {
     var cap = Number(cfg.maxLen) || 240;
     if (text.length > cap) text = text.slice(0, cap);       // 通话里不弹「太长」的 toast，默默截
-    if ((text.match(MOAN_RE) || []).length < 2) return speakOne(cfg, text, name, sig);
+    var cueTag = (cfg.backend === 'fish' && cue && CUE_TAG[cue]) || '';   // 只有 Fish 认；别家后端不加
+    if ((text.match(MOAN_RE) || []).length < 2) return speakOne(cfg, cueTag ? cueTag + ' ' + text : text, name, sig);
     cfg = Object.assign({}, cfg, { speed: moanSpeedOf(cfg) });
     var raw = text.match(/[^….]+(?:…+|\.{3,})?/g) || [text], pieces = [];
     raw.forEach(function (p) { p = p.trim(); if (!p) return; if (pieces.length && p.replace(/[….\s]/g, '').length < 2) pieces[pieces.length - 1] += p; else pieces.push(p); });
-    if (pieces.length < 2) return speakOne(cfg, moanTag(cfg, text), name, sig);
+    if (pieces.length < 2) return speakOne(cfg, cueTag ? cueTag + ' ' + text : moanTag(cfg, text), name, sig);
     var last = null;
     for (var i = 0; i < pieces.length; i++) {
       if (sig.aborted) throw new Error('stopped');
       if (i > 0) { var c = audioCtx(); if (c) pl.nextTime = Math.max(pl.nextTime, c.currentTime) + PAUSE_SEC; }
-      last = await speakOne(cfg, (pieces[i].match(MOAN_RE) ? moanTag(cfg, pieces[i]) : pieces[i]), name, sig);   // 有喘的那段才带标签，说话的那段照常念
+      last = await speakOne(cfg, (cueTag ? cueTag + ' ' + pieces[i] : pieces[i].match(MOAN_RE) ? moanTag(cfg, pieces[i]) : pieces[i]), name, sig);   // 段段分开合成，提示每段都带（耳语要整句都是耳语）   // 有喘的那段才带标签，说话的那段照常念
       await waitOr(last.done, sig);                      // 等这一段放完再要下一段，停顿才落在省略号的位置
     }
     return last;

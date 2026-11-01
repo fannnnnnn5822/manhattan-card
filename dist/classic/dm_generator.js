@@ -765,12 +765,33 @@ function creditWallet(sb, dir, amount, counterparty, channel, pass) {
     direction: dir, amount: amount,
     counterparty: counterparty || '', channel: channel || '', note: '',
     time: nowTime(), gameDay: (sb.game && sb.game.day) || 1,
+    src: pass || '',   // 'm楼层号'＝正文记的账（11-01 照一掷千金：重roll 回退标 reversed、正文复读按楼拦、流水页「不算」都靠它）
   });
   if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
   if (dir === '-') payBillIfMatch(w, counterparty);   // 正文里付了房租/还了卡 → 账单倒计时重置下期，不然永远催缴
   // 大额到账 = 最想花钱的瞬间 → 通知手机面板（灵动岛提示 + 犒赏自己按到账数字选价位）
   if (dir === '+' && amount >= 1000) { try { eventEmit('sb_windfall', { amount: amount }); } catch (e) {} }
   return true;
+}
+// 11-01 正文复读记账（一掷千金亚伦报的，三卡同一套记账代码一起修）：
+// 正文 AI 后面几楼还在写同一件事（交车/拆礼物/收到转账），就把上一楼的 [WALLET:…] 原样又写一遍；
+// 10 分钟去重闸按真实时间算，正文一楼一楼推几分钟就过期了。正文复读要按「楼」认，不按分钟。
+// 规则：最近 MAIN_REPEAT_FLOORS 楼内、剧情差不到一天，别的楼已经记过同方向+同金额+同备注（或同一个人）且没被退掉 → 复读，拦下。
+var MAIN_REPEAT_FLOORS = 12;
+function mainWalletRepeatOf(sb, dir, amount, note, msgIdStr) {
+  var all = (sb && sb.wallet && sb.wallet.allTransactions) || [];
+  var me = Number(msgIdStr), who = walletWho(sb, note), today = (sb && sb.game && sb.game.day) || 1;
+  for (var i = all.length - 1; i >= 0; i--) {
+    var t = all[i];
+    if (!t || t.reversed || !/^m\d+$/.test(String(t.src || ''))) continue;
+    var fl = Number(String(t.src).slice(1));
+    if (String(t.src) === 'm' + msgIdStr || !(fl < me) || me - fl > MAIN_REPEAT_FLOORS) continue;
+    if (t.gameDay && Math.abs(today - t.gameDay) > 1) continue;   // 隔了好几天的同额同人＝新的一笔（每周零花钱这种）
+    if (t.direction !== dir || Number(t.amount) !== Number(amount)) continue;
+    if (!walletSameWho(walletWho(sb, t.counterparty), who)) continue;
+    return t;
+  }
+  return null;
 }
 // 支出备注对上某张账单（名字互相包含，或都指房租/信用卡/学费）→ 视为付掉这张，进入下期 30 天
 function billAlias(s) {
@@ -2781,6 +2802,12 @@ function buildDigest(sb) {
   } else if (st.close) {
     out += '【江湖地位·SugarSecret 捞金榜】User 紧咬着榜首的 Akuma，差一口气就超过闺蜜了。Akuma 隐隐感到威胁——嘴上还是姐妹情深，暗地里已经开始不着痕迹地加码。\n';
   }
+  // 11-01 正文复读记账：让 AI 看见前几楼已经记过的账，后文接着写同一件事时别再写一遍标记
+  var paidMain = ((sb.wallet && sb.wallet.allTransactions) || []).filter(function (t) { return t && !t.reversed && /^m\d+$/.test(String(t.src || '')); }).slice(-6);
+  if (paidMain.length) {
+    out += '【前几楼正文已经记过的账（已入账，别再记）】' + paidMain.map(function (t) { return t.direction + '￥' + Number(t.amount).toLocaleString() + ':' + String(t.counterparty || '').substring(0, 30); }).join('；') + '\n' +
+      '（这些钱已经进出过账了。后文接着写这件事——收礼、拆包、交车、戴上、聊起它——都只写散文，不再写 [WALLET]/[CLOSET]。只有这一楼**又有新的一笔钱进出**才写标记。）\n';
+  }
   out += '（铁律：正文只写散文，绝不复述、排版或重写这些内容。上面私信里出现过的转账都**已经自动入账**，正文绝不再写 [WALLET] 标记重复记这些钱。信息隔离：每个人只记得自己和 User 的那段私信；' +
     '任何角色都看不到 User 的手机——不知道她的余额、购物记录、论坛、以及她和别人的聊天，绝不提及、绝不影射。' +
     '唯一例外是 SugarElite™ 的管家 S.。人物只能对看得见的东西做反应：她穿戴出来的、她亲口说的、当面发生的。）\n' +
@@ -3021,13 +3048,33 @@ async function onMainMessage(message_id) {
         var w = v.sb.wallet;
         for (var ri = 0; ri < lastEff.walletOps.length; ri++) {
           var eff = lastEff.walletOps[ri];
-          if (w) {
+          // 11-01：这笔玩家已经在流水页点过「不算」退掉了 → 重roll 不再退第二次（标记 undoneRolled，只消耗一次）
+          var undoneHit = null;
+          if (w && Array.isArray(w.allTransactions)) {
+            var liveHit = false;
+            for (var ui = w.allTransactions.length - 1; ui >= 0; ui--) {
+              var ut = w.allTransactions[ui];
+              if (!ut || ut.src !== 'm' + msgIdStr || ut.direction !== eff.dir || ut.amount !== eff.amount) continue;
+              if (!ut.reversed) { liveHit = true; break; }
+              if (ut.undone && !ut.undoneRolled && !undoneHit) undoneHit = ut;
+            }
+            if (liveHit) undoneHit = null;
+          }
+          if (undoneHit) undoneHit.undoneRolled = true;
+          if (w && !undoneHit) {
             w.balance = (w.balance || 0) + (eff.dir === '+' ? -eff.amount : eff.amount);
             if (!w.transactions) w.transactions = [];
             w.transactions.push({ direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime() });
             if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
             if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
-            w.allTransactions.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime(), gameDay: (v.sb.game && v.sb.game.day) || 1 });
+            // 原来那笔标上 reversed，退款记一笔 reverses 指回去（照一掷千金 10-28）：复读判定和「不算」才认得「记了又退了」
+            var orig = null, msrc = 'm' + msgIdStr;
+            for (var oi = w.allTransactions.length - 1; oi >= 0; oi--) {
+              var ot = w.allTransactions[oi];
+              if (ot && ot.src === msrc && !ot.reversed && ot.direction === eff.dir && ot.amount === eff.amount) { orig = ot; break; }
+            }
+            if (orig) orig.reversed = true;
+            w.allTransactions.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), direction: eff.dir === '+' ? '-' : '+', amount: eff.amount, counterparty: '正文重roll回退', channel: '回退', note: '', time: nowTime(), gameDay: (v.sb.game && v.sb.game.day) || 1, reverses: orig ? orig.id : '' });
             if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
           }
           if (w && Array.isArray(w._dedup)) {
@@ -3113,7 +3160,7 @@ async function onMainMessage(message_id) {
         if (hitTok) { hit2 = spends[si]; break; }
       }
       if (!hit2 && spends.length === 1 && items.filter(function (x) { return x.dir !== '-'; }).length === 1) hit2 = spends[0];
-      if (hit2) itq.price = hit2.amount;
+      if (hit2) { itq.price = hit2.amount; itq._w = hit2; }   // _w：认领的那笔钱，那笔是复读的话这件也别再入橱
     }
     // ③ 剧情时间标记 [TIME:HH:MM|M/D] → 手机时钟跟着正文走（v5 UWU改造：用实际日期算gameDay，不再靠AI编的星期几）
     var timeM = text.match(/\[TIME:\s*(\d{1,2}:\d{2})\s*(?:\|\s*([^\]]*?))?\s*\]/);   // [TIME:14:30|4/16] 或 [TIME:14:30]
@@ -3124,19 +3171,23 @@ async function onMainMessage(message_id) {
     while ((smk = sre.exec(text)) !== null) { var st0 = smk[1].trim(); if (st0) scheds.push(st0); }
     if (!found.length && !items.length && !newTime && !scheds.length) { _mainEffects[msgIdStr] = { walletOps: [], closetAdds: [], days: 0 }; trimMainEffects(_mainEffects); return; }
     var _daysThisPass = 0;   // 本轮真正推过的天数（重roll 时要原数退回去）
+    var repeated = [];   // 正文复读前几楼已经记过的账 → 没入账
     var credited = [];   // 只有真入账的才进成功toast——被去重闸拦下的那笔有自己的⛔警告，别再报"已入账"
     var addedCloset = [];
     var addedSched = [];
     await updateVariablesWith(function (v) {
       if (!v.sb) return v;
       credited.length = 0;
+      repeated.length = 0;
       addedCloset.length = 0;
       addedSched.length = 0;
       for (var i = 0; i < found.length; i++) {
         if (found[i].amount === 0) continue;   // WALLET=0=他人买单，User 没花钱，跳过入账
+        var rep = mainWalletRepeatOf(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', msgIdStr);
+        if (rep) { repeated.push({ f: found[i], floor: String(rep.src).slice(1) }); found[i]._rep = true; continue; }
         if (creditWallet(v.sb, found[i].dir, found[i].amount, found[i].note || '正文', '正文', 'm' + msgIdStr)) credited.push(found[i]);
       }
-      for (var j = 0; j < items.length; j++) { if (items[j].dir === '-') closetRemove(v.sb, items[j].name); else { if (closetAdd(v.sb, items[j].name, items[j].price || 0)) addedCloset.push(items[j]); } }
+      for (var j = 0; j < items.length; j++) { if (items[j].dir === '-') closetRemove(v.sb, items[j].name); else if (items[j]._w && items[j]._w._rep) continue; else { if (closetAdd(v.sb, items[j].name, items[j].price || 0)) addedCloset.push(items[j]); } }
       if (newTime) {
         if (!v.sb.game) v.sb.game = {};
         var g = v.sb.game;
@@ -3238,6 +3289,7 @@ async function onMainMessage(message_id) {
       var into = addedCloset;
       if (into.length) toast.push('👗 入橱 ' + into.map(function (x) { return x.name; }).join('、'));
       if (toast.length && typeof toastr !== 'undefined') toastr.success(toast.join(' ｜ '), 'SugarOS');
+      if (repeated.length && typeof toastr !== 'undefined') toastr.info('🔁 正文又写了一遍已经记过的账，没再记：' + repeated.map(function (r) { return r.f.dir + '￥' + r.f.amount.toLocaleString() + ' ' + (r.f.note || '') + '（第' + r.floor + '楼记过）'; }).join('，') + '。真是又来了一笔的话，点钱包「校正」补上。', 'SugarOS 钱包');
     } catch (e) {}
   } catch (e) { console.warn('[SB-S v4] wallet/closet marker parse failed', e); }
 }
