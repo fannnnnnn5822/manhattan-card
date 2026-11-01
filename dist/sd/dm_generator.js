@@ -888,12 +888,13 @@ function creditWallet(sb, dir, amount, counterparty, channel, pass) {
 var MAIN_REPEAT_FLOORS = 12;
 function mainWalletRepeatOf(sb, dir, amount, note, msgIdStr) {
   var all = (sb && sb.wallet && sb.wallet.allTransactions) || [];
-  var me = Number(msgIdStr), who = walletWho(sb, note);
+  var me = Number(msgIdStr), who = walletWho(sb, note), today = (sb && sb.game && sb.game.day) || 1;
   for (var i = all.length - 1; i >= 0; i--) {
     var t = all[i];
     if (!t || t.reversed || !/^m\d+$/.test(String(t.src || ''))) continue;
     var fl = Number(String(t.src).slice(1));
     if (String(t.src) === 'm' + msgIdStr || !(fl < me) || me - fl > MAIN_REPEAT_FLOORS) continue;
+    if (t.gameDay && Math.abs(today - t.gameDay) > 1) continue;   // 隔了好几天的同额同人＝新的一笔（每次约会的固定价这种）
     if (t.direction !== dir || Number(t.amount) !== Number(amount)) continue;
     if (!walletSameWho(walletWho(sb, t.counterparty), who)) continue;
     return t;
