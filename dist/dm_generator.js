@@ -2113,7 +2113,9 @@ function landGroupRows(sb, gKey, rows) {
   return dmName;
 }
 
+var _chatGenG = 0;   // 11-07：每换一次聊天加一；生成前后对不上＝这一单是上一个聊天的，生成完不落账（刀14 随暮星从 S 市那张卡搬来）
 async function runOnce(req) {
+  var g0 = _chatGenG;
   var vars = getVariables({ type: 'chat' });
   var sb = (vars && vars.sb) ? vars.sb : null;
   if (!sb) { notifyFail('手机还没有数据：先填开场表单并提交'); return; }
@@ -2176,6 +2178,7 @@ async function runOnce(req) {
       }
     }
   }
+  if (g0 !== _chatGenG) { console.log('[SB-NYC v4] 生成期间换了聊天：这一轮回复是上一个聊天的，不落进新聊天'); return; }   // 11-07
   if (songs.length) await applyMoodSongs(songs);                                  // 歌先入库（就算私信失败歌也算数）
   if (!dms.length && !blocks.length && !grows.length) {
     notifyFail(isGroupReq ? '群里这一轮没说出话：两次输出都解析不出格式（原始输出已打进控制台F12）' : '私信生成失败：两次输出都解析不出格式（原始输出已打进控制台F12）');
@@ -3957,6 +3960,43 @@ async function dossierBookName(npcName) {
   return (prefix + ' · 旧识 · ' + String(npcName || '').slice(0, 20) + (stamp ? ' · ' + stamp : '')).slice(0, 80);
 }
 
+// 旧识的世界书条目（导入旧识的后半段，三个进料口共用）：聊天世界书里一条绿灯条目「旧识-名字」，
+// 正文提到名字才激活；extra.sb_import 是去重锚——同一个名字再写＝旧条目先拆再写新的。返回写进了哪本书。
+// 三个进料口：① handleImport（读别人的世界书，模型蒸馏）② 暮星「注入正文」（真人的小卡原文 + 他亲手写的原话）
+// ③ 暮星「收下名片」（别人手机里那份现成档案）。②③ 不调模型，走下面的 handleImportEntry。
+async function writeImportEntry(name, dossier, voice) {
+  var chatWb = await getOrCreateChatWorldbook('current', await dossierBookName(name));
+  await deleteWorldbookEntries(chatWb, function (en) { return !!(en && en.extra && en.extra.sb_import === name); });   // 二次导入=旧条目先拆
+  await createWorldbookEntries(chatWb, [{
+    name: '旧识-' + name,
+    enabled: true,
+    strategy: { type: 'selective', keys: [name], keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
+    position: { type: 'before_character_definition', role: 'system', depth: 0, order: 100 },
+    content: String(dossier || '') + (voice ? '\n\n【声音（TA开口必须贴这个腔调）】\n' + voice : ''),
+    probability: 100,
+    recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
+    effect: { sticky: null, cooldown: null, delay: null },
+    extra: { sb_import: name },
+  }]);
+  return chatWb;
+}
+// ✦ 暮星俱乐部（第三刀）：面板已经把联系人写进 sb.npcs（它要同时搬对话、去重，所以那一半在面板里做），
+// 这里只把档案写进聊天世界书。档案是现成的，**不调模型**。
+// 面板发 sb_request_import_entry {nonce, name, dossier, voice}
+//   → 回 sb_import_entry_done {nonce, name, book, chars} 或 sb_import_entry_failed {nonce, name, msg}（失败必须出声，面板 toast）
+async function handleImportEntry(p) {
+  var nonce = p && p.nonce, name = String((p && p.name) || '').trim(), dossier = String((p && p.dossier) || '');
+  try {
+    if (!name || !dossier) throw new Error('名字或档案是空的');
+    var book = await writeImportEntry(name, dossier, String((p && p.voice) || ''));
+    console.log('[SB-NYC v4] vesper import entry written: 「旧识-' + name + '」(' + dossier.length + ' chars) → ' + book);
+    try { eventEmit('sb_import_entry_done', { nonce: nonce, name: name, book: book || '', chars: dossier.length }); } catch (e1) {}
+  } catch (e) {
+    console.warn('[SB-NYC v4] vesper import entry failed', e);
+    try { eventEmit('sb_import_entry_failed', { nonce: nonce, name: name, msg: (e && e.message) || String(e) }); } catch (e2) {}
+  }
+}
+
 async function handleImport(p) {
   var wbName = String((p && p.worldbook) || '').trim();
   var charName = String((p && p.name) || '').trim().slice(0, 24);
@@ -4077,19 +4117,7 @@ async function handleImport(p) {
     //    （2026-07-16 Fan 实测"世界书没有新条目"＝条目在，但藏在时间戳名的书里）。带上聊天文件名=每局一本、互不串。
     // 写失败不挡导入——手机侧靠npc记录照常工作，但必须出声（铁律）。成功也要出声：告诉玩家写进了哪本书。
     try {
-      var chatWb = await getOrCreateChatWorldbook('current', await dossierBookName(name));
-      await deleteWorldbookEntries(chatWb, function (en) { return !!(en && en.extra && en.extra.sb_import === name); });   // 二次导入=旧条目先拆
-      await createWorldbookEntries(chatWb, [{
-        name: '旧识-' + name,
-        enabled: true,
-        strategy: { type: 'selective', keys: [name], keys_secondary: { logic: 'and_any', keys: [] }, scan_depth: 'same_as_global' },
-        position: { type: 'before_character_definition', role: 'system', depth: 0, order: 100 },
-        content: fresh.dossier + '\n\n【声音（TA开口必须贴这个腔调）】\n' + fresh.voice,
-        probability: 100,
-        recursion: { prevent_incoming: true, prevent_outgoing: true, delay_until: null },
-        effect: { sticky: null, cooldown: null, delay: null },
-        extra: { sb_import: name },
-      }]);
+      var chatWb = await writeImportEntry(name, fresh.dossier, fresh.voice);
       console.log('[SB-NYC v4] import worldbook entry written: 「旧识-' + name + '」(' + fresh.dossier.length + ' chars) → ' + chatWb);
       try { if (typeof toastr !== 'undefined') toastr.success('📖 ' + name + ' 的档案（' + fresh.dossier.length + '字）已写进世界书「' + chatWb + '」，正文提到TA名字时主线自动认得', 'SugarOS'); } catch (e5) {}
     } catch (eWb) {
@@ -4582,7 +4610,109 @@ async function handleCall(p) {
 }
 eventOn('sb_request_call', handleCall);
 
+// ══ ✦ Club Vesper 暮星俱乐部 · 「演的是谁」AI 起草（2026-11-06 第一版；11-07 刀14 从 S 市那张卡搬来，改成纽约）══
+// 面板发 sb_request_vesper_draft {nonce, current} → 这里读人设 + 最近正文，一次调用起草名片上那段话
+// → 回 sb_vesper_draft {nonce, text}（面板只填进编辑框，玩家改完自己保存）
+//   或 sb_vesper_draft_failed {nonce, kind:'empty'|'refused'|'nodata'|'error', msg}。
+// 走和论坛/会刊同一条路：玩家配了独立 API 先走它，失败或没配才回退主 API 的 generateRaw。
+// 作者硬规矩：不写字数上限、不设 max_tokens；提示词用引导写法，不列禁令清单、不给示例句（模型会照抄）。
+// 用第三人称「她」：名片是递给别人看的介绍，第三人称读起来像一张卡；第一人称更像一条私信。
+function vesperDraftPrompt(uid, look, plot, cur, prof) {
+  var sys = [
+    '你在替一位玩家起草她名片上的一段介绍。',
+    '玩家在这张卡里扮演一个女孩——2026 年的纽约曼哈顿，sugar 圈，钱按美元算。这张名片会递给第一次见到她的人：对方读完，要知道她演的是一个怎样的人——叫什么、多大、做什么、什么脾气。',
+    '',
+    '怎么写：',
+    '· 用第三人称「她」，从她的名字起笔。读起来是一段介绍，像有人把她引荐给你，而不是一张表格。',
+    '· 写进名片的每一样——名字、年纪、做什么的、性格、习惯——都从下面给你的料里来：玩家写的人设、她的建档，和最近的正文剧情。料里交代过的才写；料里没交代的那一项就让它空着。名片上少一句，比多一句编出来的更像她。',
+    '· 性格从她在剧情里实际做过的事、说过的话里看：她怎么花钱、怎么回消息、被冒犯时怎么收场。把这些写成看得见的样子，比堆形容词更像她本人。',
+    '· 这是她自己愿意递出去的名片：语气体面，带一点她自己的味道，是她本人读了会点头认下的那种介绍。',
+    '· 名片会被别的真人看到，所以内容只关于这个角色本身；剧情里别人的私事、联系方式、现实世界里的信息，都留在名片之外。',
+    '',
+    '只输出名片上的这段话本身，前后不加标题、引号或说明。',
+  ].join('\n');
+  var parts = [];
+  parts.push('【玩家写的人设】\n' + (uid.persona ? uid.persona : '（玩家没有填人设——那就只从正文里取。）'));
+  if (uid.name) parts.push('【她在这局里用的名字】' + uid.name);
+  if (prof) parts.push('【她的建档】' + prof);
+  if (look) parts.push('【外形】' + look);
+  parts.push('【最近的正文剧情】（越往后越新）\n' + (plot || '（正文还没开始。）'));
+  if (String(cur || '').trim()) parts.push('【她名片上现在写的】（可以照着改，也可以整段重写）\n' + String(cur).trim());
+  parts.push('照上面的料，起草名片上「演的是谁」这一段。');
+  return { sys: sys, instr: parts.join('\n\n') };
+}
+// 纽约版建档页的结构化字段（名字 / 年纪 / 学校 / 住哪 / 家里）：填了的才拿，没填的不补默认值（不替她编）
+function vesperDraftProfile(p) {
+  p = p || {};
+  var s = function (k) { return String(p[k] == null ? '' : p[k]).trim(); };
+  var out = [];
+  var nm = [s('name_en'), s('name_cn')].filter(Boolean).join(' / ');
+  if (nm) out.push('名字 ' + nm);
+  if (s('age')) out.push(s('age') + ' 岁');
+  var sch = [s('school'), s('major'), s('year')].filter(Boolean).join(' ');
+  if (sch) out.push(sch);
+  if (s('visa')) out.push('签证 ' + s('visa'));
+  if (s('hood')) out.push('住 ' + s('hood'));
+  if (s('bg_label')) out.push('家里 ' + s('bg_label'));
+  return out.join('；');
+}
+// 洗掉模型常加的壳：思维容器、代码围栏、开头的「演的是谁：」标签、整段外面包的一对引号。正文一个字不截。
+function vesperCleanDraft(raw) {
+  var t = stripThink(String(raw == null ? '' : raw)).trim();
+  t = t.replace(/^```[a-zA-Z]*\s*\n?/, '').replace(/\n?```\s*$/, '').trim();
+  t = t.replace(/^(?:【[^】\n]{1,12}】|(?:演的是谁|名片|自我介绍|介绍)\s*[:：])\s*/, '').trim();
+  var pairs = { '「': '」', '“': '”', '"': '"', '『': '』' };
+  var o = t.charAt(0), c = pairs[o];
+  if (c && t.length > 2 && t.charAt(t.length - 1) === c && t.slice(1, -1).indexOf(o) === -1) t = t.slice(1, -1).trim();
+  return t;
+}
+// 被拒：回得很短、而且一开口就是道歉/「我不能」的那种
+var VESPER_REFUSE_RE = /^(?:抱歉|很抱歉|对不起|非常抱歉|不好意思|我(?:不能|无法|没法|不便)|无法(?:协助|完成|提供|满足)|作为(?:一个)?(?:AI|人工智能|语言模型)|I'?m sorry|I am sorry|Sorry|I can(?:no|')t|I am unable|I'?m unable|As an AI)/i;
+function vesperLooksRefused(t) { t = String(t || '').trim(); return t.length < 400 && VESPER_REFUSE_RE.test(t); }
+var _vesperBusy = false;
+async function handleVesperDraft(p) {
+  var nonce = p && p.nonce;
+  function fail(kind, msg) { try { eventEmit('sb_vesper_draft_failed', { nonce: nonce, kind: kind, msg: msg || '' }); } catch (e) {} }
+  if (_vesperBusy) { fail('error', '上一份还在起草'); return; }
+  _vesperBusy = true;
+  try {
+    var vars = getVariables({ type: 'chat' });
+    var sb = vars && vars.sb;
+    if (!sb) { fail('nodata', '还没有存档数据'); return; }
+    var uid = tavernPersona();   // 纽约版读酒馆人设的函数叫 tavernPersona（S 市那张叫 userIdentity）
+    var look = String((sb.profile && sb.profile.look) || '').trim();
+    var prof = vesperDraftProfile(sb.profile);
+    var plot = await recentPlot();
+    if (!uid.persona && !look && !prof && !plot) { fail('nodata', '人设没填，正文也还没开始——先演几场再来'); return; }   // 没料就不调模型，免得它凭空编一个人
+    var pr = vesperDraftPrompt(uid, look, plot, (p && p.current) || '', prof);
+    var ordered = [{ role: 'system', content: pr.sys }];
+    try { eventEmit('sb_status', '✦ 照你的剧情起草中…'); } catch (e) {}
+    var raw = null;
+    var cfg = getApiCfg();
+    if (cfg) {
+      try { raw = await callIndependent(cfg, ordered, pr.instr); }   // 不传 max_tokens
+      catch (e) { notifyFail('独立API失败(' + ((e && e.message) || e) + ')，回退主API'); raw = null; }
+    }
+    if (raw == null) {
+      await waitForSlot();
+      raw = await generateRaw({ user_input: pr.instr, should_silence: true, max_chat_history: 0, ordered_prompts: ordered });
+    }
+    var text = vesperCleanDraft(typeof raw === 'string' ? raw : (raw && raw.content) || '');
+    if (!text) { console.warn('[SB-NYC v4] vesper draft: empty output', raw); fail('empty', '再点一次，或者换个模型'); return; }
+    if (vesperLooksRefused(text)) { console.warn('[SB-NYC v4] vesper draft refused:', text); fail('refused', '换个模型，或者自己先写两句再让它接着改'); return; }
+    try { eventEmit('sb_vesper_draft', { nonce: nonce, text: text }); } catch (e) {}
+    console.log('[SB-NYC v4] vesper draft ok (' + text.length + ' chars)');
+  } catch (e) {
+    var em = String((e && e.message) || e);
+    console.warn('[SB-NYC v4] vesper draft failed', e);
+    fail('error', /Too Many|429/i.test(em) ? '主API限额中——稍等半分钟再点，或去⚙️给手机配独立API' : em);
+  } finally { _vesperBusy = false; }
+}
+eventOn('sb_request_vesper_draft', handleVesperDraft);
+
+
 eventOn('sb_request_import', handleImport);
+eventOn('sb_request_import_entry', handleImportEntry);   // ✦ 暮星：注入正文 / 收下名片 → 只写世界书条目，不调模型
 eventOn('sb_request_translate', handleTranslate);
 eventOn('sb_request_ad_comments', handleAdComments);
 eventOn('sb_request_mag', function (p) { generateMagazine(!!(p && p.force), (p && p.sections) || null); });
@@ -4599,6 +4729,21 @@ try { eventOn(tavern_events.MESSAGE_DELETED, scheduleBubbleSync); } catch (e) {}
 try { eventOn(tavern_events.MESSAGE_SWIPED, scheduleBubbleSync); } catch (e) {}
 syncInject();
 try { mergeDupeNpcs(); } catch (e) {}                       // 开机顺手清一次重复联系人（双管家bug善后）
+// 11-07 换聊天：酒馆助手在同一张卡里换聊天不重载脚本——跟聊天绑定的内存清掉，按新聊天的变量重新注入私信摘要。
+// 清的：世界书素材缓存（聊天世界书跟着聊天换）、排着队还没生成的私信请求（是上一个聊天的人）、正文楼层的入账记录（按楼层号记，换了聊天楼层号对不上）、
+// 攒着没跑的气泡反向同步。正在生成的那一单（私信 / 群聊回复）：生成完一看换过聊天就整单不落账（_chatGenG）；会刊、通话、导入这些别的生成没拦。
+function onChatChangedGen() {
+  try {
+    _chatGenG++;
+    _wbCache = null; _wbAt = 0;
+    _pending.length = 0;
+    _mainEffects = {};
+    clearTimeout(_bubSyncTimer); _bubSyncTimer = null;
+    syncInject();
+  } catch (e) { console.warn('[SB-NYC v4] chat changed: reset failed', e); }
+}
+try { eventOn(tavern_events.CHAT_CHANGED, onChatChangedGen); } catch (e) {}
+try { window.addEventListener('pagehide', function () { try { eventRemoveListener(tavern_events.CHAT_CHANGED, onChatChangedGen); } catch (e) {} }); } catch (e) {}
 try { Promise.resolve(migrateGroups()).catch(function (e) { console.warn('[SB-NYC v4] migrate groups failed', e); }); } catch (e) {}   // 👥 老存档里的群补上 isGroup/members（顶层不是 async，用 .catch 兜）
 
 // ── 🔭 跨卡足迹彩蛋（L. 专属，满100楼触发一次，之后封存）──
