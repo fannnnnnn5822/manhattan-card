@@ -1747,6 +1747,7 @@
     if (vesperPageHidden() && (ask || !_vsAway.note)) _vsAway.note = '✦ S.：' + t;   // 刀12：切走时这条 toast 没人看见，回来再说一遍（有人想见＞留话）
     setStatus('✦ ' + (ask ? '有人想见你' : VESPER_COPY.mailHint));
     try { triggerVibration(); } catch (e) {}
+    if (vibrateEnabled) { try { var nv = (DOC.defaultView || window).navigator; if (nv && nv.vibrate) nv.vibrate([90, 60, 140]); } catch (e) {} }   // 刀13：真人来信真震一下（iOS 没有 vibrate，不报错）
   }
   // 本地写：镜像和变量各改一遍（fn 必须两次跑出同样结果——时间这类值在外面先定好）
   function vsWrite(fn) {
@@ -3258,6 +3259,7 @@
     '  font-size:11px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 5px;font-family:Georgia,serif;}',
     // 📳 悬浮球发光动画（UWU：新消息时金圈扩散三下）
     '#sbnyc-fab.glow{animation:sbfabglow 0.6s ease-out 3;}',
+    '#sbnyc-fab.vs-lit:not(.glow):not(.toy-on){animation:sbfabglow 1.6s ease-in-out infinite;}',   // 刀13：暮星未读常亮（让开一次性闪光和玩具光）
     '@keyframes sbfabglow{0%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 0 rgba(201,165,102,.9));}50%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 11px rgba(201,165,102,.95));}100%{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 0 rgba(201,165,102,0));}}',
     // 📳 面板抖动（UWU：纯 CSS 动画，手机电脑都有"震感"）
     '@keyframes sbShake{0%{transform:translateX(0);}15%{transform:translateX(-3px);}30%{transform:translateX(3px);}45%{transform:translateX(-3px);}60%{transform:translateX(3px);}75%{transform:translateX(-2px);}100%{transform:translateX(0);}}',
@@ -4191,9 +4193,11 @@
   }
   function totalUnread() { return (state && state.npcs) ? countUnread(state.npcs) : 0; }
   function updateBadge(vsLive) {
-    var n = totalUnread() + vesperUnread(vsLive);   // ✦ 暮星的未读（不在那条对话页时）也让悬浮球亮红点；开关关着时恒为 0
+    var vn = vesperUnread(vsLive);   // 刀13
+    var n = totalUnread() + vn;   // ✦ 暮星的未读（不在那条对话页时）也让悬浮球亮红点；开关关着时恒为 0
     badgeEl.style.display = n > 0 ? 'flex' : 'none';
     badgeEl.textContent = n > 9 ? '9+' : String(n);
+    try { if (fab) fab.classList.toggle('vs-lit', vn > 0); } catch (e) {}   // 刀13：暮星有未读＝悬浮球一直慢慢亮着，读完才灭（vesperPaintUnread 也走这里）
   }
   function refreshView() {
     loadState();
@@ -7913,6 +7917,7 @@
   // FAB：点=开关手机，按住拖=移动
   makeDraggable(fab, fab, 'sbnyc_fab_pos', function () {
     var open = panel.classList.toggle('open');
+    if (!open) { try { updateBadge(); } catch (e) {} }   // 刀13：收起手机＝停着的那条对话又算未读，球当场亮
     if (open) { _expShow = []; lockPanelHeight(); refreshView(); }   // 掏一次手机=逛一次橱窗：奢华体验重抽一手
   });
   // 手机面板：抓灵动岛或状态栏拖动
@@ -8455,6 +8460,7 @@
   };
   try { VIEW.SugarOS = sbPublicApi; } catch (e) {}
   function sbSelfCleanup() {
+    try { if (fab) fab.classList.remove('vs-lit'); } catch (e) {}   // 刀13
     try { if (VIEW.SugarOS === sbPublicApi) delete VIEW.SugarOS; } catch (e) {}   // 🔌 二创接口：只摘自己挂的那个
     try { var _rt = phoneRendered._t || {}; for (var _rk in _rt) clearTimeout(_rt[_rk]); } catch (e) {}
     try { clearInterval(_songTimer); } catch (e) {}
@@ -8490,6 +8496,7 @@
       try { VIEW.localStorage.removeItem('sbnyc_fab_pos'); VIEW.localStorage.removeItem('sbnyc_panel_pos'); } catch (e) {}
       defaultFabPos();
       var open = panel.classList.toggle('open');
+      if (!open) { try { updateBadge(); } catch (e) {} }   // 刀13：收起手机＝停着的那条对话又算未读，球当场亮
       if (open) {
         _expShow = [];   // 同上：重新掏出手机=橱窗重抽
         defaultPanelPos();
