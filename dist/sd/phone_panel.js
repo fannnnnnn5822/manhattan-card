@@ -1930,6 +1930,7 @@
   }
 
   // ── 页面：俱乐部（我的小卡 + 有人想见你 + 我的线 + 今晚在场）──
+  function vesperCityChip(city) { city = String(city || '').trim(); return city ? '<span class="sdv-city">' + esc(city) + '</span>' : ''; }   // 刀14：对方马甲旁的城市小字（没有就不画）
   function vesperSideChip(side) { return '<span class="sdv-side ' + (side === 'sd' ? 'sd' : 'sb') + '">' + esc(VESPER_SIDE[side] || '？') + '</span>'; }
   function vesperMetaHtml(side, c) {
     var rk = c.rank ? '第 ' + esc(c.rank) + ' 位' : '没上榜';
@@ -1949,7 +1950,7 @@
     var c = (p && p.card) || {};
     var ago = recent ? vesperAgo(p.seen) : '';
     return '<div class="sdv-p' + (full ? ' full' : '') + (recent ? ' away' : '') + '"' + (full ? '' : ' data-sdv="ask" data-p="' + esc(p.id) + '"' + (recent ? ' data-r="1"' : '')) + '>' +
-      '<div class="sdv-p-top">' + vesperSideChip(p.side) + '<b>@' + esc(p.handle || '') + '</b><span class="sdv-mark">' + sbIcon('star', 12) + '</span></div>' +
+      '<div class="sdv-p-top">' + vesperSideChip(p.side) + '<b>@' + esc(p.handle || '') + '</b>' + vesperCityChip(c.city) + '<span class="sdv-mark">' + sbIcon('star', 12) + '</span></div>' +
       '<div class="sdv-p-who">' + esc(c.who || '') + '</div>' +
       '<div class="sdv-p-meta">' + vesperMetaHtml(p.side, c) + '</div>' +
       (c.line ? '<div class="sdv-p-line">「' + esc(c.line) + '」</div>' : '') +
@@ -2005,7 +2006,7 @@
       talks.forEach(function (L) {
         var w = L.with || {};
         h += '<div class="sdv-lrow' + (L.status === 'closed' ? ' off' : '') + '" data-sdv="line" data-l="' + esc(L.id) + '">' + vesperSideChip(w.side) +
-          '<div class="sdv-lr-b"><b>' + sbIcon('star', 11) + ' @' + esc(w.handle || '…') + '</b><small>' + esc(vesperPreview(L)) + '</small></div>' +
+          '<div class="sdv-lr-b"><b>' + sbIcon('star', 11) + ' @' + esc(w.handle || '…') + vesperCityChip(w.card && w.card.city) + '</b><small>' + esc(vesperPreview(L)) + '</small></div>' +
           (L.unread ? '<span class="sdv-unread">' + L.unread + '</span>' : '') + '</div>';
       });
       h += '</div>';
@@ -2772,7 +2773,8 @@
     c = (c && typeof c === 'object' && !Array.isArray(c)) ? c : {};
     var rk = Number(c.rank);
     return { who: String(c.who == null ? '' : c.who), line: String(c.line == null ? '' : c.line), tier: String(c.tier == null ? '' : c.tier),
-      rank: (isFinite(rk) && rk > 0) ? Math.round(rk) : null, skin: String(c.skin == null ? '' : c.skin), story: c.story === true };
+      rank: (isFinite(rk) && rk > 0) ? Math.round(rk) : null, skin: String(c.skin == null ? '' : c.skin), story: c.story === true,
+      city: String(c.city == null ? '' : c.city).trim().slice(0, 12) };   // 刀14：城市只用来标小字（鎏金小卡带 city；本卡自己不带）
   }
   // 大厅名单回来时：我线上存的对方小卡跟着换成最新的（对方改了小卡、关了「允许被注入」，这边才知道）
   function vesperSyncFaces(people) {
@@ -4033,6 +4035,10 @@
     '#sbnyc-panel .sdv-side{flex:none;display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;line-height:1.6;letter-spacing:1px;font-weight:600;border:.5px solid currentColor;font-family:var(--font-cn);}',
     '#sbnyc-panel .sdv-side.sb{color:#c27a95;}',
     '#sbnyc-panel .sdv-side.sd{color:#4f7fb8;}',
+    '#sbnyc-panel .sdv-city{flex:none;display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;font-size:9.5px;line-height:1.6;letter-spacing:.5px;font-weight:400;border:.5px solid currentColor;font-family:var(--font-en);color:#a3978a;opacity:.8;vertical-align:1px;}',
+    '#sbnyc-panel.night .sdv-city{color:#9a9fae;}',
+    '#sbnyc-panel .sdv-p-top b:has(+ .sdv-city){flex:0 1 auto;}',   // 刀14：有城市小字时马甲不撑满，小字紧跟马甲
+    '#sbnyc-panel .sdv-p-top .sdv-city{margin-left:0;margin-right:auto;}',
     '#sbnyc-panel.night .sdv-side.sb{color:#e3a3bb;}',
     '#sbnyc-panel.night .sdv-side.sd{color:#8db4e6;}',
     '#sbnyc-panel .sdv-p{margin:6px 14px;padding:11px 13px;border-radius:14px;border:.5px solid var(--line);background:var(--paper-2);cursor:pointer;}',
