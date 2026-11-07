@@ -201,6 +201,23 @@
     var f = STICKERS[name]; if (!f) return '';
     return '<img class="' + (cls || '') + '" src="https://files.catbox.moe/' + f + '" alt="' + esc(name) + '" title="' + esc(name) + '" loading="lazy" onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src=\'' + STK_FALLBACK + f + '\'}">';
   }
+  // 😀 表情包网格（私信和俱乐部共用这一套）：head＝顶上那行字，点一张 → onPick(名字)，菜单随即收起
+  function stickerPicker(head, onPick) {
+    closeMsgMenu();
+    var pick = DOC.createElement('div');
+    pick.className = 'sb-msgmenu sb-stkpick';
+    pick.style.left = '10px'; pick.style.right = '10px'; pick.style.top = '8%';
+    pick.innerHTML = '<div class="sb-stk-head"><span>' + esc(head) + '</span><button data-pa="">✕</button></div>' +
+      '<div class="sb-stk-grid">' + STICKER_NAMES.map(function (n) { return '<div class="sb-stk-cell" data-stk="' + esc(n) + '">' + stickerImg(n) + '</div>'; }).join('') + '</div>';
+    panel.appendChild(pick);
+    _msgMenu = pick;
+    pick.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var cell = e.target && e.target.closest && e.target.closest('[data-stk]');
+      if (cell) { onPick(cell.getAttribute('data-stk')); closeMsgMenu(); _msgMenu = null; return; }
+      if (e.target.closest && e.target.closest('[data-pa]')) { closeMsgMenu(); _msgMenu = null; }
+    });
+  }
   function lastPreview(m) {
     if (!m) return '';
     if (m.type === 'recall') return (m.sender === 'USER' ? '你：' : '') + '撤回了一条消息';
@@ -1727,6 +1744,10 @@
     else if (kind === 'ask') { L.status = 'asked_me'; L.mine = false; L.first = String(b.text || ''); L.msgs.push(mk({ k: 'text', me: false, text: L.first })); }
     else if (kind === 'open') { L.status = 'open'; L.msgs.push(mk({ k: 'sys', text: VESPER_COPY.opened })); }
     else if (kind === 'closed') { L.status = 'closed'; L.msgs.push(mk({ k: 'sys', text: VESPER_COPY.closed })); }
+    else if (kind === 'text' && b.t === 'sticker' && typeof b.stk === 'string' && b.stk.trim()) {   // 刀13：表情包（名字认不得的，气泡退成「[表情包] 名字」）
+      var stk = b.stk.trim().slice(0, 40);
+      L.msgs.push(mk({ k: 'text', me: false, text: vesperStkText(stk), stk: stk, skin: String(b.skin || '') }));
+    }
     else if (kind === 'text') { L.msgs.push(mk({ k: 'text', me: false, text: String(b.text || ''), skin: String(b.skin || '') })); }
     else if (kind === 'transfer') {
       var amt = Math.round(Number(b.amount));
@@ -2346,6 +2367,8 @@
   function vesperBubble(L, m, i) {
     var isU = !!m.me;
     if (m.k === 'sys') return '<div class="sb-msg system">' + esc(m.text || '') + '</div>';
+    // 刀13：表情包＝私信里同一种透明气泡，不套皮肤底色；表里没有这个名字＝照下面的文字气泡显示「[表情包] 名字」
+    if (m.k === 'text' && m.stk && STICKERS.hasOwnProperty(m.stk)) return renderOneMsg({ sender: isU ? 'USER' : 'THEM', time: m.time || '', type: 'sticker', content: m.stk, note: '' }, null, null, false, false, false, '');
     if (m.k === 'text') {
       var s = renderOneMsg({ sender: isU ? 'USER' : 'THEM', time: m.time || '', type: 'text', content: m.text || '', note: '' }, null, null, false, false, false, '');
       if (!isU) { var sk = vesperSkinOk(m.skin) || vesperSkinOk(((L.with || {}).card || {}).skin); if (sk) s = s.replace('class="sb-msg them', 'class="sb-msg them sk-' + sk); }
@@ -2509,6 +2532,24 @@
       if (vesperOnLine(id)) openVesperLine(id);
     });
   }
+  // 刀13：俱乐部里发表情包。服务器的种类表里没有 sticker（不改 SQL），所以走 text：
+  // body＝{ text:'[表情包] 名字', t:'sticker', stk:名字, skin, nonce }——老版本客户端收到照样显示成那行字；
+  // 新版本认 t/stk 出图（按名字找表，两张卡的表一样）。名字也过服务器的联系方式拦截：表里 88 个名字核过，都不会被拦
+  function vesperStkText(n) { return '[表情包] ' + n; }
+  function vesperPickSticker(id) {
+    if (!vesperLineGuard(id)) return;
+    stickerPicker('😀 表情包 · 点一张就发', function (n) { vesperSendSticker(id, n); });
+  }
+  function vesperSendSticker(id, name) {
+    if (!STICKERS.hasOwnProperty(name) || !vesperLineGuard(id)) return;
+    var mySkin = skinsOf().active || '', txt = vesperStkText(name);
+    vesperSendRaw(id, 'text', { text: txt, t: 'sticker', stk: name, skin: mySkin, nonce: vesperNonce() }).then(function (r) {
+      if (!r.ok) return;
+      var at = Date.now();
+      vesperPushMsg(id, { k: 'text', me: true, text: txt, stk: name, skin: mySkin, at: at, time: vesperClock(at) });
+      if (vesperOnLine(id)) openVesperLine(id);
+    });
+  }
   function vesperMenu(title, items, onPick) {   // items: [[key, label]]
     closeMsgMenu();
     var menu = DOC.createElement('div');
@@ -2616,9 +2657,11 @@
   function vesperPlusMenu(id) {
     var L = vesperLine(id);
     var items = [['pay', '💸 转账给 TA（从您钱包扣）'], ['gift', '🎁 买礼物送 TA'], ['link', '🔗 发礼物链接（TA 买给您）']];
+    items.push(['sticker', '😀 发表情包']);   // 刀13：表情包——点一张就发，不进待发
     if (L && L.with && L.with.side === VESPER_MY_SIDE) items.push(['card', VESPER_COPY.cardMenu]);   // 推名片只在同一边的人之间（这张卡＝金主对金主）
     vesperMenu('', items, function (k) {
       if (k === 'pay') vesperPay(id);
+      else if (k === 'sticker') vesperPickSticker(id);
       else if (k === 'card') vesperPickCard(id);
       else vesperPickItem(id, k);
     });
@@ -2794,7 +2837,7 @@
   function vesperVoiceOf(L) {
     var out = [], used = 0, ms = L.msgs || [];
     for (var i = ms.length - 1; i >= 0; i--) {
-      var m = ms[i]; if (!m || m.me || m.k !== 'text') continue;
+      var m = ms[i]; if (!m || m.me || m.k !== 'text' || m.stk) continue;   // 表情包不是 TA 亲手写的话
       var t = String(m.text || '').trim(); if (!t || t.length > VESPER_VOICE_LINE) continue;
       if (used + t.length > VESPER_VOICE_MAX && out.length) break;
       out.unshift('「' + t + '」'); used += t.length;
@@ -7878,20 +7921,7 @@
     // 描述类（照片/语音/定位/转账）走面板小窗，攒进待发由玩家点发送
     // 😀 表情包选择器：网格里点一张进待发（和照片/语音一样由玩家点发送）
     function openStickerPicker() {
-      closeMsgMenu();
-      var pick = DOC.createElement('div');
-      pick.className = 'sb-msgmenu sb-stkpick';
-      pick.style.left = '10px'; pick.style.right = '10px'; pick.style.top = '8%';
-      pick.innerHTML = '<div class="sb-stk-head"><span>😀 表情包 · 点一张进待发</span><button data-pa="">✕</button></div>' +
-        '<div class="sb-stk-grid">' + STICKER_NAMES.map(function (n) { return '<div class="sb-stk-cell" data-stk="' + esc(n) + '">' + stickerImg(n) + '</div>'; }).join('') + '</div>';
-      panel.appendChild(pick);
-      _msgMenu = pick;
-      pick.addEventListener('click', function (e) {
-        e.stopPropagation();
-        var cell = e.target && e.target.closest && e.target.closest('[data-stk]');
-        if (cell) { queueMsg(cell.getAttribute('data-stk'), 'sticker'); closeMsgMenu(); _msgMenu = null; toast('success', '😀 表情包已进待发——点发送'); return; }
-        if (e.target.closest && e.target.closest('[data-pa]')) { closeMsgMenu(); _msgMenu = null; }
-      });
+      stickerPicker('😀 表情包 · 点一张进待发', function (n) { queueMsg(n, 'sticker'); toast('success', '😀 表情包已进待发——点发送'); });
     }
     var plusBtn = chatEl.querySelector('.sb-cbar .plus');
     if (plusBtn) plusBtn.addEventListener('click', function (ev) {
@@ -8641,23 +8671,35 @@
   if (!applyPos(panel, loadPos('sbnyc_panel_pos'))) defaultPanelPos();
   // 键盘抬升：打字时不缩面板，把整台手机往上平移到键盘上方（平移不够贴顶了才把高度微缩掉差额）。
   // 用 transform 平移不动 left/top —— 拖动存档不受影响，键盘一收 transform 清零就回原位。
+  // 抬升的数学单拎出来（纯函数，测试直接拿去跑）。
+  // iOS Safari 弹键盘：innerHeight 不变、可视区 vv.height 缩、还会把可视区往下滚（vv.offsetTop > 0）；
+  // position:fixed 的面板 getBoundingClientRect 是相对布局视口的，肉眼看到的位置要再减 offsetTop。
+  // 以前按 r.top 算抬升上限 → 多抬 offsetTop 那么多，整台手机被顶出屏幕顶、只剩输入框一行（11-07 iPhone 反馈）。
+  // 安卓 offsetTop 恒为 0，下面每一步和原来算出来一模一样。
+  function kbLiftCalc(innerH, vvH, vvTop, rTop, rBottom) {
+    vvTop = vvTop || 0;
+    var kb = innerH - vvH;                                         // 不减 offsetTop：iOS 可视区下滚时减了会误判成「键盘收了」
+    if (kb < 60) return { open: false, overlap: 0, lift: 0, remain: 0 };
+    var visTop = rTop - vvTop, visBottom = rBottom - vvTop;        // 面板在可视区里的上下沿
+    var overlap = visBottom - vvH + 8;
+    if (overlap <= 0) return { open: true, overlap: overlap, lift: 0, remain: 0 };
+    var lift = Math.min(overlap, Math.max(0, visTop - 6));         // 最多抬到贴「看得见的」屏幕顶
+    return { open: true, overlap: overlap, lift: lift, remain: overlap - lift };
+  }
   function liftForKeyboard() {
     try {
       var vv = VIEW.visualViewport;
       if (!vv) return;
       panel.style.transform = '';                                  // 先复位再量，免得平移叠加
-      var kb = VIEW.innerHeight - vv.height - (vv.offsetTop || 0);
-      if (kb < 60) {                                               // 键盘收了（比如安卓返回键）→ 恢复原尺寸
+      var r = panel.getBoundingClientRect();
+      var k = kbLiftCalc(VIEW.innerHeight, vv.height, vv.offsetTop, r.top, r.bottom);
+      if (!k.open) {                                               // 键盘收了（比如安卓返回键）→ 恢复原尺寸
         if (vpW() < 500) fitPanel(); else lockPanelHeight();
         return;
       }
-      var r = panel.getBoundingClientRect();
-      var overlap = r.bottom - (vv.offsetTop + vv.height) + 8;
-      if (overlap <= 0) return;                                    // 没被键盘挡住就不动
-      var lift = Math.min(overlap, Math.max(0, r.top - 6));        // 最多抬到贴屏幕顶
-      if (lift > 0) panel.style.transform = 'translateY(-' + lift + 'px)';
-      var remain = overlap - lift;
-      if (remain > 4) panel.style.height = (Math.max(240, r.height - remain) / CAL.sy) + 'px';   // 抬到顶还差的部分才缩高度
+      if (k.overlap <= 0) return;                                  // 没被键盘挡住就不动
+      if (k.lift > 0) panel.style.transform = 'translateY(-' + k.lift + 'px)';
+      if (k.remain > 4) panel.style.height = (Math.max(240, r.height - k.remain) / CAL.sy) + 'px';   // 抬到顶还差的部分才缩高度
     } catch (e) {}
   }
   // 视口变化（转屏/键盘弹出/缩放）→ 重校准；打字中只抬升，没打字就复位+按当前视口重排。
@@ -8688,6 +8730,14 @@
   panel.addEventListener('focusout', keepInViewSoon, true);
   try { VIEW.addEventListener('resize', keepInView); } catch (e) {}
   try { if (VIEW.visualViewport) VIEW.visualViewport.addEventListener('resize', keepInView); } catch (e) {}
+  // iOS 弹键盘/打字时可视区往下滚只派发 visualViewport 的 scroll，不一定有 resize → 也跟着重算（一帧合并一次，滚动不刷屏）
+  var _kvRaf = 0;
+  function keepInViewFrame() {
+    if (_kvRaf) return;
+    var raf = VIEW.requestAnimationFrame ? VIEW.requestAnimationFrame.bind(VIEW) : function (fn) { return setTimeout(fn, 50); };
+    _kvRaf = raf(function () { _kvRaf = 0; keepInView(); });
+  }
+  try { if (VIEW.visualViewport) VIEW.visualViewport.addEventListener('scroll', keepInViewFrame); } catch (e) {}
 
   // ══════════════════════════════════════════════════════════════════
   // 正文聊天气泡（```chat 方案来自 UWU 老师）
@@ -8952,6 +9002,7 @@
     try { for (var vw in _vl.wbWait) if (_vl.wbWait.hasOwnProperty(vw)) clearTimeout(_vl.wbWait[vw]); _vl.wbWait = {}; } catch (e) {}   // ✦ 暮星：等世界书回音
     try { VIEW.removeEventListener('resize', keepInView); } catch (e) {}
     try { if (VIEW.visualViewport) VIEW.visualViewport.removeEventListener('resize', keepInView); } catch (e) {}
+    try { if (VIEW.visualViewport) VIEW.visualViewport.removeEventListener('scroll', keepInViewFrame); } catch (e) {}
     try {
       ['sbnyc-fab', 'sbnyc-panel', 'sbnyc-style', 'sbnyc-extra-style'].forEach(function (id) {
         var el = DOC.getElementById(id);
