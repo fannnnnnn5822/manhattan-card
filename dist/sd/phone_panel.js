@@ -1526,7 +1526,7 @@
   function vesperFastTick() {
     if (!vesperReady() || vesperAway() || _vl.closed) return;
     var onVs = !!currentPage && (currentPage === 'vesper' || currentPage.indexOf('vesper:line:') === 0);
-    if (onVs || (_vl.joinedSig && panel.classList.contains('open') && !vesperHidden())) vesperFetch();   // joinedSig：这次加载里报过到了（启动时先问过门开没开、除没除名）
+    if (onVs || (_vl.joinedSig && !vesperHidden())) vesperFetch();   // joinedSig：这次加载里报过到了（启动时先问过门开没开、除没除名）；刀14：手机收着看正文也每 20 秒取信（以前收着只靠 60 秒报到，红点慢一分钟）
     if (!currentPage) return;
     if (currentPage === 'vesper' && !_ves.editing) vesperRefreshLobby(false);
   }
