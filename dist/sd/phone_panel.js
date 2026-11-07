@@ -319,7 +319,7 @@
   // 原生 prompt 在安卓会弹键盘：视口缩水的 resize 事件被模态对话框阻塞排队，对话框一关才执行，
   // 读到的还是被键盘压扁的高度 → 手机定格成半截（独立API输入框同款老bug）。
   // 这个小窗长在面板里，输入时走 typingInPanel 冻结逻辑，键盘随便弹面板纹丝不动。
-  function panelPrompt(title, initVal) {
+  function panelPrompt(title, initVal, ph) {   // 刀17：ph＝框里的占位字
     return new Promise(function (resolve) {
       var old = panel.querySelector('.sb-pp'); if (old && old.parentNode) old.parentNode.removeChild(old);
       var box = DOC.createElement('div');
@@ -329,6 +329,7 @@
       box.querySelector('.sb-pp-t').textContent = title;
       var ta = box.querySelector('textarea');
       ta.value = initVal || '';
+      if (ph) ta.placeholder = ph;
       panel.appendChild(box);
       try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
       var done = function (val) { try { box.parentNode.removeChild(box); } catch (e) {} resolve(val); };
@@ -1188,21 +1189,23 @@
     closedDefault: '暮星停业整改中。消防检查没过，什么时候重开，我另行通知。',   // 总开关关着、服务器没带那句话时
     askRecent: '这位这会儿不在。话我替您留着，等 TA 七天。',   // 向「今天来过」的人开口
     payNet: '没等到回音，钱我先没扣。过一会儿您再递同一笔，我按同一笔算，对方不会收两次。',   // 转账 / 送礼 / 买链接超时或断网
-    // 刀15 小游戏（✎ 待红笔）：S. 的话——开局 / 赢 / 认输；表情包局 开局 / 换边 / 犯规 / 结束；@{n} 换成马甲
-    gmOpen: '棋盘摆上了。黑先。',
-    gmWin: '这一盘 @{n} 赢了。',
-    gmResign: '@{n} 认输。盘收了。',
-    muteStart: '骰子说：@{n} 这五个来回只许用表情包。',
-    muteSwap: '换边。现在轮到 @{n} 闭嘴。',
-    muteFoul: '@{n} 说话了。赔三张表情包。',
-    muteEnd: '十个来回，散了。',
-    muteHint: '这五个来回您只能发表情包',
-    // 刀15 另几句界面小字（brief 里没给，我起的，✎ 待红笔）
-    muteHintThem: '这五个来回 {n} 只能发表情包，您用字回',
-    gmBusy: '这条线上还有一局没完。',
-    gmSoon: '还没开张。',
-    gmDraw: '盘下满了，和棋。',
-    gmVoid: '线断了，这盘不算',
+    // 刀15 小游戏（刀17 换成 4a 第六轮台词，作者定的）：S. 的话——开局 / 赢 / 认输；表情包局 开局 / 换边 / 犯规 / 结束；@{n} 换成马甲
+    gmOpen: '棋盘摆好了。黑子先行，落子无悔。',
+    gmWin: '五子连珠。这盘棋，@{n} 拿下了。',
+    gmResign: '@{n} 推了棋盘。这局有主了。',
+    muteStart: '骰子落定。前五个来回，@{n} 禁言，只准递图。',
+    muteSwap: '风水轮流。接下来五回，轮到 @{n} 把嘴闭上。',
+    muteFoul: '@{n} 漏了字。坏了规矩，罚三张图赎罪。',
+    muteEnd: '十回满了。两位把舌头领回去吧。',
+    muteHint: '禁言中。一个字也别敲，递图。',
+    // 刀15 两边输入框提示小字（4a 第六轮）
+    muteHintThem: '@{n} 正哑着，这边照常打字。',
+    gmBusy: '桌上的局还没散，不准另开新台。',
+    gmDraw: '棋盘满了，谁也没奈何谁。平局收子。',
+    gmVoid: '线断了。残局扫掉，这盘不算。',
+    // 刀17 通用（4a 第六轮）：面板类游戏线断作废 / 前一个请求没回话
+    gmVoidAny: '信号断了，台面清场。这局作废。',
+    gmWaitReq: '前一张帖还没回音。耐心等着。',
     gmResignT: '认输这一盘？',
   };
   // 错误码 → S. 的话（照接口说明的错误码表；net＝HTTP 错或断网，offline＝联机全关，nosave＝认不出存档）。✎ 待红笔
@@ -2552,6 +2555,7 @@
     if (txt.length > VESPER_TEXT_MAX) { toast('warning', '✦ 这一句写长了：' + txt.length + ' 字，一条最多 ' + VESPER_TEXT_MAX + ' 字。拆成两句发'); return; }
     var gw = vesperGate(txt);
     if (gw) { toast('warning', '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）'); return; }
+    if (vgLineGuessTyped(id, txt)) { ta.value = ''; return; }   // 刀17：猜词时打的字＝一问
     if (!vesperLineGuard(id)) return;
     var mySkin = skinsOf().active || '';
     vesperSendRaw(id, 'text', { text: txt, skin: mySkin }).then(function (r) {
@@ -2668,7 +2672,7 @@
   function vgMuteBarHtml(g, oppName) {
     if (vgLive(g) && g.t !== 'mute' && g.t !== 'gomoku') return vgBar2Html(g, oppName);   // 刀16
     if (!vgLive(g) || g.t !== 'mute') return '';
-    var t = g.mute === 'me' ? VESPER_COPY.muteHint : VESPER_COPY.muteHintThem.replace('{n}', oppName || 'TA');
+    var t = g.mute === 'me' ? VESPER_COPY.muteHint : VESPER_COPY.muteHintThem.replace('@{n}', '@' + (oppName || 'TA'));
     return '<div class="vg-bar">😀 ' + esc(t) + ' · 第 ' + Math.min(VG_ROUNDS, (g.round || 0) + 1) + '/' + VG_ROUNDS + ' 个来回' + (g.phase === 2 ? '（换过边了）' : '') + '</div>';
   }
   // 我闭嘴时：输入框禁字、占位字换成提示，发送键左边多一个 😀
@@ -2695,13 +2699,21 @@
   function vgSay(tpl, n) { return String(tpl).replace('@{n}', n ? '@' + n : VG_YOU); }
   // 🎲 ➕ 菜单里那一项点开的子菜单（作者定的顺序和字；后三个还没做，灰着）
   // 刀16：七项全部可点；「敢不敢」「角色扮演」去掉（作者把这两节题库删了）
-  var VG_GAMES = [['gomoku', '五子棋'], ['mute', '只能发表情包'], ['pic', '假装发图'], ['sig', '互改签名'], ['roast', '资料卡找茬'], ['bill', '凑单'], ['td', '真心话大冒险']];
-  function vgGameMenu(onPick) {
+  var VG_GAMES = [['gomoku', '五子棋'], ['mute', '只能发表情包'], ['pic', '假装发图'], ['sig', '互改签名'], ['roast', '资料卡找茬'], ['bill', '凑单'], ['td', '真心话大冒险'], ['guess', '猜词海龟汤']];   // 刀17：第八项
+  function vgGameMenu(onPick, npcMode) {
     vesperMenu('🎲 邀请对方玩游戏', VG_GAMES, function (k) {
+      if (k === 'guess') {   // 刀17：发起的人出题；私信里还可以让 TA 出
+        vesperMenu('🐢 猜词海龟汤', [['draw', '抽一个'], ['own', '自己出']].concat(npcMode ? [['them', '让 TA 出']] : []), function (m) {
+          if (m === 'draw') { onPick('guess'); return; }
+          if (m === 'them') { onPick('guess', { them: 1 }); return; }
+          panelPrompt('自己出一个词', '', VG_GS.ownTip).then(function (d) { d = String(d == null ? '' : d).trim(); if (d) onPick('guess', d); });
+        });
+        return;
+      }
       if (k === 'td') {
         vesperMenu('🃏 真心话大冒险', [['draw', '抽一张'], ['own', '自己出题']], function (m) {
           if (m === 'draw') { onPick('td'); return; }
-          panelPrompt('自己出一张牌（真心话、大冒险都行）', '').then(function (d) { d = String(d == null ? '' : d).trim(); if (d) onPick('td', d); });
+          panelPrompt('自己出一张牌（真心话、大冒险都行）', '', '嫌牌库太温吞，就亲自写一张。').then(function (d) { d = String(d == null ? '' : d).trim(); if (d) onPick('td', d); });
         });
         return;
       }
@@ -3014,30 +3026,30 @@
   //   td    ev:start（id, k:'T'|'D'|''（自己出的题）, x＝牌面）/ pass（不接＝罚连发三张表情包）
   // 本地：真人＝sb.vesper.lines[id].game（另加 lines[id].vgTd＝这条线抽过几张牌）；NPC＝sb.npcs[name].game（另加 vgTd、vgSig＝玩家替 TA 写的招牌）
   function vgIsT(t) { return VG_T.hasOwnProperty(String(t)); }
-  var VG_T = { gomoku: 1, mute: 1, pic: 1, sig: 1, roast: 1, bill: 1, td: 1 };
-  var VG_PANEL = { sig: 1, roast: 1, bill: 1, td: 1 };
+  var VG_T = { gomoku: 1, mute: 1, pic: 1, sig: 1, roast: 1, bill: 1, td: 1, guess: 1 };
+  var VG_PANEL = { sig: 1, roast: 1, bill: 1, td: 1, guess: 1 };
   var VG_FMT = function (n) { return fmtCNY(n); };
   var VG_PIC_N = 10, VG_SIG_N = 3, VG_BILL_N = 5, VG_SIG_MAX = 60, VG_NOTE_MAX = 200, VG_WHAT_MAX = 40;
   var VG_PIC_RE = /^\[发送了照片[：:][^\[\]]+\]$/;
-  // S. 的话：开场白照 4a 原文（作者定的，一字不改）；其余 ✎ 待红笔
+  // S. 的话：开场白照 4a 原文；其余刀17 换成 4a 第六轮台词（作者定的，一字不改）
   var VG_SAY = {
     picOpen: '信号不好，今晚只收画面。请用文字把图画出来。',
-    picEnd: '十张够了。信号恢复。',                               // ✎
-    picFoul: '@{n} 发了画面以外的东西。信号断了，这局到此。',     // ✎
+    picEnd: '十张画收齐。信号通了，两位请自便。',
+    picFoul: '夹带了杂音。画布撤走，这局停。',
     sigOpen: '替那位写句招牌挂上吧，今晚散场前不准摘。',
-    sigShow: '两句都交上来了，一起挂上。',                         // ✎
-    sigFree: '顶着聊满三句了。招牌想摘就摘。',                     // ✎
-    sigLock: '招牌刚挂上，聊满三句再摘。',                         // ✎
-    sigBack: '摘下来了，换回原来那句。',                           // ✎
-    roastOpen: '资料卡印得太体面了，挑三处你觉得最假的地方圈出来。',
-    roastShow: '两边都圈好了，一起亮出来。各辩一句。',             // ✎
-    roastEnd: '辩完了。谁更假，各自心里有数。',                     // ✎
+    sigShow: '新招牌挂上了。顶着它，聊满三句再说。',
+    sigFree: '三句已满。招牌留着或摘下，随两位。',
+    sigLock: '字墨还没干。聊够三句才准动手。',
+    sigBack: '旧招牌换回去了。体面如初。',
+    roastOpen: '资料卡印得太体面了，挑三处最假的地方圈出来。',
+    roastShow: '红圈亮出来了。一人一句，替自己洗白吧。',
+    roastEnd: '狡辩收档。资料卡原样退回。',
     billOpen: '两位刚才弄坏了点东西，账单在这，自己把明细填上吧。',
-    billEnd: '记账完毕。',
-    tdGive: '这张牌递给 @{n}。接，或者不接。',                     // ✎
-    tdDone: '牌接住了。收走。',                                     // ✎
-    tdPass: '@{n} 不接。罚：连发三张表情包。',                     // ✎
-    tdPaid: '三张收到，罚过了。'                                    // ✎
+    billEnd: '五项凑齐，红章盖讫。挂在两位账上了。',
+    tdGive: '这张牌递给 @{n}。接，还是认罚？',
+    tdDone: '牌接下了。这一关算过。',
+    tdPass: '@{n} 把牌扣下了。按规矩，罚三张图。',
+    tdPaid: '罚账已清。翻篇。'
   };
   // 真心话大冒险的牌：作者留下的 21 张（小游戏-题库-v2.md 原文，一字不改），格式「编号｜方向｜温/辣｜正文」
   var VG_TD_RAW = [
@@ -3096,6 +3108,7 @@
     if (G.t === 'roast') return !(G.mine || []).length && !(G.theirs || []).length;
     if (G.t === 'bill') return !(G.items || []).length;
     if (G.t === 'td') return !G.passed;
+    if (G.t === 'guess') return !(G.qs || []).length;
     return false;
   }
   // 一方发了一条消息（kind：text / stk / other）以后这一局怎么走——真人两边、NPC 都用这一个（只改 G，回 S. 要说的话）
@@ -3145,9 +3158,10 @@
   }
   // ── 画：局里的面板（排在消息流里）和输入框上面的那一条 ──
   function vgPanelHtml(g, opp) {
+    if (g.t === 'guess') return vgGuessPanel(g, opp);   // 刀17
     var on = esc(opp || 'TA'), live = vgLive(g), gone = g.over && g.over.how === 'gone', h = '';
     var head = function (icon, t, sub) { return '<div class="vg-panel vg-p-' + g.t + (live ? '' : ' over') + '" data-gid="' + esc(String(g.gid)) + '"><div class="vg-ph"><b>' + icon + ' ' + t + '</b>' + (sub ? '<span>' + sub + '</span>' : '') + '</div>'; };
-    var foot = function (t) { return '<div class="vg-pf">' + (gone ? esc(VESPER_COPY.gmVoid) : t) + '</div></div>'; };
+    var foot = function (t) { return '<div class="vg-pf">' + (gone ? esc(VESPER_COPY.gmVoidAny) : t) + '</div></div>'; };
     if (g.t === 'bill') {
       var tot = 0, items = g.items || [];
       h = head('🧾', '账单', 'Club Vesper') + '<div class="vg-bl">';
@@ -3182,6 +3196,7 @@
   }
   function vgBar2Html(g, opp) {
     var on = esc(opp || 'TA'), d = _vgDraft[g.gid] || {}, h = '<div class="vg-bar2" data-gid="' + esc(String(g.gid)) + '">';
+    if (g.t === 'guess') return h + vgGuessBar(g, opp) + '</div>';   // 刀17
     var inp = function (f, ph, max, cls) { return '<input class="vg-in' + (cls ? ' ' + cls : '') + '" data-f="' + f + '" maxlength="' + max + '" placeholder="' + esc(ph) + '" value="' + esc(d[f] || '') + '" autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other">'; };
     var btn = function (a, t) { return '<button class="vg-go" type="button" data-vg2="' + a + '">' + esc(t) + '</button>'; };
     var tip = function (t) { return '<div class="vg-tip">' + t + '</div>'; };
@@ -3225,7 +3240,7 @@
     var onClick = function (ev) {
       var el = ev.target && ev.target.closest && ev.target.closest('[data-vg2]'); if (!el) return;
       ev.stopPropagation();
-      vgAct(mode, key, el.getAttribute('data-vg2'), root.querySelector('.vg-bar2'));
+      vgAct(mode, key, el.getAttribute('data-vg2'), root.querySelector('.vg-bar2'), el);
     };
     if (box) box.addEventListener('click', onClick);
     if (bar) {
@@ -3242,7 +3257,8 @@
     [].forEach.call(bar.querySelectorAll('[data-f]'), function (e) { o[e.getAttribute('data-f')] = String(e.value || '').trim(); });
     return o;
   }
-  function vgAct(mode, key, act, bar) {
+  function vgAct(mode, key, act, bar, el) {
+    if (/^g(q|final|ans|judge|reveal)$/.test(act)) { vgGuessAct(mode, key, act, el); return; }   // 刀17
     var v = vgVals(bar), line = mode === 'line';
     if (act === 'undo' || act === 'undook' || act === 'undono') { if (line) vgLineUndo(key, act); else if (act === 'undo') vgNpcUndo(key); return; }   // 五子棋悔棋
     if (act === 'sigback') { vgSigBack(mode, key); return; }
@@ -3284,6 +3300,7 @@
 
   // ── 真人那边 ──
   function vgLineStart2(id, kind, own, L) {
+    if (kind === 'guess') { vgLineGuessStart(id, own, L); return; }   // 刀17
     var gid = vgGid(), oh = (L.with && L.with.handle) || '', me = vgMyHandle();
     var body = { t: kind, ev: 'start', gid: gid }, txt = '', say = '', init = {};
     var oc = ((L.with || {}).card) || {};
@@ -3354,13 +3371,15 @@
         var x = String(b.x || '').trim().slice(0, VESPER_TEXT_MAX); if (!x) return true;
         var k = b.k === 'T' || b.k === 'D' ? b.k : '';
         init = { card: { id: String(b.id || '').slice(0, 8), k: k, x: x }, to: 'me', owe: 0, passed: false }; say = vgSay(VG_SAY.tdGive, vgMyHandle());
-      } else return false;
+      } else if (b.t === 'guess') { init = { role: 'ask', cat: vgClean(b.cat, 20), qs: [] }; say = VG_GS.askOpen; }   // 刀17
+      else return false;
       var o0 = mk({ k: 'sys', text: say });
       L.game = Object.assign({ t: b.t, gid: gid, at: o0.at, lastAt: o0.at, over: null }, init);
       L.msgs.push(o0);
       return true;
     }
     if (!G || G.t !== b.t || G.gid !== gid || !live) return true;
+    if (b.t === 'guess') return vgGuessIn(G, b, mk, L);   // 刀17
     if (b.t === 'sig' && b.ev === 'put') {
       var w = vgClean(b.w, VG_SIG_MAX); if (!w || G.theirs) return true;
       G.theirs = w;
@@ -3477,6 +3496,7 @@
     return (who ? '身份「' + who + '」' : '') + (who && line ? '；' : '') + (line ? '今晚那一句「' + line + '」' : '');
   }
   function vgNpcStart2(name, kind, own, npc) {
+    if (kind === 'guess') { vgNpcGuessStart(name, own, npc); return; }   // 刀17
     var gid = vgGid(), ts = Date.now(), say = '', init = {}, ask = '';
     if (kind === 'pic') { say = VG_SAY.picOpen; init = { n: 0 }; }
     else if (kind === 'sig') { say = VG_SAY.sigOpen; init = { mine: '', theirs: '', shown: false, talk: 0, free: false, wait: 0 }; }
@@ -3530,6 +3550,7 @@
   }
   // 局势一句话（玩家点「发送」时塞进提示词）
   function vgNpcCtx2(name, npc, g) {
+    if (g.t === 'guess') return vgGuessCtx(name, g);   // 刀17
     if (g.t === 'pic') return '（小游戏进行中：「假装发图」，两人合计已经发了 ' + (g.n || 0) + '/' + VG_PIC_N + ' 张。这一轮 ' + name + ' 每条只写一行 [发送了照片：……]，方括号里用文字把一张照片的画面描述出来；不写任何别的字，不发表情包、语音、转账。User 也只发这种「照片」，' + name + ' 看着 User 的画面、用画面回。）';
     if (g.t === 'sig') {
       if (!g.shown) return g.mine ? '（小游戏「互改签名」：User 已经替 ' + name + ' 写好一句，等 ' + name + ' 替 User 写——这一轮 ' + name + ' 只发一条 text，就是那一句本身，不加引号。）' : '（小游戏「互改签名」刚开局：两人各替对方写一句挂在资料卡上的「今晚那一句」，User 还在写。）';
@@ -3552,6 +3573,7 @@
   // 玩家在私信里发了一条（queueMsg）
   function vgNpcHear2(name, ty, text) {
     var npc = vgNpc(name), g = npc && npc.game; if (!vgLive(g)) return;
+    if (g.t === 'guess') { vgNpcGuessHear(name, ty, text); return; }   // 刀17
     var kind = ty === 'sticker' ? 'stk' : ((ty === 'text' || ty === 'image') ? 'text' : 'other');
     var txt = ty === 'image' ? '[发送了照片：' + String(text || '') + ']' : String(text || '');
     var G = vgClone(g), say = vgStep(G, 'me', kind, txt, vgMeLabel());
@@ -3564,6 +3586,7 @@
   // 打开私信页时：看 TA 新回的几条——数照片、收招牌、收批注、收账单项、看接没接牌
   function vgNpcTick2(name, npc) {
     var g = npc.game; if (!vgLive(g)) return false;
+    if (g.t === 'guess') return vgNpcGuessTick(name, npc);   // 刀17
     var hist = npc.dm_history || [], since = Number(g.seen) || Number(g.at) || 0, news = [];
     for (var i = 0; i < hist.length; i++) { var m = hist[i]; if ((m.ts || 0) > since && m.sender === 'THEM' && m.type !== 'system' && !m.pending) news.push(m); }
     if (!news.length) return false;
@@ -3606,16 +3629,557 @@
     if (cardLine != null) vgSetMyLine(cardLine);
     return true;
   }
+  // ═══ 刀17：猜词海龟汤——发起的人出题（NPC 那边也可以让 TA 出），另一边二十问内猜 ═══
+  // 真人：借 text 信，词只在出题方本地，服务器上只走信号——
+  //   start（cat＝类别，猜的那边拿来当第一个提示）/ q（qn, q）/ a（qn, a＝是|不是|无关）/ final（qn, w＝我猜是…）/ judge（qn, ok）/ reveal（w，二十问用完出题方亮词）
+  // 本地 game：{ t:'guess', role:'set'（我出题）|'ask'（我猜）, w（出题方才有；NPC 出题时存在玩家本地、不画出来）, cat, tip, qs:[{q, a, f（我猜是）, w}], rw（揭晓的词）, wait（NPC：等 TA 回） }
+  var VG_GQ_N = 20, VG_GW_MAX = 20, VG_GA = ['是', '不是', '无关'];
+  // S. 的话：4a 第六轮台词（作者定的，一字不改）
+  var VG_GS = {
+    setOpen: '底牌在手。接下来只准点头、摇头，或说无关。',
+    askOpen: '那位心里藏了个词。二十次机会，撬开它。',
+    hit: '一语中的。汤喝干了，散场。',
+    reveal: '二十问尽，底牌是「{w}」。没猜透。',
+    ownTip: '写个两三字能说清的死物或活物。别写玄学。',
+    qTip: '没头绪就从这儿挑。'
+  };
+  // 快捷问题：词库文件尾那 16 条，原样
+  var VG_GQ = ['是活物吗', '是人吗', '比手机大吗', '能吃吗', '家里常见吗', '是金属的吗', '能买到吗', '摸得到吗', '门里有吗', '比一瓶香槟贵吗', '跟钱有关吗', '跟 S. 有关吗', '在资料卡上吗', '在橱窗里吗', '会让人尴尬吗', '今晚出现过吗'];
+  // 词库：猜词海龟汤-词库.md 的 197 个词，格式「词｜类别｜提示」
+  var VG_GW_RAW = [
+    "体重秤｜日常物件｜吃完夜宵不敢站上去",
+    "共享充电宝｜日常物件｜忘还了扣九十九",
+    "没电的电子烟｜日常物件｜吸一口直闪灯",
+    "防窥膜｜日常物件｜斜着看一片黑",
+    "体温计｜日常物件｜",
+    "便利贴｜日常物件｜贴满显示器",
+    "保温杯｜日常物件｜泡枸杞",
+    "假睫毛｜日常物件｜卸妆一撕一条",
+    "充电宝｜日常物件｜出门忘了就没安全感",
+    "充电线｜日常物件｜永远不够长",
+    "共享单车｜日常物件｜",
+    "冰箱｜日常物件｜开了门发呆",
+    "口香糖｜日常物件｜",
+    "只剩一只的耳环｜日常物件｜另一只在沙发缝里",
+    "名片夹｜日常物件｜装体面",
+    "吸管｜日常物件｜涂了口红喝酒用",
+    "垃圾桶｜日常物件｜",
+    "备用钥匙｜日常物件｜压在门口地垫下",
+    "外卖｜日常物件｜",
+    "微波炉｜日常物件｜叮",
+    "快递盒｜日常物件｜拆完舍不得扔",
+    "打印机｜日常物件｜急用时卡纸",
+    "拖鞋｜日常物件｜",
+    "指甲刀｜日常物件｜用的时候找不见",
+    "插线板｜日常物件｜",
+    "方便面｜日常物件｜半夜三点最香",
+    "晾衣架｜日常物件｜",
+    "枕头｜日常物件｜",
+    "洗衣机｜日常物件｜",
+    "润唇膏｜日常物件｜涂完喝水留印",
+    "热水壶｜日常物件｜",
+    "牙刷｜日常物件｜",
+    "牙签｜日常物件｜饭后剔一下",
+    "电梯｜日常物件｜不是物件也行",
+    "眼镜｜日常物件｜戴着找它",
+    "筷子｜日常物件｜一双",
+    "纸巾｜日常物件｜",
+    "耳机｜日常物件｜线缠成一团",
+    "蓝牙耳机｜日常物件｜掉进床缝找半天",
+    "袜子｜日常物件｜总丢一只",
+    "被子｜日常物件｜",
+    "计算器｜日常物件｜",
+    "路由器｜日常物件｜卡了就拔插头",
+    "遥控器｜日常物件｜常在沙发缝",
+    "酒店拖鞋｜日常物件｜一次性薄底",
+    "醒酒器｜日常物件｜大肚子玻璃瓶",
+    "钥匙｜日常物件｜出门前摸一下",
+    "镜子｜日常物件｜出门前最后一眼",
+    "门禁卡｜日常物件｜",
+    "闹钟｜日常物件｜按掉再睡五分钟",
+    "雨伞｜日常物件｜总落在别处",
+    "香薰蜡烛｜日常物件｜点着烘托气氛",
+    "创可贴｜日常物件｜小伤遮羞布",
+    "吹风机｜日常物件｜洗完头举到手酸",
+    "外卖盒｜日常物件｜吃完懒得扔",
+    "开瓶器｜日常物件｜拧进去拔出来",
+    "手机壳｜日常物件｜换个壳像换个手机",
+    "拆快递刀｜日常物件｜划拉一下最爽",
+    "鞋拔子｜日常物件｜门口挂着",
+    "今晚那一句｜门里的东西｜进门抬头就看见",
+    "停业整改告示｜门里的东西｜贴门上白纸黑字",
+    "全场的酒｜门里的东西｜豪气老板一挥手",
+    "常用表情包｜门里的东西｜不知道回啥就发它",
+    "杯口口红印｜门里的东西｜沾在玻璃边上",
+    "礼物链接｜门里的东西｜点开是心意也是排面",
+    "角落卡座｜门里的东西｜灯光最暗的地方",
+    "请勿打扰牌｜门里的东西｜挂门把手上",
+    "香槟花火｜门里的东西｜插瓶口滋滋冒火星",
+    "黑桃A空瓶｜门里的东西｜喝完摆桌上充门面",
+    "丝巾｜门里的东西｜",
+    "丝绒门帘｜门里的东西｜掀开就是里面",
+    "冰块｜门里的东西｜一声叮当",
+    "冰桶｜门里的东西｜塞满冰块镇着酒",
+    "刷卡机｜门里的东西｜滴一声输密码",
+    "口红印｜门里的东西｜在杯沿上",
+    "名片｜门里的东西｜递过去要双手",
+    "吧台｜门里的东西｜坐着最远处",
+    "吧台高脚凳｜门里的东西｜坐上去腿悬空",
+    "天鹅绒绳｜门里的东西｜拦在门口",
+    "威士忌冰球｜门里的东西｜圆滚滚化得慢",
+    "小费托盘｜门里的东西｜顺手放点零头",
+    "房卡｜门里的东西｜",
+    "打火机｜门里的东西｜咔哒",
+    "整改告示｜门里的东西｜贴在门上",
+    "未结的账单｜门里的东西｜压在托盘底下",
+    "榜｜门里的东西｜名字排成一列",
+    "橱窗手袋｜门里的东西｜只看不摸",
+    "橱窗玻璃｜门里的东西｜隔着它看奢侈品",
+    "橱窗里的表｜门里的东西｜标着好几个零",
+    "水晶烟灰缸｜门里的东西｜摁灭了半截烟",
+    "点歌屏｜门里的东西｜角落里没人点也亮着",
+    "烟灰缸｜门里的东西｜",
+    "烫金名片｜门里的东西｜递过去建立联系",
+    "珍珠耳环｜门里的东西｜一边一颗",
+    "白棋｜门里的东西｜五子棋后手",
+    "礼物包装盒｜门里的东西｜拆开是个惊喜",
+    "管家白手套｜门里的东西｜一尘不染",
+    "纯银打火机｜门里的东西｜开盖叮一声",
+    "腕表｜门里的东西｜抬手才看见",
+    "蜡烛｜门里的东西｜",
+    "衣帽间｜门里的东西｜寄存外套",
+    "衣帽间号牌｜门里的东西｜大衣存进去拿块牌",
+    "表情包｜门里的东西｜不说话时用",
+    "袖扣｜门里的东西｜衬衫袖口亮晶晶",
+    "账单｜门里的东西｜最后才上",
+    "账单夹｜门里的东西｜黑色皮质合上递过来",
+    "资料卡｜门里的东西｜写着喜好和雷点",
+    "车钥匙｜门里的东西｜交给门童",
+    "转账｜门里的东西｜一串数字",
+    "酒单｜门里的东西｜不写价的那页",
+    "酒水单｜门里的东西｜翻开第一页最贵",
+    "钢琴｜门里的东西｜没人弹也摆着",
+    "门口的灯｜门里的东西｜亮着代表营业",
+    "雪克壶｜门里的东西｜上下摇晃冰镇",
+    "雪茄｜门里的东西｜要剪的",
+    "领带夹｜门里的东西｜",
+    "香槟塔｜门里的东西｜从最上面往下倒",
+    "香槟塞｜门里的东西｜砰一声飞出去",
+    "香槟杯｜门里的东西｜细长的",
+    "香水｜门里的东西｜人走了还在",
+    "骰盅｜门里的东西｜摇得哗啦响",
+    "高跟鞋｜门里的东西｜回家先脱",
+    "黑卡｜门里的东西｜刷了不看",
+    "黑棋｜门里的东西｜五子棋先手",
+    "S.｜人与称呼｜门里管事的",
+    "代驾｜人与称呼｜散场了在门口等",
+    "冤大头｜人与称呼｜花了大价钱连手都没摸着",
+    "冷场王｜人与称呼｜一开口大家都安静",
+    "前任｜人与称呼｜提起来就沉默的那位",
+    "只看不说话的｜人与称呼｜挂着在线一声不吭",
+    "回头客｜人与称呼｜说了不来又来了",
+    "塑料姐妹｜人与称呼｜表面夸背地里翻白眼",
+    "备胎｜人与称呼｜随叫随到但没名分",
+    "大嘴巴｜人与称呼｜转身就传遍全场",
+    "恋爱脑｜人与称呼｜别人说一句当真半个月",
+    "替身｜人与称呼｜眉眼像极了某个人",
+    "查消防的｜人与称呼｜一来就得亮灯停音乐",
+    "榜二｜人与称呼｜差一点就能登顶",
+    "欠账的那位｜人与称呼｜看见管家就绕道",
+    "死对头｜人与称呼｜撞见了就比谁开的酒贵",
+    "海王｜人与称呼｜同时给好几个人发名片",
+    "清醒的人｜人与称呼｜看着别人装醉",
+    "甜心｜人与称呼｜嘴甜讨人喜",
+    "白月光｜人与称呼｜得不到才最好",
+    "被拉黑的那位｜人与称呼｜再也发不出消息",
+    "装阔的｜人与称呼｜摸遍口袋找借口逃单",
+    "蹭酒的｜人与称呼｜端着杯子到处串",
+    "金主｜人与称呼｜掏空钱包买开心",
+    "中间人｜人与称呼｜帮着递话递名片",
+    "今晚买单的｜人与称呼｜全场看他脸色",
+    "保洁阿姨｜人与称呼｜打烊了进来扫一地碎玻璃",
+    "刚进门的新人｜人与称呼｜东张西望还不熟",
+    "吧台最远那位｜人与称呼｜独饮不爱搭理人",
+    "失踪人口｜人与称呼｜头像灰了小半年",
+    "小白兔｜人与称呼｜啥套路都信",
+    "情敌｜人与称呼｜",
+    "新人｜人与称呼｜刚进门",
+    "朱砂痣｜人与称呼｜忘不掉的那个人",
+    "榜一｜人与称呼｜坐在最高处的人",
+    "熟客｜人与称呼｜闭着眼都知道喝啥",
+    "神秘客｜人与称呼｜资料卡一片空白",
+    "管家｜人与称呼｜不止一位？",
+    "群里最吵的那位｜人与称呼｜一刷全是他",
+    "老狐狸｜人与称呼｜话只说三分留七分",
+    "调酒师｜人与称呼｜吧台后面摇壶的",
+    "输了棋的｜人与称呼｜嘴硬",
+    "醉鬼｜人与称呼｜趴桌子上喊不醒",
+    "闺蜜｜人与称呼｜什么都知道",
+    "隐形富豪｜人与称呼｜穿得随便但结账不眨眼",
+    "驻唱｜人与称呼｜抱把吉他在角落哼",
+    "上头｜概念与情形｜微醺加心动",
+    "下头｜概念与情形｜一句话让人好感全无",
+    "修罗场｜概念与情形｜新欢旧爱坐一桌",
+    "借口｜概念与情形｜说去洗澡其实睡了",
+    "偏爱｜概念与情形｜明目张胆的例外",
+    "冷场｜概念与情形｜突然没人接话",
+    "嘴硬｜概念与情形｜心里在乎非说无所谓",
+    "尴尬｜概念与情形｜脚趾抠出三室一厅",
+    "已读不回｜概念与情形｜最伤人的回应",
+    "手滑｜概念与情形｜点错赞或者发错人",
+    "撤回｜概念与情形｜发出去两分钟内后悔",
+    "断片｜概念与情形｜完全不记得昨晚干了啥",
+    "欲擒故纵｜概念与情形｜先冷你两天再找你",
+    "画饼｜概念与情形｜下次一定给你买",
+    "眼神拉丝｜概念与情形｜隔着酒杯眉来眼去",
+    "破防｜概念与情形｜戳中痛处绷不住了",
+    "社死｜概念与情形｜当众出糗想钻地缝",
+    "翻车｜概念与情形｜同时聊几个发重了",
+    "装醉｜概念与情形｜借着酒劲倒人怀里",
+    "逃单｜概念与情形｜借口上厕所溜了",
+    "面子｜概念与情形｜比酒还贵的东西",
+    "默契｜概念与情形｜同时发出一模一样的话",
+    "体面｜概念与情形｜闹掰了也不撕破脸",
+    "拉黑｜概念与情形｜单方面切断联系",
+    "暗号｜概念与情形｜只有两个人懂的词",
+    "暧昧｜概念与情形｜友达以上恋人未满",
+    "秒回｜概念与情形｜守在手机前等消息"
+  ];
+  var VG_GW = VG_GW_RAW.map(function (s) { var p = String(s).split('｜'); return { w: p[0], cat: p[1] || '', tip: p[2] || '' }; });
+  var _vgGwSeen = [];
+  function vgGwDraw(rnd) {
+    rnd = rnd || Math.random;
+    var pool = VG_GW.filter(function (x) { return _vgGwSeen.indexOf(x.w) === -1; }); if (!pool.length) { _vgGwSeen = []; pool = VG_GW.slice(); }
+    var d = pool[Math.floor(rnd() * pool.length) % pool.length];
+    _vgGwSeen.push(d.w); if (_vgGwSeen.length > 60) _vgGwSeen.shift();
+    return vgClone(d);
+  }
+  function vgGPend(g) { var q = (g && g.qs) || [], l = q[q.length - 1]; return (l && !l.a) ? l : null; }
+  function vgGFull(g) { return ((g && g.qs) || []).length >= VG_GQ_N; }
+  function vgGRevealSay(w) { return VG_GS.reveal.replace('{w}', w); }
+  function vgGBare(s) { return String(s == null ? '' : s).replace(/[\s「」“”"'『』《》（）()【】\[\]。，,.!！?？~～…:：;；、—\-]/g, '').toLowerCase(); }
+  function vgGSame(a, b) { var x = vgGBare(a), y = vgGBare(b); return !!x && x === y; }
+  // 「我猜是：某某」→ 某某（不是这种说法回 ''）
+  function vgGFinalOf(s) { var m = String(s == null ? '' : s).match(/^\s*我猜是\s*[：:，,]?\s*(.+)$/); return m ? vgClean(m[1].replace(/[。！!？?～~…]+$/, ''), VG_GW_MAX) : ''; }
+  // 硬闸：NPC 的回答归成「是 / 不是 / 无关」
+  function vgGNorm(s) {
+    var b = vgGBare(s);
+    if (VG_GA.indexOf(b) !== -1) return b;
+    if (/无关|没关系|不相关|没有关系|扯不上|不好说|说不准|不一定|看情况|难说/.test(b)) return '无关';
+    if (/^(没错|对的|是的|yes|bingo)/.test(b)) return '是';
+    if (/^(不|没|否|错|no|nope)|不是|不对|并不|不会|没有|不能|不算/.test(b)) return '不是';
+    if (/是|对|嗯|会|有|能|算/.test(b)) return '是';
+    return '无关';
+  }
+  // 硬闸：判「我猜是」归成「对 / 不对」
+  function vgGJudge(s) {
+    var b = vgGBare(s);
+    if (b === '对' || b === '不对') return b;
+    if (/^(没错|对的|正确|bingo|猜中)/.test(b)) return '对';
+    if (/不对|不是|错|没猜中|差|不完全|no/.test(b)) return '不对';
+    if (/对|是|猜中|中了/.test(b)) return '对';
+    return '不对';
+  }
+  function vgGHist(g) {
+    var a = ((g && g.qs) || []).filter(function (x) { return x.a; }).map(function (x) { return '「' + x.q + '」' + x.a; });
+    return a.length ? '已经问过：' + a.join('；') + '。' : '';
+  }
+  // ── 画：卡片（排在消息流里）和输入框上面那一条 ──
+  function vgGuessPanel(g, opp) {
+    var on = esc(opp || 'TA'), live = vgLive(g), gone = g.over && g.over.how === 'gone', qs = g.qs || [], pend = vgGPend(g), set = g.role === 'set';
+    var b = function (a, t, v) { return '<button class="vg-go sm" type="button" data-vg2="' + a + '" data-v="' + esc(v) + '">' + esc(t) + '</button>'; };
+    var h = '<div class="vg-panel vg-p-guess' + (live ? '' : ' over') + '" data-gid="' + esc(String(g.gid)) + '"><div class="vg-ph"><b>🐢 猜词海龟汤</b><span>已问 ' + qs.length + '/' + VG_GQ_N + '</span></div>';
+    var shown = set ? g.w : (!live && g.rw ? g.rw : '');
+    if (shown) h += '<div class="vg-gw"><small>' + (set && live ? '谜底 · 只有' + VG_YOU + '看得到' : '谜底') + '</small><b>' + esc(shown) + '</b>' + (set && live && g.tip ? '<small>提示：' + esc(g.tip) + '</small>' : '') + '</div>';
+    else h += '<div class="vg-gw"><small>类别</small><b>' + esc(g.cat || '出题的人自己想的') + '</b></div>';
+    h += '<div class="vg-gl">';
+    qs.forEach(function (it, i) {
+      var cur = it === pend;
+      h += '<div class="vg-gq' + (cur ? ' cur' : '') + (it.f ? ' fin' : '') + '"><span>' + (i + 1) + '. ' + esc(it.q) + '</span>';
+      if (it.a) h += '<b class="vg-ga ' + (it.a === '是' || it.a === '对' ? 'y' : (it.a === '无关' ? 'x' : 'n')) + '">' + esc(it.a) + '</b>';
+      else if (cur && live && set) h += '<span class="vg-gab">' + (it.f ? b('gjudge', '对', '1') + b('gjudge', '不对', '0') : b('gans', '是', '是') + b('gans', '不是', '不是') + b('gans', '无关', '无关')) + '</span>';
+      else if (cur) h += '<i class="vg-gwait">等回答</i>';
+      h += '</div>';
+    });
+    if (!qs.length) h += '<div class="vg-gq vg-empty"><span>（还没问）</span></div>';
+    h += '</div><div class="vg-pf">';
+    if (gone) h += esc(VESPER_COPY.gmVoidAny);
+    else if (!live) h += g.over.how === 'hit' ? '<i class="vg-stamp">猜中</i> 第 ' + qs.length + ' 问' : '二十问用完';
+    else if (set) h += pend ? '轮到' + VG_YOU + '答' : (vgGFull(g) ? '<button class="vg-go sm" type="button" data-vg2="greveal">亮谜底</button>' : '等 ' + on + ' 问');
+    else h += pend ? '等 ' + on + ' 答' : (vgGFull(g) ? '等谜底' : '轮到' + VG_YOU + '问');
+    return h + '</div></div>';
+  }
+  function vgGuessBar(g, opp) {
+    var on = esc(opp || 'TA'), pd = vgGPend(g), h = '';
+    var tip = function (t) { return '<div class="vg-tip">' + t + '</div>'; };
+    if (g.role === 'ask') {
+      if (pd || vgGFull(g)) return tip('🐢 ' + (pd ? '等 ' + on + ' 答' : '二十问问完了，等谜底'));
+      h += '<div class="vg-row">' + tip('🐢 ' + esc(VG_GS.qTip) + ' 直接打字也算一问') + '<button class="vg-go" type="button" data-vg2="gfinal">我猜是…</button></div><div class="vg-gqs">';
+      VG_GQ.forEach(function (q, i) { h += '<button class="vg-gk" type="button" data-vg2="gq" data-v="' + i + '">' + esc(q) + '</button>'; });
+      return h + '</div>';
+    }
+    return tip('🐢 ' + (pd ? '轮到' + VG_YOU + '答：在卡片上点' : (vgGFull(g) ? '二十问用完了' : '等 ' + on + ' 问')));
+  }
+  function vgGuessAct(mode, key, act, el) {
+    var line = mode === 'line', v = el ? el.getAttribute('data-v') : '';
+    if (act === 'gq') { var q = VG_GQ[parseInt(v, 10)]; if (q) { if (line) vgLineGuessAsk(key, q, false); else vgNpcGuessAsk(key, q, false); } return; }
+    if (act === 'gfinal') {
+      panelPrompt('我猜是…', '').then(function (d) {
+        var w = vgClean(d, 999); if (!w) return;
+        if (w.length > VG_GW_MAX) { toast('warning', '✦ 猜一个词就行，最多 ' + VG_GW_MAX + ' 字'); return; }
+        if (line) vgLineGuessAsk(key, w, true); else vgNpcGuessAsk(key, w, true);
+      });
+      return;
+    }
+    if (act === 'gans') { if (VG_GA.indexOf(v) === -1) return; if (line) vgLineGuessAns(key, v, null); else vgNpcGuessAns(key, v, null); return; }
+    if (act === 'gjudge') { if (line) vgLineGuessAns(key, null, v === '1'); else vgNpcGuessAns(key, null, v === '1'); return; }
+    if (act === 'greveal' && line) vgLineGuessReveal(key);
+  }
+  // 自己出的词 / 抽一个
+  function vgGuessPick(own) {
+    if (own && typeof own === 'string') {
+      var w = vgClean(own, 999); if (!w) return null;
+      if (w.length > VG_GW_MAX) { toast('warning', '✦ 这个词写长了，最多 ' + VG_GW_MAX + ' 字'); return null; }
+      return { w: w, cat: '', tip: '' };
+    }
+    return vgGwDraw();
+  }
+
+  // ── 真人那边 ──
+  function vgLineGuessStart(id, own, L) {
+    var d = vgGuessPick(own); if (!d) return;
+    if (own && !vgGateOk(d.w)) return;   // 亮谜底时这个词要过服务器，先在这里拦
+    var gid = vgGid();
+    vgSend(id, { t: 'guess', ev: 'start', gid: gid, cat: d.cat }, '[猜词海龟汤] 开局：出题的人心里有个词' + (d.cat ? '，类别：' + d.cat : '') + '，二十问').then(function (r) {
+      if (!r.ok) return;
+      var at = Date.now(), tm = vesperClock(at);
+      vsWrite(function (vs) {
+        var X = vs.lines && vs.lines[vesperResolve(vs, id)]; if (!X) return;
+        X.game = { t: 'guess', gid: gid, at: at, lastAt: at, over: null, role: 'set', w: d.w, cat: d.cat, tip: d.tip, qs: [] };
+        if (!Array.isArray(X.msgs)) X.msgs = [];
+        X.msgs.push({ k: 'sys', text: VG_GS.setOpen, at: at, time: tm }); X.at = at;
+      });
+      vgReLine(id);
+    });
+  }
+  // 猜的那边问一个（fin＝我猜是）
+  function vgLineGuessAsk(id, q, fin) {
+    var g = vgLineGame(id, 'guess'); if (!g || g.role !== 'ask' || vgGPend(g) || vgGFull(g)) return false;
+    q = vgClean(q, fin ? VG_GW_MAX : VESPER_TEXT_MAX); if (!q) return false;
+    if (!vgGateOk(q) || !vesperLineGuard(id)) return false;
+    var gid = g.gid, qn = (g.qs || []).length + 1;
+    var body = fin ? { t: 'guess', ev: 'final', gid: gid, qn: qn, w: q } : { t: 'guess', ev: 'q', gid: gid, qn: qn, q: q };
+    vgSend(id, body, fin ? '[猜词海龟汤] 我猜是：' + q : '[猜词海龟汤] 问：' + q).then(function (r) {
+      if (!r.ok) return;
+      var at = Date.now();
+      vsWrite(function (vs) {
+        var X = vs.lines && vs.lines[vesperResolve(vs, id)], G = X && X.game;
+        if (!G || G.gid !== gid || G.over || (G.qs || []).length !== qn - 1) return;
+        G.qs.push(fin ? { q: '我猜是：' + q, f: 1, w: q, a: '' } : { q: q, a: '' }); G.lastAt = at; X.at = at;
+      });
+      vgReLine(id);
+    });
+    return true;
+  }
+  // 输入框里打的字：我在猜、没有待答的 → 这句就是一问（「我猜是：…」＝猜词）
+  function vgLineGuessTyped(id, txt) {
+    var g = vgLineGame(id, 'guess'); if (!g || g.role !== 'ask' || vgGPend(g) || vgGFull(g)) return false;
+    var fw = vgGFinalOf(txt);
+    return vgLineGuessAsk(id, fw || txt, !!fw);
+  }
+  // 出题的那边答（a）或判（ok）
+  function vgLineGuessAns(id, a, ok) {
+    var g = vgLineGame(id, 'guess'), p = g && vgGPend(g); if (!g || g.role !== 'set' || !p) return;
+    var judge = !!p.f; if (judge !== (a == null)) return;
+    if (!vesperLineGuard(id)) return;
+    var gid = g.gid, qn = g.qs.length, ans = judge ? (ok ? '对' : '不对') : a;
+    var body = judge ? { t: 'guess', ev: 'judge', gid: gid, qn: qn, ok: !!ok } : { t: 'guess', ev: 'a', gid: gid, qn: qn, a: a };
+    vgSend(id, body, '[猜词海龟汤] ' + (judge ? (ok ? '猜中了' : '不对') : '答：' + a)).then(function (r) {
+      if (!r.ok) return;
+      var at = Date.now(), tm = vesperClock(at), full = false;
+      vsWrite(function (vs) {
+        var X = vs.lines && vs.lines[vesperResolve(vs, id)], G = X && X.game;
+        if (!G || G.gid !== gid || G.over || G.qs.length !== qn || G.qs[qn - 1].a) return;
+        G.qs[qn - 1].a = ans; G.lastAt = at; X.at = at;
+        if (judge && ok) { G.over = { how: 'hit' }; G.rw = G.w; X.msgs.push({ k: 'sys', text: VG_GS.hit, at: at + 1, time: tm }); }
+        else if (qn >= VG_GQ_N) full = true;
+      });
+      if (full) vgLineGuessReveal(id); else vgReLine(id);
+    });
+  }
+  function vgLineGuessReveal(id) {
+    var g = vgLineGame(id, 'guess');
+    if (!g || g.role !== 'set' || vgGPend(g) || !vgGFull(g) || !vesperLineGuard(id)) { vgReLine(id); return; }
+    var gid = g.gid, w = g.w;
+    vgSend(id, { t: 'guess', ev: 'reveal', gid: gid, w: w }, '[猜词海龟汤] 谜底：' + w).then(function (r) {
+      if (r.ok) {
+        var at = Date.now(), tm = vesperClock(at);
+        vsWrite(function (vs) {
+          var X = vs.lines && vs.lines[vesperResolve(vs, id)], G = X && X.game;
+          if (!G || G.gid !== gid || G.over) return;
+          G.over = { how: 'reveal' }; G.rw = w; G.lastAt = at; X.at = at;
+          X.msgs.push({ k: 'sys', text: vgGRevealSay(w), at: at + 1, time: tm });
+        });
+      }
+      vgReLine(id);
+    });
+  }
+  // 收到猜词的信（start 在 vgApplyIn2 里）
+  function vgGuessIn(G, b, mk, L) {
+    if (!Array.isArray(G.qs)) G.qs = [];
+    var qs = G.qs, qn = Number(b.qn), pend = vgGPend(G);
+    var stamp = function () { var o = mk({ k: 'sys', text: '' }); G.lastAt = o.at; };
+    var sys = function (t) { var o = mk({ k: 'sys', text: t }); o.at += 1; G.lastAt = o.at - 1; L.msgs.push(o); };
+    if (G.role === 'set' && (b.ev === 'q' || b.ev === 'final')) {
+      if (pend || qn !== qs.length + 1 || vgGFull(G)) return true;
+      var s = b.ev === 'q' ? vgClean(b.q, VESPER_TEXT_MAX) : vgClean(b.w, VG_GW_MAX); if (!s) return true;
+      qs.push(b.ev === 'q' ? { q: s, a: '' } : { q: '我猜是：' + s, f: 1, w: s, a: '' }); stamp();
+      return true;
+    }
+    if (G.role === 'ask' && (b.ev === 'a' || b.ev === 'judge')) {
+      if (!pend || qn !== qs.length || !!pend.f !== (b.ev === 'judge')) return true;
+      if (b.ev === 'a') { if (VG_GA.indexOf(b.a) === -1) return true; pend.a = b.a; stamp(); return true; }
+      pend.a = b.ok ? '对' : '不对'; stamp();
+      if (b.ok) { G.over = { how: 'hit' }; G.rw = pend.w; sys(VG_GS.hit); }
+      return true;
+    }
+    if (G.role === 'ask' && b.ev === 'reveal') {
+      if (pend || !vgGFull(G)) return true;
+      var w = vgClean(b.w, VG_GW_MAX) || '？';
+      G.over = { how: 'reveal' }; G.rw = w; sys(vgGRevealSay(w));
+      return true;
+    }
+    return true;
+  }
+
+  // ── 私信里的 NPC ──
+  function vgGUserRec(n, text, ts) {
+    var rec = { sender: 'USER', time: nowT(), ts: ts, type: 'text', content: text, note: '', gameDay: (state && state.game && state.game.day) || 1 };
+    vgPushRec(n, rec);
+    n.engaged = true; n.unread = 0; n.last_ts = ts; n.muted = false;
+    n.last_message = lastPreview({ sender: 'USER', type: 'text', content: text });
+  }
+  function vgGAskRule(name) { return '这一轮 ' + name + ' 只发一条 text：要么问一个能用「是 / 不是」回答的问题（只问一个，口气照 TA 自己的人设），要么直接写「我猜是：某某」。不写别的。'; }
+  function vgGSetRule(name, g, p) {
+    if (p.f) return name + ' 心里的词是「' + g.w + '」，User 猜是「' + p.w + '」。意思一样、说的是同一个东西就算对，差一点也算不对。这一轮 ' + name + ' 只发一条 text，内容只能是「对」或「不对」，不加别的字，不说出那个词。';
+    return name + ' 心里的词是「' + g.w + '」' + (g.cat ? '（类别：' + g.cat + '）' : '') + '，只有 ' + name + ' 知道；User 在猜，这是第 ' + g.qs.length + '/' + VG_GQ_N + ' 问。' + vgGHist(g) + 'User 刚问：「' + p.q + '」。这一轮 ' + name + ' 只发一条 text，内容只能是「是」「不是」「无关」三个词里的一个：对得上这个词就「是」，对不上就「不是」，跟这个词扯不上关系、没法答就「无关」。不加别的字，不说出那个词，不给提示。';
+  }
+  function vgNpcGuessStart(name, own, npc) {
+    var them = !!(own && own.them), d = vgGuessPick(them ? null : own); if (!d) return;
+    var gid = vgGid(), ts = Date.now(), role = them ? 'ask' : 'set';
+    var rec = vgSysRec(role === 'set' ? VG_GS.setOpen : VG_GS.askOpen, ts);
+    vgNpcWrite(name, function (n) {
+      n.game = { t: 'guess', gid: gid, at: ts, lastAt: ts, seen: ts, over: null, role: role, w: d.w, cat: d.cat, tip: d.tip, qs: [], wait: role === 'set' ? ts : 0 };
+      vgPushRec(n, rec); n.engaged = true; n.muted = false;
+    });
+    vgNpcRe(name);
+    if (role === 'set') vgNpcAsk(name, name + ' 和 User 在私信里玩「猜词海龟汤」：User 心里想好了一个词' + (d.cat ? '（类别：' + d.cat + '）' : '') + '，' + name + ' 来猜，二十问以内猜中算赢。' + vgGAskRule(name));
+  }
+  // 我在猜：问一个 / 我猜是
+  function vgNpcGuessAsk(name, q, fin) {
+    var g = vgNpcGame(name, 'guess'); if (!g || g.role !== 'ask' || vgGPend(g) || vgGFull(g)) return;
+    q = vgClean(q, fin ? VG_GW_MAX : VESPER_TEXT_MAX); if (!q) return;
+    var gid = g.gid, ts = Date.now(), hit = fin && vgGSame(q, g.w), full = !hit && (g.qs || []).length + 1 >= VG_GQ_N;
+    var it = fin ? { q: '我猜是：' + q, f: 1, w: q, a: hit ? '对' : '' } : { q: q, a: '' };
+    var rec = hit ? vgSysRec(VG_GS.hit, ts + 1) : null;
+    vgNpcWrite(name, function (n) {
+      var G = n.game; if (!G || G.gid !== gid || G.over || vgGPend(G)) return;
+      vgGUserRec(n, fin ? '我猜是：' + q : q, ts);
+      G.qs.push(vgClone(it)); G.lastAt = ts; G.seen = ts;
+      if (hit) { G.over = { how: 'hit' }; G.rw = G.w; vgPushRec(n, rec); } else G.wait = ts;
+    });
+    vgNpcRe(name);
+    if (!hit) { var G2 = vgNpcGame(name, 'guess'); if (G2) vgNpcAsk(name, '（小游戏「猜词海龟汤」：' + vgGSetRule(name, G2, vgGPend(G2) || it) + '）'); }
+  }
+  // 我出题：答 TA 的问题（a）/ 判 TA 的我猜是（ok）
+  function vgNpcGuessAns(name, a, ok) {
+    var g = vgNpcGame(name, 'guess'), p = g && vgGPend(g); if (!g || g.role !== 'set' || !p) return;
+    var judge = !!p.f; if (judge !== (a == null)) return;
+    var ans = judge ? (ok ? '对' : '不对') : a, gid = g.gid, ts = Date.now(), qn = g.qs.length;
+    var end = judge && ok ? 'hit' : (qn >= VG_GQ_N ? 'reveal' : '');
+    var rec = end ? vgSysRec(end === 'hit' ? VG_GS.hit : vgGRevealSay(g.w), ts + 1) : null;
+    vgNpcWrite(name, function (n) {
+      var G = n.game; if (!G || G.gid !== gid || G.over || G.qs.length !== qn || G.qs[qn - 1].a) return;
+      vgGUserRec(n, ans, ts);
+      G.qs[qn - 1].a = ans; G.lastAt = ts; G.seen = ts;
+      if (end) { G.over = { how: end }; G.rw = G.w; vgPushRec(n, rec); } else G.wait = ts;
+    });
+    vgNpcRe(name);
+    if (!end) vgNpcAsk(name, 'User 答：「' + ans + '」。' + vgNpcCtx(name));
+  }
+  // 局势一句话（玩家点「发送」/ 让 TA 说话时塞进提示词）
+  function vgGuessCtx(name, g) {
+    var p = vgGPend(g);
+    if (g.role === 'ask') {
+      if (p) return '（小游戏「猜词海龟汤」：' + vgGSetRule(name, g, p) + '）';
+      return '（小游戏「猜词海龟汤」进行中：' + name + ' 心里的词是「' + g.w + '」，User 在猜，问到第 ' + g.qs.length + '/' + VG_GQ_N + ' 问；' + name + ' 别说出那个词、别给提示。）';
+    }
+    if (p) return '（小游戏「猜词海龟汤」：' + name + ' 刚问的「' + p.q + '」User 还没答，' + name + ' 先别问下一个。）';
+    return '（小游戏「猜词海龟汤」：User 心里想好了一个词' + (g.cat ? '（类别：' + g.cat + '）' : '') + '，' + name + ' 在猜，已经用了 ' + g.qs.length + '/' + VG_GQ_N + ' 问。' + vgGHist(g) + vgGAskRule(name) + '）';
+  }
+  // 玩家在私信输入框里打的字（queueMsg 已经记进 dm_history）
+  function vgNpcGuessHear(name, ty, text) {
+    var g = vgNpcGame(name, 'guess'); if (!g || ty !== 'text') return;
+    var p = vgGPend(g), gid = g.gid, ts = Date.now(), rec = null, upd = null;
+    if (g.role === 'ask') {
+      if (p || vgGFull(g)) return;
+      var fw = vgGFinalOf(text), q = fw || vgClean(text, VESPER_TEXT_MAX); if (!q) return;
+      var hit = fw && vgGSame(fw, g.w);
+      if (hit) rec = vgSysRec(VG_GS.hit, ts + 1);
+      upd = function (G) { G.qs.push(fw ? { q: '我猜是：' + fw, f: 1, w: fw, a: hit ? '对' : '' } : { q: q, a: '' }); G.lastAt = ts; G.seen = ts; if (hit) { G.over = { how: 'hit' }; G.rw = G.w; } else G.wait = ts; };
+    } else {
+      var t = vgGBare(text);
+      if (p && (p.f ? (t === '对' || t === '不对') : VG_GA.indexOf(t) !== -1)) {
+        var qn = g.qs.length, end = (p.f && t === '对') ? 'hit' : (qn >= VG_GQ_N ? 'reveal' : '');
+        if (end) rec = vgSysRec(end === 'hit' ? VG_GS.hit : vgGRevealSay(g.w), ts + 1);
+        upd = function (G) { G.qs[qn - 1].a = t; G.lastAt = ts; G.seen = ts; if (end) { G.over = { how: end }; G.rw = G.w; } else G.wait = ts; };
+      } else if (!p) upd = function (G) { G.wait = ts; };
+    }
+    if (!upd) return;
+    vgNpcWrite(name, function (n) { var G = n.game; if (!G || G.gid !== gid || G.over) return; upd(G); if (rec) vgPushRec(n, rec); });
+    setTimeout(function () { vgNpcRe(name); }, 0);
+  }
+  // 打开私信页时：看 TA 新回的——TA 出题＝答 / 判（归一化，写回那条消息）；TA 猜＝记下 TA 问的 / 猜的
+  function vgNpcGuessTick(name, npc) {
+    var g = npc.game, hist = npc.dm_history || [], since = Number(g.seen) || Number(g.at) || 0, news = [];
+    for (var i = 0; i < hist.length; i++) { var m = hist[i]; if ((m.ts || 0) > since && m.sender === 'THEM' && m.type !== 'system' && !m.pending) news.push(m); }
+    if (!news.length) return false;
+    var G = vgClone(g), ts = Date.now(), recs = [], fix = null;
+    G.seen = news[news.length - 1].ts || ts;
+    var m0 = G.wait ? news.filter(function (x) { return x.type === 'text'; })[0] : null;
+    if (m0) {
+      var c = String(m0.content || ''), p = vgGPend(G);
+      if (G.role === 'ask' && p) {
+        var a = p.f ? vgGJudge(c) : vgGNorm(c);
+        if (c.trim() !== a) fix = { ts: m0.ts, a: a };
+        p.a = a; G.wait = 0; G.lastAt = ts;
+        if (p.f && a === '对') { G.over = { how: 'hit' }; G.rw = G.w; recs.push(vgSysRec(VG_GS.hit, ts + 1)); }
+        else if (vgGFull(G)) { G.over = { how: 'reveal' }; G.rw = G.w; recs.push(vgSysRec(vgGRevealSay(G.w), ts + 1)); }
+      } else if (G.role === 'set' && !p && !vgGFull(G)) {
+        var fw = vgGFinalOf(c), q = fw ? '' : vgClean(c, VESPER_TEXT_MAX);
+        if (fw) G.qs.push({ q: '我猜是：' + fw, f: 1, w: fw, a: '' }); else if (q) G.qs.push({ q: q, a: '' });
+        G.wait = 0; G.lastAt = ts;
+      }
+    }
+    var gid = g.gid, NG = G;
+    vgNpcWrite(name, function (n) {
+      if (!n.game || n.game.gid !== gid || n.game.over) return;
+      n.game = vgClone(NG);
+      for (var j = 0; j < recs.length; j++) vgPushRec(n, recs[j]);
+      if (fix) (n.dm_history || []).forEach(function (x) { if (x.ts === fix.ts && x.sender === 'THEM') x.content = fix.a; });
+    });
+    return true;
+  }
   // 私信页头：玩家替 TA 写的招牌
   function vgSigChip(npc) { return (npc && npc.vgSig) ? '<span class="vg-sigchip">「' + esc(npc.vgSig) + '」</span>' : ''; }
   // ── 刀16 五子棋悔棋：真人＝我刚落子、对方还没落时可请求，对方点同意 / 不同意；请求没回话前不能再发。
   //    信：{t:'gomoku', ev:'undo_ask'|'undo_ok'|'undo_no', gid, n＝请求时盘上的手数}；本地 game.undo＝'me'（我在等回话）/ 'them'（等我回话）/ ''
   //    NPC：TA 落子是当场的，所以悔＝撤回我上一手和 TA 跟的那一手；头两次同意，第三次起一半一半（game.undoN 记次数）
-  var VG_UNDO = { ask: '@{n} 想悔一步。', ok: '悔了。', no: '对方不让。' };   // ✎ 待红笔
+  var VG_UNDO = { ask: '@{n} 手抖了，想捡回上一颗子。准不准？', ok: '那位抬了贵手。退一步，落子请慎。', no: '那位不松口。棋照旧下。' };   // 4a 第六轮
   function vgUndoBtns(g, npcMode) {
     if (!vgLive(g)) return '';
     if (g.undo === 'them') return '<button class="vg-resign" data-vg2="undook" type="button">同意</button><button class="vg-resign" data-vg2="undono" type="button">不同意</button>';
-    if (g.undo === 'me') return '<span class="vg-st">等回话…</span>';
+    if (g.undo === 'me') return '<span class="vg-st">' + esc(VESPER_COPY.gmWaitReq) + '</span>';
     var mv = g.moves || [];
     var can = npcMode ? (vgTurn(g) === g.me && mv.length >= 3) : (mv.length > 0 && vgTurn(g) !== g.me);
     return can ? '<button class="vg-resign" data-vg2="undo" type="button">悔棋</button>' : '';
@@ -5269,6 +5833,14 @@
     '#sbnyc-panel .vg-picbtn{background:transparent;border:0;font-size:18px;cursor:pointer;padding:0 2px;flex:none;}',
     '#sbnyc-panel .vg-ub{display:flex;gap:4px;align-items:center;}',
     '#sbnyc-panel .vg-sigchip{margin-left:4px;font-size:10.5px;opacity:.8;}',
+    // 刀17：猜词海龟汤——卡片（谜底 / 类别、问答流水、待答高亮）、快捷问题两行横滑
+    '#sbnyc-panel .vg-gw{text-align:center;padding:2px 0 6px;margin-bottom:4px;border-bottom:1px dashed rgba(120,90,40,.25);}#sbnyc-panel .vg-gw b{display:block;font-size:16px;letter-spacing:1px;word-break:break-word;}#sbnyc-panel .vg-gw small{display:block;font-size:10.5px;opacity:.6;}',
+    '#sbnyc-panel .vg-gl{max-height:240px;overflow-y:auto;}',
+    '#sbnyc-panel .vg-gq{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:3px 5px;border-radius:6px;word-break:break-word;}#sbnyc-panel .vg-gq.cur{background:rgba(184,153,104,.2);}#sbnyc-panel .vg-gq.fin span{font-weight:600;}',
+    '#sbnyc-panel .vg-ga{white-space:nowrap;font-weight:600;flex:none;}#sbnyc-panel .vg-ga.y{color:#2e7d4f;}#sbnyc-panel .vg-ga.n{color:#c0392b;}#sbnyc-panel .vg-ga.x{opacity:.6;}',
+    '#sbnyc-panel .vg-gab{display:flex;gap:4px;flex:none;}#sbnyc-panel .vg-gwait{font-style:normal;font-size:11px;opacity:.6;white-space:nowrap;flex:none;}',
+    '#sbnyc-panel .vg-gqs{display:grid;grid-template-rows:repeat(2,auto);grid-auto-flow:column;grid-auto-columns:max-content;gap:4px;overflow-x:auto;padding:4px 0 2px;-webkit-overflow-scrolling:touch;}',
+    '#sbnyc-panel .vg-gk{font-size:11.5px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);background:var(--paper,#fff);color:var(--ink);white-space:nowrap;cursor:pointer;font-family:var(--font-cn);box-shadow:none;}',
     '#sbnyc-panel .sdv-menu{max-height:70%;overflow-y:auto;}',
     '#sbnyc-panel .sb-abtn.vs-entry-off{opacity:.45;}',   // 刀16：暮星入口常驻，开关关着时灰着
     // 确认小窗：同入会小窗的样子
@@ -5772,7 +6344,7 @@
       else if (a === 'calendar') { openCalendar(); SBemit('sb_daybook'); }   // 📅 生成器重算完会发 sb_updated，日历自己刷新
       else if (a === 'trans') openTransactions();
       else if (a === 'remote') openRemote();
-      else if (a === 'vesper') { if (vesperOn()) openVesper(); else toast('info', '暮星关着。去设置最底下打开。'); }   // 刀16：关着只提示，不发任何请求   // ✦ 编辑到一半离开（或起草在页外回来）的，回来接着编
+      else if (a === 'vesper') { if (vesperOn()) openVesper(); else toast('info', '门锁着。去设置最底下把开关拨开。'); }   // 刀16：关着只提示，不发任何请求   // ✦ 编辑到一半离开（或起草在页外回来）的，回来接着编
     }); })(btns[j]); }
     // 行程 todolist：⭕/✅打勾切换、点文字编辑、✕直接删（都不弹确认，误删了让TA重加——手机上确认框比误删烦）
     var chks = root.querySelectorAll('.sb-schk');
@@ -9184,7 +9756,7 @@
         else if (act === 'members') openGroupMembers(name);
         else if (act === 'handle') askAnonHandle(name, npc, function () { openChat(name, npc); });
         else if (act === 'sticker') openStickerPicker();
-        else if (act === 'game') vgGameMenu(function (g, x) { vgNpcStart(name, g, x); });
+        else if (act === 'game') vgGameMenu(function (g, x) { vgNpcStart(name, g, x); }, true);
         else if (act === 'photo') askPhoto();
         else if (act === 'voice') {
           panelPrompt('这段语音你说了什么？（对方会"听到"，语气喘息也可以写进去）', '').then(function (d) {
