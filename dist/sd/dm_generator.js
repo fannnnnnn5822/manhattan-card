@@ -2097,7 +2097,9 @@ function mergeRequests(batch) {
   for (var j = 0; j < batch.length; j++) { var tj = (batch[j] && batch[j].to) || []; for (var tk = 0; tk < tj.length; tk++) if (to.indexOf(tj[tk]) === -1) to.push(tj[tk]); }
   var mute = [];   // 刀15：表情包局里这一轮只许发表情包的人
   for (var mj = 0; mj < batch.length; mj++) { var mu = (batch[mj] && batch[mj].mute) || []; for (var mk = 0; mk < mu.length; mk++) if (mute.indexOf(mu[mk]) === -1) mute.push(mu[mk]); }
-  return { reason: reasons.join('；同时：'), n: n, focus: focus, to: to, mute: mute };
+  var pic = [];   // 刀16：假装发图局里这一轮只许发 [发送了照片：……] 的人
+  for (var pj = 0; pj < batch.length; pj++) { var pu = (batch[pj] && batch[pj].pic) || []; for (var pk = 0; pk < pu.length; pk++) if (pic.indexOf(pu[pk]) === -1) pic.push(pu[pk]); }
+  return { reason: reasons.join('；同时：'), n: n, focus: focus, to: to, mute: mute, pic: pic };
 }
 
 // 情绪歌：私信顺带的 ♪|song| 行插到歌单最前（panel 的轮播从 0 开始 → 新歌立刻上岛）
@@ -2256,6 +2258,15 @@ async function runOnce(req) {
   // 刀15：表情包局里闭嘴的 NPC：这一轮只认 sticker 行，写了字的整行丢（提示词管不住的这里管）
   var muteSet = {};
   if (!isGroupReq && Array.isArray(req.mute)) for (var mi0 = 0; mi0 < req.mute.length; mi0++) { muteSet[req.mute[mi0]] = 1; muteSet[normalizeName(req.mute[mi0])] = 1; }
+  // 刀16：假装发图局里的 NPC：image 行改写成「[发送了照片：……]」文字行；text 行里抠出第一张「照片」；抠不出来的整行丢
+  var picSet = {};
+  if (!isGroupReq && Array.isArray(req.pic)) for (var pi0 = 0; pi0 < req.pic.length; pi0++) { picSet[req.pic[pi0]] = 1; picSet[normalizeName(req.pic[pi0])] = 1; }
+  function picRow(r) {
+    if (r.type === 'image') { var d = String(r.content || '').replace(/^\s*\[?\s*发送了照片\s*[：:]\s*/, '').replace(/\]\s*$/, '').trim(); if (!d) return null; var o = Object.assign({}, r); o.type = 'text'; o.content = '[发送了照片：' + d + ']'; return o; }
+    if (r.type !== 'text') return null;
+    var m = String(r.content || '').match(/\[发送了照片[：:][^\[\]]+\]/); if (!m) return null;
+    var o2 = Object.assign({}, r); o2.content = m[0].replace(/^\[发送了照片:/, '[发送了照片：'); return o2;
+  }
   var all = await generateOnce(sb, plot, req.n, req.reason, false, req.group, gPlan);
   var songs = [], dms = [], tags = [], scheds = [], blocks = [], grows = [], sideN = 0;
   function route(arr) {
@@ -2274,6 +2285,7 @@ async function runOnce(req) {
       else if (r.type === 'block' || r.type === 'unblock') blocks.push(r);   // ⛔ 拉黑/解除：单独走，不当私信
       else if (r.type === 'tag') tags.push({ name: r.name, label: String(r.content).slice(0, 12) });
       else if (r.type === 'sched') scheds.push(String(r.content).slice(0, 60));   // 周X / HH:MM / 地点 / 和谁 的四段式比老格式长
+      else if (picSet[r.name] || picSet[normalizeName(r.name)]) { var pr = picRow(r); if (pr) dms.push(pr); else console.log('[SB-S v4] 假装发图：' + r.name + ' 这一轮只许发 [发送了照片：……]，丢一行 ' + r.type); }
       else if ((muteSet[r.name] || muteSet[normalizeName(r.name)]) && r.type !== 'sticker') { console.log('[SB-S v4] 表情包局：' + r.name + ' 这一轮只许发表情包，丢一行 ' + r.type); }
       else dms.push(r);
     }
