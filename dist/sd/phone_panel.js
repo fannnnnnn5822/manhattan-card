@@ -1370,15 +1370,17 @@
   var VESPER_AWAY_MAIL_MS = 3 * 60000;   // 刀8：切走太久时收信不停，改成每 3 分钟取一次（来信照样闪标题、亮红点）；取信不改服务器的 last_seen，不算在场
   var VESPER_FLASH_MS = 1200;
   var VESPER_TITLE_ASK = '✦ 有人想见您', VESPER_TITLE_MAIL = '✦ 暮星有人留话';
-  var _vsVis = { on: false, hiddenAt: 0, flashT: 0, orig: null, text: '', phase: false, awayTicks: 0 };   // awayTicks：切走太久以后过了几拍报到
+  var _vsVis = { on: false, hiddenAt: 0, flashT: 0, orig: null, text: '', phase: false, awayTicks: 0, note: '', wakeAt: 0 };   // 刀12：note＝切走时来信的那句 S. 提示（回来再说一遍）；wakeAt＝上次「回来补收」的时间   // awayTicks：切走太久以后过了几拍报到
   function vesperHidden() { try { return !!(DOC.hidden || DOC.visibilityState === 'hidden'); } catch (e) { return false; } }
   function vesperAway() { return vesperHidden() && _vsVis.hiddenAt > 0 && Date.now() - _vsVis.hiddenAt >= VESPER_AWAY_MS; }
   function vesperVisWatch(on) {
     if (on && !_vsVis.on) {
       try { DOC.addEventListener('visibilitychange', vesperOnVis); _vsVis.on = true; } catch (e) {}
+      try { (DOC.defaultView || window).addEventListener('focus', vesperOnWake); (DOC.defaultView || window).addEventListener('pageshow', vesperOnWake); } catch (e) {}   // 刀12
       _vsVis.hiddenAt = vesperHidden() ? Date.now() : 0;
     } else if (!on && _vsVis.on) {
       try { DOC.removeEventListener('visibilitychange', vesperOnVis); } catch (e) {}
+      try { (DOC.defaultView || window).removeEventListener('focus', vesperOnWake); (DOC.defaultView || window).removeEventListener('pageshow', vesperOnWake); } catch (e) {}   // 刀12
       _vsVis.on = false; _vsVis.hiddenAt = 0;
       vesperFlashStop();
     }
@@ -1388,8 +1390,23 @@
     var wasAway = _vsVis.hiddenAt > 0 && Date.now() - _vsVis.hiddenAt >= VESPER_AWAY_MS;
     _vsVis.hiddenAt = 0; _vsVis.awayTicks = 0;
     vesperFlashStop();
-    if (wasAway) { try { vesperTick(true); } catch (e) {} }   // 回来了：马上报到，不管邮筒报几封都补收一次
+    vesperWake(wasAway);
   }
+  // 刀12（安卓反馈：停在手机首页收不到提示）：回到前台不管切走多久都立刻补收一次——手机浏览器切后台会把定时器拖慢甚至冻住，
+  //   以前只有切走满 5 分钟才补收，短切一下回来要干等下一拍报到（最多一分钟）。切走时来的信，toast 在看不见的时候就过去了：回来再说一遍。
+  //   visibilitychange 之外再听 focus / pageshow（有的手机浏览器从别的 app 切回来只发这两个）：这两个 12 秒内只补收一次（桌面上点来点去也会发 focus）。
+  function vesperWake(wasAway, soft) {
+    try {
+      if (vesperHidden()) return;
+      if (_vsVis.note) { var nt = _vsVis.note; _vsVis.note = ''; if (vesperOn()) toast('info', nt); }
+      if (!vesperReady() || _vl.closed) return;
+      if (soft && Date.now() - _vsVis.wakeAt < 12000) return;
+      _vsVis.wakeAt = Date.now();
+      if (wasAway) vesperTick(true);   // 回来了：马上报到，不管邮筒报几封都补收一次
+      else if (_vl.joinedSig) vesperFetch();   // 刚加载、启动那一下还没问过门开没开：交给启动那一拍
+    } catch (e) {}
+  }
+  function vesperOnWake() { if (!_vsVis.hiddenAt) vesperWake(false, true); }
   function vesperFlash(text) {
     if (!vesperHidden()) return;
     if (_vsVis.flashT) { if (text === VESPER_TITLE_ASK) _vsVis.text = text; return; }   // 已经在闪：有人想见＞留话
@@ -1505,9 +1522,12 @@
     });
   }
   // 俱乐部页开着时：更勤地取信；大厅页再隔一阵刷一次名单
+  //   刀12：手机开着、停在别的页（首页、私信……）也一样 20 秒取一次信——以前只有俱乐部页这么勤，首页要等每分钟那一拍报到
   function vesperFastTick() {
-    if (!vesperReady() || !currentPage || vesperAway() || _vl.closed) return;
-    if (currentPage === 'vesper' || currentPage.indexOf('vesper:line:') === 0) vesperFetch();
+    if (!vesperReady() || vesperAway() || _vl.closed) return;
+    var onVs = !!currentPage && (currentPage === 'vesper' || currentPage.indexOf('vesper:line:') === 0);
+    if (onVs || (_vl.joinedSig && panel.classList.contains('open') && !vesperHidden())) vesperFetch();   // joinedSig：这次加载里报过到了（启动时先问过门开没开、除没除名）
+    if (!currentPage) return;
     if (currentPage === 'vesper' && !_ves.editing) vesperRefreshLobby(false);
   }
   function vesperRefreshLobby(force) {
@@ -1778,21 +1798,34 @@
     for (var k in ls) { if (ls.hasOwnProperty(k) && ls[k] && !ls[k].merged && k !== open) n += ls[k].unread || 0; }
     return n;
   }
-  function vesperOpenLineId() { return (currentPage && currentPage.indexOf('vesper:line:') === 0 && chatEl.style.display !== 'none') ? currentPage.slice(12) : null; }
+  // 刀12：手机收起来了＝那条对话没人在看（以前收起手机时停在对话页，那条线来信不提示、不算未读）
+  function vesperOpenLineId() { return (currentPage && currentPage.indexOf('vesper:line:') === 0 && chatEl.style.display !== 'none' && panel.classList.contains('open')) ? currentPage.slice(12) : null; }
+  // 刀12：来信当场把悬浮球数字和首页「暮星」入口的红点画上（不等 sb_updated 重画整页）
+  function vesperPaintUnread() {
+    updateBadge(true);
+    var has = vesperUnread(true) > 0;
+    var bs = root.querySelectorAll('[data-act="vesper"]');
+    for (var i = 0; i < bs.length; i++) {
+      var dot = bs[i].querySelector('.sdv-dot');
+      if (has && !dot) { var d = DOC.createElement('i'); d.className = 'sdv-dot'; bs[i].appendChild(d); }
+      else if (!has && dot) dot.parentNode.removeChild(dot);
+    }
+  }
   function vesperNotify(fresh) {
     var loud = fresh.filter(function (f) { return !f.quiet; });
     if (loud.length && vesperHidden()) vesperFlash(loud.some(function (f) { return f.kind === 'ask'; }) ? VESPER_TITLE_ASK : VESPER_TITLE_MAIL);   // 酒馆在后台：闪标题（开着的那条线来信也算——人不在屏幕前）
+    // 第 11 项（偶发：回来不在对话页时悬浮球没亮）：这里跑的时候信已经写进聊天变量，可镜像 state 要等 sb_updated 那一拍才换，
+    // 以前按镜像算＝还是旧的未读数，红点要晚一拍才亮。改成按聊天变量算，信一落地红点就亮。刀12：首页「暮星」入口的红点也当场画
+    try { vesperPaintUnread(); } catch (e) {}
     var open = vesperOpenLineId();
     var others = fresh.filter(function (f) { return f.line !== open && !f.quiet; });
     if (!others.length) return;
     var ask = null; for (var i = 0; i < others.length; i++) if (others[i].kind === 'ask') { ask = others[i]; break; }
     var t = ask ? VESPER_COPY.askIn.replace('{h}', ask.handle || '') : VESPER_COPY.mailHint;
     toast('info', '✦ S.：' + t);
+    if (vesperHidden() && (ask || !_vsVis.note)) _vsVis.note = '✦ S.：' + t;   // 刀12：切走时这条 toast 没人看见，回来再说一遍（有人想见＞留话）
     setStatus('✦ ' + (ask ? '有人想见您' : VESPER_COPY.mailHint));
     try { triggerVibration(); } catch (e) {}
-    // 第 11 项（偶发：回来不在对话页时悬浮球没亮）：这里跑的时候信已经写进聊天变量，可镜像 state 要等 sb_updated 那一拍才换，
-    // 以前按镜像算＝还是旧的未读数，红点要晚一拍才亮。改成按聊天变量算，信一落地红点就亮。
-    updateBadge(true);
   }
   // 本地写：镜像和变量各改一遍（fn 必须两次跑出同样结果——时间这类值在外面先定好）
   function vsWrite(fn) {
@@ -2348,7 +2381,7 @@
       if (ta0) { try { draft = { v: ta0.value, f: ta0.ownerDocument.activeElement === ta0 }; } catch (e) {} }
     }
     currentPage = 'vesper:line:' + id; currentChatName = null;
-    if (L.unread) vsWrite(function (vs) { var x = vs.lines && vs.lines[vesperResolve(vs, id)]; if (x) x.unread = 0; });
+    if (L.unread && panel.classList.contains('open')) vsWrite(function (vs) { var x = vs.lines && vs.lines[vesperResolve(vs, id)]; if (x) x.unread = 0; });
     var w = L.with || {};
     var h = '<div class="sb-ch sdv-lnh"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b><span class="sdv-real" title="真人">' + sbIcon('star', 13) + '</span>@' + esc(w.handle || '…') + '</b><small>' + esc(VESPER_SIDE[w.side] || '') + '</small></div>' +
       '<button class="sb-ch-del sb-ik sdv-ln-more" title="更多">' + sbIcon('more') + '</button></div>';
