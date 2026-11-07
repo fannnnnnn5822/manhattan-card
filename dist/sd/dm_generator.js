@@ -2095,7 +2095,9 @@ function mergeRequests(batch) {
   var n = (batch.length === 1 && batch[0] && batch[0].n) ? batch[0].n : (batch.length > 1 ? batch.length + '-' + (batch.length + 2) : '2-4');
   var to = [];   // 👁 点名要回复的人（落账时记「已读」）
   for (var j = 0; j < batch.length; j++) { var tj = (batch[j] && batch[j].to) || []; for (var tk = 0; tk < tj.length; tk++) if (to.indexOf(tj[tk]) === -1) to.push(tj[tk]); }
-  return { reason: reasons.join('；同时：'), n: n, focus: focus, to: to };
+  var mute = [];   // 刀15：表情包局里这一轮只许发表情包的人
+  for (var mj = 0; mj < batch.length; mj++) { var mu = (batch[mj] && batch[mj].mute) || []; for (var mk = 0; mk < mu.length; mk++) if (mute.indexOf(mu[mk]) === -1) mute.push(mu[mk]); }
+  return { reason: reasons.join('；同时：'), n: n, focus: focus, to: to, mute: mute };
 }
 
 // 情绪歌：私信顺带的 ♪|song| 行插到歌单最前（panel 的轮播从 0 开始 → 新歌立刻上岛）
@@ -2251,6 +2253,9 @@ async function runOnce(req) {
     var gm0 = gPlan.order;
     for (var sk = 0; sk < gm0.length; sk++) sideOk[gm0[sk]] = 1;
   }
+  // 刀15：表情包局里闭嘴的 NPC：这一轮只认 sticker 行，写了字的整行丢（提示词管不住的这里管）
+  var muteSet = {};
+  if (!isGroupReq && Array.isArray(req.mute)) for (var mi0 = 0; mi0 < req.mute.length; mi0++) { muteSet[req.mute[mi0]] = 1; muteSet[normalizeName(req.mute[mi0])] = 1; }
   var all = await generateOnce(sb, plot, req.n, req.reason, false, req.group, gPlan);
   var songs = [], dms = [], tags = [], scheds = [], blocks = [], grows = [], sideN = 0;
   function route(arr) {
@@ -2269,6 +2274,7 @@ async function runOnce(req) {
       else if (r.type === 'block' || r.type === 'unblock') blocks.push(r);   // ⛔ 拉黑/解除：单独走，不当私信
       else if (r.type === 'tag') tags.push({ name: r.name, label: String(r.content).slice(0, 12) });
       else if (r.type === 'sched') scheds.push(String(r.content).slice(0, 60));   // 周X / HH:MM / 地点 / 和谁 的四段式比老格式长
+      else if ((muteSet[r.name] || muteSet[normalizeName(r.name)]) && r.type !== 'sticker') { console.log('[SB-S v4] 表情包局：' + r.name + ' 这一轮只许发表情包，丢一行 ' + r.type); }
       else dms.push(r);
     }
   }
