@@ -115,6 +115,9 @@
     group: '<circle cx="9" cy="8" r="3.2"/><path d="M2.5 20v-1a5 5 0 0 1 5-5h3a5 5 0 0 1 5 5v1"/><path d="M16.4 5.3a3.2 3.2 0 0 1 0 5.4"/><path d="M18 14.2a5 5 0 0 1 3.5 4.8v1"/>',
     mask: '<path d="M3 7.5C6 6 9 5.4 12 5.4s6 .6 9 2.1c0 5-2.5 10-5.5 10-1.5 0-2.3-1-3.5-1s-2 1-3.5 1C5.5 17.5 3 12.5 3 7.5z"/><path d="M6.9 10.2c.8-.8 2-.8 2.8 0"/><path d="M14.3 10.2c.8-.8 2-.8 2.8 0"/>',
     toy: '<path d="M11.2 8.6c2.6-2.8 6.6-4.6 8.6-3.1 1.6 1.2.4 4.1-2.6 5.6-1.8.9-3.7 1-5.2.6"/><path d="M11.2 8.6 9.4 10.4"/><path d="M9.4 10.4c-3 2.3-4.4 5.8-2.8 7.8 1.8 2.2 6.2 1.3 9-1.7"/>',
+    // ✦ Club Vesper 暮星俱乐部：一颗四角的小星（暮星＝黄昏第一颗亮起来的那颗），旁边一个小点
+    star: '<path d="M11 3.5c.6 4.4 2.1 5.9 6.5 6.5-4.4.6-5.9 2.1-6.5 6.5-.6-4.4-2.1-5.9-6.5-6.5 4.4-.6 5.9-2.1 6.5-6.5z"/><circle cx="18.6" cy="18.4" r="1.3"/>',
+    more: '<circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/>',   // ✦ 暮星对话页右上角的「更多」
   };
   function sbIcon(name, px) {
     var d = SB_ICONS[name] || SB_ICONS.group;
@@ -978,6 +981,2107 @@
     }
     else if (k === 'credit') { try { (DOC.defaultView || window).open(TOYLINK_URL, '_blank'); } catch (e) {} }
   }
+  // ══ ✦ Club Vesper 暮星俱乐部（2026-11-06 从《纸醉金迷》原版搬过来：开关、入会、小卡、大厅、真人对话、转账送礼、拉黑举报、除名锁屏）══
+  // 事实来源：写卡/角色卡/真人俱乐部（暂名）/brief.md；服务器接口：同目录 服务器/接口说明.md（两张卡共用一套接口，这张卡的「边」是 sd）。
+  // 让两张卡的真人玩家在手机里遇到对方（只有一个大厅，两边的人都在，小卡上标是哪一边）。
+  // · 开关和设备暗号跟设备走：parent localStorage 'sd_vesper' = {on, joinedAt, secret}。和另一张卡分开存、各卡各一把暗号
+  //   （两张卡的脚本可能在同一个酒馆页面里先后跑；存储键、DOM id、CSS 类、事件名都用这张卡自己的 sd 前缀）。
+  //   暗号在点「进门」那一刻才生成（32 字节随机数 → 43 位 base64url），只存本机；开关从没开过的设备不生成、不发任何请求。
+  //   关着＝手机和原来一模一样：首页没有入口、不写任何变量、定时器空转不发请求（唯一例外：设备有暗号时，启动查一次是否被除名）。
+  // · 除名（按设备暗号，vesper_status）和这张卡原有的封禁（按匿名号，banned_tokens / renderBanScreen）是两套，并存：
+  //   俱乐部除名＝一层盖住整块屏幕的锁（.sdv-ban，挂在 .sb-screen 上）；匿名号封禁＝原来那块等待屏（写进 root）。哪套命中都锁，文案各说各的，谁也不改谁的。
+  // · 存档标记＝入会时生成的随机串 sb.vesper.tag（刀7；以前是聊天 id，改名就多出一个会员，见 vesperSaveIdOf）。小卡、线、聊天记录、收信去重都跟存档走：聊天变量 sb.vesper。
+  // · 换聊天（刀7）：同一张卡里换聊天酒馆助手不重载脚本，这里听 CHAT_CHANGED 自己收拾（见 onChatChanged）。
+  // · ⚠️ 真人不进 AI 那条路：真人的线和聊天记录只存在 sb.vesper.lines，绝不写进 sb.npcs——私信生成器不会把真人当 NPC 去回，
+  //   主线注入（dm_generator.buildDigest）只读 sb.npcs，也碰不到这里。唯一的例外是玩家亲手点「注入正文」（第三刀，vesperInjectWrite）：
+  //   那时才另建一位 AI 演的联系人（带 vesper 标记），把这段话搬进它的私信记录；真人这条线照旧单独存在。
+  // · 钱：转出走 debit（唯一的扣款口子）；收到的钱在同一次 SBupdate 里「先入账、记下信件 id」，写进去了才签收（vesper_ack）。
+  // · 收到的礼物：这张卡的衣橱页没有入口（作者故意拿掉的），所以礼物照这张卡现在的礼物去向，记成 sb.closet 里一件 to 为空的东西
+  //   ＝私信 ＋「送TA买好没送的」那一格能看到、也能转手送人。两张卡互送只带商品名字、价格、图，不依赖对方有同一条商品记录。
+  var VESPER_NAME = ['Club Vesper', '暮星俱乐部', '由免费的群友大模型驱动'];   // Fan 自己写的三行，一个字不许改
+  // ✎ 待 Fan 红笔：下面整块是文案，一掷千金的 S.（女性；干燥、专业、有实绩撑着的高傲；对玩家用「您」）。
+  //   戏里 S. 不说「群友」，不说「拜帖」，不提成年，不点另一张卡的名字；说「别人」不说「对面」。
+  var VESPER_COPY = {
+    // 入会小窗：一行一条，像 S. 连着发过来的几条短消息
+    intro: [
+      '这扇门，平时不对客户开。',
+      '门里的人不在我的名册里。没有档案，没有背调——每一位都是真人，坐在另一块屏幕后面。我能替您担保的，只有这扇门本身。',
+      '门里有人来宠人，也有人来被宠；有人账面好看，有人手头紧。挑谁说话，您自己定。',   // 刀8（4a 第二轮）✎ 待红笔：让人知道门里两边都有
+      '谁让您扫兴，不必给面子。拉黑，或者告诉我——人我来请出去。',
+      '门里的规矩只有一条：一切走平台。号码、别的软件、照片、住址，都不在这里交换；账只走平台的账。',   // 补漏（对照能工智人第 18 条）：门口立规矩。v3：Fan 否了「留在戏里」（太出戏，像在说这里是 role play），换成这句
+      '想好了，您再推门。',
+    ],
+    yes: '进门',
+    no: '算了',
+    declined: '门先替您关着。想好了再说。',
+    welcome: '登记好了。首页多了一颗星，点它就到。',
+    // 词闸拦下时（小卡）
+    gate: '这句我替您划掉了，没存。号码、链接、哪个软件的号，一律留在门外——这里只递名片。',
+    whoEmpty: '还空着。别人只会看到一张白卡。',
+    lineEmpty: '空着也行。',
+    linePh: '空着也行。写一句别人接得住的——问一句，或者约一件事。',   // 刀8：编辑页「今晚这一句」框里的占位字（展示页空着时仍用 lineEmpty）
+    noHandle: '您还没有马甲——别人不知道该怎么称呼您。',
+    note: '别人看到的，就是下面这张。',
+    // 「今晚在场」
+    noCard: ['您的小卡还是空的，我没法替您递出去。', '先写「身份」，存好了，门里的人才看得见您，您也才看得见他们。'],
+    noCardBtn: '去写小卡',
+    // 刀8（4a 第二轮）：原句许了「有人推门，您第一个知道」，代码里没有这个提醒——改成三种情况各说各的实话
+    emptyLobby: ['这会儿门里还没有别人。', '您的小卡挂上了——去忙您的，有人向您开口，手机会亮。'],   // 没人在场、今天也没人来过、挂着牌
+    emptyLobbyRecent: ['这会儿没人在。', '下面几位今天来过，现在开口，话我替您收着，TA 回来就看得到。'],   // 没人在场、今天有人来过
+    noHandleLobby: '先起个马甲。没有名字的客人，我不往大厅里领。',
+    offline: '联机全关着，这扇门打不开。去设置里把联机打开再来。',
+    noSave: '我认不出这是哪个存档。先在酒馆里打开一个聊天，再来。',
+    loading: '我去看看今晚谁在……',
+    lobbyErr: '名单没拉到。',
+    // 有人开口
+    askIn: '有人想见您。@{h}——不在我的名册里。见，还是不见？',
+    askYes: '见',
+    askNo: '不见',
+    askNoDone: '好，不见。对方不会知道。',
+    // 我开口
+    askHint: '对方点头之前，只有这一句。接 TA 卡上那句话往下说，最好开口。',   // 刀8：后半句是 4a 第二轮加的
+    askHintNone: '对方点头之前，只有这一句。',   // 刀9：对方没写今晚这一句时只说前半句（问卡上的事交给占位字说）
+    askPhLine: 'TA 今晚说「{l}」。接着这句说就行。',   // 刀8：开口框占位字——对方小卡写了今晚这一句（{l}＝原话，长了截到 40 字加「…」）
+    askPhNone: '问 TA 一件卡上写着的事就行。',          // 刀8：对方没写今晚这一句
+    askSent: '话递过去了。等回音。',
+    noReply: '还没有回音。',
+    opened: '线通了。',
+    closed: '线断了。',
+    hungup: '您挂了线。',
+    mailHint: '暮星那边有人给您留了话。',
+    // 拉黑 / 挂线 / 举报（在戏里的说法，不要客服腔）
+    blockT: '把 @{h} 请出您的视线？',
+    blockB: ['从今晚起，您看不见这位，这位也找不到您。', '您和这位之间的线当场断掉，没送到的话一并作废。'],
+    blockYes: '请出去',
+    blockDone: '人已经请出去了。',
+    hangT: '挂线？',
+    hangB: ['线就断在这里，对方会知道。', '想再说话，得重新开口。'],
+    hangYes: '挂线',
+    withdrawT: '把这句话收回来？',
+    withdrawB: ['对方还没看到的话，就当没递过。'],
+    withdrawYes: '收回',
+    reportT: '告诉我',
+    reportB: ['您和这位最近的几句话，我一起带走看。', '想补一句缘由，写在下面；不写也行。'],
+    reportPh: '这位做了什么（选填）',
+    reportYes: '交给 S.',
+    reportDone: '收到。我会看，也会处理。',
+    reportAlready: '这件事已经在我手里了。我处理完之前，不必再告。',   // v3：同一对人已经有一条没处理的举报（服务器回 already:true）
+    reportNoLine: '您和这位没说过话。只有说过话的人，这一状我才收。',   // v3：no_line
+    no2: '算了',
+    // 钱和东西
+    payAsk: '转多少给 @{h}？只填数字。从您自己的钱包扣，我不抽成；余额 {b}',
+    payT: '转 {a} 给 @{h}？',
+    payB: ['从您自己的钱包里扣。我不抽成，转多少到多少。'],
+    payYes: '转过去',
+    giftT: '买下送给 @{h}？',
+    giftB: '从您的钱包扣，东西直接送到 TA 手上。',
+    giftYes: '买下送出',
+    linkT: '把这件发给 @{h}？',
+    linkB: ['对方点了「买给 TA」，钱从 TA 的钱包走，东西归您——收在「买好没送的」那一格。'],
+    linkYes: '发过去',
+    buyT: '替 @{h} 买下？',
+    buyYes: '买给 TA',
+    noItems: '橱窗还在上货。稍等再点。',
+    poor: '余额不够。',
+    // 小卡上的同意开关（Fan 11-06 定：留着、默认开；措辞和另一张卡一致）
+    injT: '允许对方把我注入 TA 的正文',
+    injS: '对方点了「注入正文」，TA 的 AI 会接着演您这个角色。只发生在 TA 自己的酒馆里。',   // 11-07 Fan 定：她的原句，「你」→「您」
+    // 除名锁屏
+    banL: ['这扇门，对您关上了。', '不止暮星——这部手机，我替您收起来了。'],
+    banReason: '我的理由：',
+    unknownKind: '对方递来一样东西，这部手机还认不得。',
+    badMoney: '对方递来一笔看不懂的转账，我没替您入账。',
+    // ── 第三刀（2026-11-06 从《纸醉金迷》搬来，按这张卡的 S. 重写：您、干燥、专业）✎ 待红笔 ──
+    // 注入正文：对话页最下面那一条
+    injBtn: '注入正文',
+    injAgain: '把新的话补进正文',
+    injHint: '这位允许被注入。点了以后，TA 进您的通讯录，由您的 AI 接手；这条线上的真人照旧在这里。',
+    injDoneHint: '已经注入您的正文：在您的故事里，TA 叫「{n}」。这条线上仍是真人本人。',
+    injNoWords: 'TA 还没开口说过什么，没有可以注入的。',
+    injNameT: '在您的故事里，TA 叫什么？',
+    injNameB: ['默认用 TA 在门里的马甲。想换，在下面改——只问这一次。', '之后由您的 AI 接手 TA；这条线上的真人不受影响，也不会知道。'],
+    injNamePh: 'TA 的名字',
+    injYes: '注入',
+    injEmpty: '得有个名字。',
+    injLong: '名字最多 24 个字。',
+    injFixed: '「{n}」是您故事里本来就有的人。换一个名字。',
+    injTaken: '通讯录里已经有一位「{n}」了。换一个名字。',
+    injOk: '「{n}」进了您的通讯录，搬过去 {c} 句。正文提到 TA 时，由 AI 接手。',
+    injMore: '补进去 {c} 句，「{n}」的档案也换成了 TA 现在的小卡。',
+    injNone: '没有新的话要补；「{n}」的档案换成了 TA 现在的小卡。',
+    injOff: 'TA 关掉了「允许被注入」，注入不了。',   // 刀7：注入正文一路不署 S.，也不用 S. 的口吻（原句「这一步，我不能替您做」是 S. 在说）
+    npcTag: '真人开的头 · AI 接手',
+    injRel: 'User 在 S. 的暮星俱乐部里认识了 TA，两人私下聊过（私信里那段就是）。',
+    wbOk: '「{n}」的档案写进了世界书「{b}」。',
+    wbFail: '「{n}」的档案没写进世界书（{m}）——TA 现在只活在手机里，正文还不认识 TA。',
+    wbSlow: '「{n}」的档案还没写进世界书——私信生成器脚本可能没在跑，检查一下酒馆助手脚本库。',
+    // 推名片（只在同一边的人之间：这张卡是金主对金主）
+    cardMenu: '🪪 推名片（把您手机里的一位推给 TA）',
+    cardPickT: '推谁的名片给 @{h}？只推档案，不带您和 TA 的聊天',
+    cardNone: '您的通讯录里还没有能推的人。故事里本来就有的人不用推；从别人那里注入来的，不是您的人，也不能推。',
+    cardT: '把「{n}」的名片推给 @{h}？',
+    cardB: ['推过去的是 TA 的档案：是谁、什么脾气、怎么说话。您和 TA 的聊天，一句也不带。', '@{h} 收下以后，那边的故事里也会有这个人。'],
+    cardYes: '推过去',
+    cardBig: '「{n}」的档案太长了：{k} KB，一张名片最多 {m} KB。我递不过去——也没有替您删字。',
+    cardGate: '「{n}」的档案里像是有{w}。号码、链接一律留在门外，这张名片我递不过去。',
+    cardSrvGate: '「{n}」的名片里，资料有一处像是联系方式。号码、别的软件的号一律留在门外，这张名片我递不过去。',   // v3：服务器也查名片了，被它拦下时
+    cardSent: '「{n}」的名片递过去了。',
+    cardHd: 'NAME CARD · 名片',
+    cardTake: '收下',
+    cardTaken: '已收下 · 在通讯录里',
+    cardMine: '推过去的名片',
+    cardFrom: '@{h} 引荐的',
+    cardFixed: '「{n}」是您故事里本来就有的人，这张名片用不上。',
+    cardClash: '通讯录里的「{n}」是群，或者是真人开的头。这张名片收不下。',
+    cardOk: '「{n}」进了您的通讯录（{r}）。',
+    cardRefresh: '通讯录里本来就有「{n}」：档案换成了这张名片上的，您和 TA 的聊天记录都还在。',
+    cardBad: '这张名片缺了名字，收不下。',
+    cardSide: '@{h} 递来一张名片。名片只在金主之间递，这张我没收。',   // v3：收的一方也核对边（对方不是同一边）
+    // 退出 / 撤牌 / 拉黑名单
+    quitBtn: '退出俱乐部',
+    quitT: '退出暮星俱乐部？',
+    quitB: ['您在门里的马甲、小卡、通着的线，我都替您收掉；正在和您说话的人，只会看到线断了。', '这部手机里您和别人说过的话，留不留，您定。', '想回来，随时再推门。只是要重新登记，换一个新的号。'],
+    quitKeep: '退出，对话留着',
+    quitDrop: '退出，对话也清掉',
+    quitDone: '您出门了。想回来，门还在。',
+    quitLine: '您退出了俱乐部，这条线到这里为止。',
+    offDone: '✦ 暮星俱乐部关了：首页的入口收起来了，大厅里的小卡也撤下了',
+    offFail: '大厅里没能立刻撤下您的小卡（{e}）。三分钟没报到，它自己会下去。',
+    blocksBtn: '拉黑名单',
+    blocksSub: '您请出去的人',
+    blocksEmpty: '您还没请谁出去过。',
+    blocksNote: '请出去的人看不见您，也找不到您。解除以后，您和 TA 又能在大厅里看见彼此。',
+    blocksLoading: '我去翻一下名单……',   // v3：名单改从服务器拉（整台设备共用）
+    blocksErr: '名单没拉到。',
+    blkGone: '已经出门的一位',   // v3：对方退出了、马甲也没留下
+    unblockBtn: '解除',
+    unblockT: '让 @{h} 回到您的视线？',
+    unblockB: ['之后您和这位又能在大厅里看见彼此，这位也能再向您开口。', '以前断掉的线不会自己接上。'],
+    unblockYes: '解除',
+    unblockDone: '好，@{h} 回来了。',
+    // 服务器新加的两样（11-06）：找回线、开口遇到 already 时按状态走
+    alreadyAsked: '您已经开过口了，还在等回音。我带您过去看。',
+    recovered: '这条线是我按门里的名册找回来的。之前的话存在这部手机里，已经丢了——那部分我找不回来。',
+    recoveredToast: '这部手机里的线丢过一次。我按名册找回了 {c} 条；之前说过的话，找不回来了。',
+    // ── v3（11-06 夜，服务器第三版）✎ 待红笔 ──
+    closedDefault: '暮星停业整改中。消防检查没过，什么时候重开，我另行通知。',   // 总开关关着、服务器没带那句话时
+    askRecent: '这位这会儿不在。话我替您留着，等 TA 七天。',   // 向「今天来过」的人开口
+    payNet: '没等到回音，钱我先没扣。过一会儿您再递同一笔，我按同一笔算，对方不会收两次。',   // 转账 / 送礼 / 买链接超时或断网
+  };
+  // 错误码 → S. 的话（照接口说明的错误码表；net＝HTTP 错或断网，offline＝联机全关，nosave＝认不出存档）。✎ 待红笔
+  var VESPER_ERR = {
+    bad_secret: '名册上对不上您这张卡了。我替您重新登记一次，稍后再试。',
+    banned: '这扇门，对您关上了。',
+    bad_input: '这句不合规矩——太长了，或者格式不对。改一改再递。',
+    blocked_word: '这句写不上去。号码、链接、哪个软件的号，一律留在门外。',
+    rate: '慢一点。一分钟后再递。',
+    gone: '人走了，或者线已经断了。',
+    already: '您和这位之间已经有一条线了。我带您过去。',
+    closed: '暮星停业整改中。消防检查没过，什么时候重开，我另行通知。',   // v3：服务器没带那句话时
+    no_line: '您和这位没说过话。只有说过话的人，这一状我才收。',
+    net: '信号不好，没递出去。',
+    offline: '联机全关着，这扇门打不开。',
+    nosave: '我认不出这是哪个存档。',
+  };
+  var VESPER_SIDE = { sb: '甜心', sd: '金主' };   // 小卡上「边」的标记
+  var VESPER_MY_SIDE = 'sd';                       // 这张卡是金主
+  var VESPER_INJECT_DEFAULT = true;                // 「允许对方把我注入 TA 的正文」默认开（Fan 11-06）
+  var VESPER_TICK_MS = 60000;                      // 报到（顺带看邮筒）的间隔：接口说明要求每 60 秒
+  var VESPER_FAST_MS = 20000;                      // 俱乐部页开着时：取信 + 每 40 秒刷一次大厅
+  var VESPER_LOBBY_STALE_MS = 40000;
+  var VESPER_TIMEOUT_MS = 12000;                   // 一个请求最多等多久（超时＝信号不好）
+  var VESPER_MSG_KEEP = 400;                       // 每条线本地留最近多少条（只砍条数，不砍字）
+  var VESPER_SEEN_KEEP = 3000;                     // 收信去重表留多少个 id
+  var VESPER_EXCERPT_N = 30;                       // 举报时带上最近几条
+  var VESPER_ASK_MAX = 300, VESPER_TEXT_MAX = 2000;   // 和服务器 vesper_settings 同值
+  // 余额档：直接说余额是几位数（Fan 11-06：起花名「怪怪的看不懂」）。下标＝位数
+  var VESPER_TIERS = ['', '两位数以内', '两位数以内', '三位数', '四位数', '五位数', '六位数', '七位数', '八位数', '九位数以上'];
+  // 名片一条消息的上限：服务器量的是 jsonb 转成文字后的字节数（max_body_bytes 32768，它会在冒号逗号后补空格），
+  // 这边按 UTF-8 量 JSON.stringify 的字节、留 512 字节余量。超了就整张不发、明说，不替玩家删字。
+  var VESPER_CARD_MAX = 32768 - 512;
+  var VESPER_DM_KEEP = 400;                        // 和 dm_generator 的 dm_history 存档上限同值
+  var VESPER_VOICE_MAX = 600, VESPER_VOICE_LINE = 300;   // 声线样本：挑整句（单句超过 300 字的不进样本），总长到 600 为止——不截半句
+  var VESPER_WB_WAIT_MS = 30000;                   // 等生成器写世界书的回音，过了就出声
+  // 「故事里本来就有的人」：注入起名、收名片都不许撞。通讯录名单（FIXED_ROSTER）+ 管家 + L. + 生成器 NAME_MAP 里的别名；
+  // 另外凡是 persistent 的联系人也算。这份别名表跟着 dm_generator 的 NAME_MAP 走（这张卡的固定角色：苏念、沈冰月、纪思瑶、叶知秋、林也、方屿、Akuma）
+  var VESPER_FIXED_ALIAS = ['SugarElite™', 'S.', 'L.', '念念', '念念_不忘', '冰月', '冰_', '思瑶', '瑶瑶', '小瑶_第一次', '知秋', '叶老师', '老林', '林总', '方总', '方少', '方公子',
+    'Su Nian', 'Shen Bingyue', 'Bingyue', 'Ji Siyao', 'Ye Zhiqiu', 'Lin Ye', 'Fang Yu', 'Akuma老师'];
+  // 设备上的开关、入会时间、暗号（VIEW 在文件更靠后才赋值，这里直接取 DOC.defaultView）
+  function vesperCfg() {
+    var c = {};
+    try { var raw = (DOC.defaultView || window).localStorage.getItem('sd_vesper'); if (raw) c = JSON.parse(raw) || {}; } catch (e) {}
+    var s = String(c.secret || '');
+    // saves：这台设备在哪几个存档里入过会（退出俱乐部时逐个调 vesper_quit；第三刀之前入会的老设备没有这一项，退出时至少退当前存档）
+    var sv = Array.isArray(c.saves) ? c.saves.filter(function (x) { return typeof x === 'string' && x.length >= 1 && x.length <= 200; }).slice(-50) : [];
+    // tags（刀7）：聊天 id → 这个聊天用的存档标记，只是备份——聊天变量里的 sb.vesper.tag 被清掉时，按聊天 id 认回原来的标记（找回线还能用）
+    var tg = {}, tk = (c.tags && typeof c.tags === 'object' && !Array.isArray(c.tags)) ? Object.keys(c.tags).slice(-50) : [];
+    tk.forEach(function (k) { var t = c.tags[k]; if (k.length <= 200 && typeof t === 'string' && t.length >= 1 && t.length <= 200) tg[k] = t; });
+    return { on: !!c.on, joinedAt: c.joinedAt || '', secret: /^[A-Za-z0-9_-]{32,128}$/.test(s) ? s : '', saves: sv, tags: tg };
+  }
+  function vesperRememberSave(save, cid) {   // cid：入会那一刻的聊天 id（请求回来时可能已经换了聊天）
+    var c = vesperCfg(), ch = false;
+    if (save && c.saves.indexOf(save) === -1) { c.saves.push(save); ch = true; }
+    if (save && cid && c.tags[cid] !== save) { c.tags[cid] = save; ch = true; }
+    if (ch) saveVesperCfg(c);
+  }
+  function saveVesperCfg(c) {
+    try { (DOC.defaultView || window).localStorage.setItem('sd_vesper', JSON.stringify(c)); return true; }
+    catch (e) { toast('error', '暮星俱乐部的开关没存上：' + ((e && e.message) || e)); return false; }
+  }
+  function vesperNewSecret() {
+    var b = new Uint8Array(32), s = '';
+    try { (window.crypto || (DOC.defaultView || window).crypto).getRandomValues(b); }
+    catch (e) { for (var i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256); }
+    for (var j = 0; j < b.length; j++) s += String.fromCharCode(b[j]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  // 当前聊天 id（聊天文件名）。刀7 起它不再是存档标记，只用来认老存档、给 tags 备份当钥匙
+  function vesperChatId() {
+    var id = '';
+    try { if (typeof SillyTavern !== 'undefined' && SillyTavern.getCurrentChatId) id = SillyTavern.getCurrentChatId(); } catch (e) {}
+    if (!id) { try { var st = (DOC.defaultView || window).SillyTavern; if (st && st.getContext) id = st.getContext().chatId; } catch (e) {} }
+    id = String(id || '');
+    return id.length >= 1 && id.length <= 200 ? id : '';
+  }
+  // ── 存档标记（刀7，11-07 实测：/renamechat 改名后自动多出一个新会员）──
+  // 以前＝聊天 id：一改名、建分支，下一次报到就当成新存档重新入会。现在＝入会时生成的随机串，存进聊天变量 sb.vesper.tag，
+  // 之后一律用它。改名、分支、检查点都带着变量走，身份就跟着走（分支＝同一个会员，有意的）。字段只加不改。
+  // 兼容：已经入过会的老存档（没有 tag、这台设备在这个聊天 id 上 join 成功过＝saves 里有它）→ tag 就是当时的聊天 id（和服务器记的一致），不重新入会。
+  // 变量里的 tag 被清掉时，按设备上的 tags 备份认回来（同一个聊天 id 才认）。
+  // 认不出就是空串（这时俱乐部不发任何请求）。只读，不写——要落盘走 vesperEnsureTag。
+  function vesperSaveIdOf(sb) {
+    var v = sb && sb.vesper, t = (v && typeof v.tag === 'string') ? v.tag : '';
+    if (t && t.length <= 200) return t;
+    if (!sb) return '';
+    var cid = vesperChatId(); if (!cid) return '';   // 下面两条都是「这台设备在这个聊天上 join 成功过」才认，不看小卡写没写（清过变量的存档也要能找回线）
+    var c = vesperCfg();
+    if (c.tags[cid]) return c.tags[cid];
+    return c.saves.indexOf(cid) !== -1 ? cid : '';
+  }
+  function vesperSaveId() { return vesperSaveIdOf(state); }
+  // 要用标记时（入会、报到、进俱乐部页）：老存档把认出来的标记写回变量；小卡写好了还没有标记＝生成一个新的。没写小卡不生成。
+  function vesperEnsureTag() {
+    if (!state) return '';
+    var d = vesperData(), id = vesperSaveId();
+    if (id) { if (d.tag !== id) vsWrite(function (vs) { if (!vs.tag) vs.tag = id; }); return id; }
+    if (!String(d.who || '').trim()) return '';
+    var t = 'v' + vesperNonce();   // 18 字节随机 → 25 位
+    vsWrite(function (vs) { if (!vs.tag) vs.tag = t; });
+    return vesperSaveId();
+  }
+  function vesperOn() { return vesperCfg().on; }
+  // 刀9（真酒馆复测）：设置里开 / 关俱乐部以后，首页（藏在设置页后面）当场重画一遍——回首页不管走哪条路，暮星入口都已经对了
+  function vesperHomeSync() { try { if (state) { if (!isBanned(onlineCfg().token)) render(); } } catch (e) {} }
+  function vesperData() { var v = state && state.vesper; return (v && typeof v === 'object') ? v : {}; }
+  function vesperInjectOn() { var d = vesperData(); return d.inject == null ? VESPER_INJECT_DEFAULT : !!d.inject; }
+  function vesperTier(bal) {
+    var b = Math.floor(Number(bal) || 0);
+    if (b < 0) return '负数';
+    var n = String(b).length;
+    return VESPER_TIERS[Math.min(n, VESPER_TIERS.length - 1)];
+  }
+  // 慷慨榜名次：读服务器真人榜（和「Sugar Daddy 排行榜」里真人那几行同一份 _rank：sd_rank，按累计出手从高到低）。
+  // 只认真人榜不认本地合并榜：本地榜里混着 AI 现编的名字、而且「你」那一行永远在，别人看了没意义。
+  function vesperRankNum() {
+    var c = onlineCfg();
+    if (c.off || !_rank || !c.token) return null;
+    for (var i = 0; i < _rank.length; i++) { if (_rank[i] && _rank[i].token === c.token) return i + 1; }
+    return null;
+  }
+  function vesperRank() {
+    var c = onlineCfg();
+    if (c.off) return '联机关着，看不到榜';
+    if (!_rank) return _rankErr ? '榜单没拉到' : '榜单拉取中…';
+    var n = vesperRankNum();
+    return n ? '第 ' + n + ' 位' : '没上榜';
+  }
+  // 白嫖榜名次：和慷慨榜下面那张「白嫖榜」同一个算法（saltScore；5 位传奇 + 你，并列时你排在后面）。
+  // 垫底＝那张榜上 Akuma 说「这个榜不收你」＝没上榜。只读不写（写 sb.salt 是榜单页的事）。
+  function vesperSaltRank() {
+    if (!state) return null;
+    var me = saltScore(myMsgCount(), Math.round(totalSpent())), r = 1;
+    for (var i = 0; i < SALT_NPC.length; i++) if (saltScore(SALT_NPC[i].n, SALT_NPC[i].spent) >= me) r++;
+    return r > SALT_NPC.length ? null : r;
+  }
+  // 服务器的小卡只收 who/line/tier/rank/skin/story 六样（别的字段会被丢掉，接口说明写死的），
+  // 所以白嫖榜名次跟在余额档后面一起走 tier：「六位数 · 白嫖榜第 2 位」（≤24 字）。这张卡读回来再拆开显示。
+  var VESPER_SALT_SEP = ' · 白嫖榜';
+  function vesperTierOut(bal) { var s = vesperSaltRank(); return vesperTier(bal) + (s ? VESPER_SALT_SEP + '第 ' + s + ' 位' : ''); }
+  function vesperSplitTier(t) {
+    t = String(t || ''); var i = t.indexOf(VESPER_SALT_SEP);
+    return i === -1 ? { tier: t, salt: '' } : { tier: t.slice(0, i), salt: t.slice(i + VESPER_SALT_SEP.length) };
+  }
+  // 词闸：微信号 / vx / QQ / 手机号 / 邮箱 / 网址 / 常见谐音。命中返回是哪一类，没命中返回空串
+  var VESPER_GATE_WORDS = [
+    ['微信', /(微信|威信|薇信|徽信|维信|危信|v信|卫星号|绿泡泡|vx|wx|weixin|wechat|vchat)/],
+    ['QQ', /(qq|扣扣|抠抠|企鹅号|q号)/],
+    ['别的联系方式', /(telegram|电报号|discord|dc号|小红书号|抖音号|微博号|ins号|ig号|line号|whatsapp|手机号|电话号|联系方式)/],
+  ];
+  var VESPER_CN_DIGIT = { '零': '0', '〇': '0', '洞': '0', '一': '1', '壹': '1', '幺': '1', '二': '2', '贰': '2', '两': '2', '三': '3', '叁': '3', '四': '4', '肆': '4', '五': '5', '伍': '5', '六': '6', '陆': '6', '七': '7', '柒': '7', '八': '8', '捌': '8', '九': '9', '玖': '9' };
+  // hard=true（推名片用）：只认真号码、邮箱、网址，不认「微信」「QQ」这类词——角色档案里写「只用微信语音」是人设，不是留联系方式
+  function vesperGate(s, hard) {
+    var raw = String(s == null ? '' : s);
+    if (!raw.trim()) return '';
+    var n = raw; try { n = raw.normalize('NFKC'); } catch (e) {}
+    n = n.toLowerCase();
+    // 字和字之间塞空格/符号的写法（「v x」「微 信」「q-q」）先压实再认
+    var tight = n.replace(/[\s\-—_·•*,，、.。|\/\\~～'"‘’“”()（）\[\]【】<>《》]+/g, '');
+    if (!hard) for (var i = 0; i < VESPER_GATE_WORDS.length; i++) if (VESPER_GATE_WORDS[i][1].test(tight)) return VESPER_GATE_WORDS[i][0];
+    if (/[a-z0-9._%+\-]+\s*(@|艾特|\(at\)|\[at\])\s*[a-z0-9\-]+\s*(\.|点|。)\s*[a-z]{2,}/.test(n)) return '邮箱';
+    if (/(https?:\/\/|www\.|t\.me\/|[a-z0-9\-]{2,}\s*(\.|点|。)\s*(com|cn|net|org|io|me|xyz|top|cc|co|app|vip|link|site|info|tv|ly|gg)(?![a-z]))/.test(n)) return '网址';
+    // 号码：中文数字（含「幺」「洞」）换成阿拉伯数字，空格和横杠去掉；逗号和小数点留着，免得「1,000,000」这种钱数被当号码
+    var digits = n.replace(/[零〇洞一壹幺二贰两三叁四肆五伍六陆七柒八捌九玖]/g, function (ch) { return VESPER_CN_DIGIT[ch]; }).replace(/[\s\-—_·]+/g, '');
+    if (/1[3-9]\d{9}/.test(digits)) return '手机号';
+    // v3：服务器连名片也查了，用的是「QQ / 微信 + 一串号」这两条——名片（hard）也先照它查一遍，别让玩家点了才被拦。
+    // 只认「词 + 号」连着写（隔 0–4 个别的字），「只用微信语音约人」这种人设不拦
+    var dz = digits.replace(/[­᠎​-‏‪-‮⁠-⁤﻿]/g, '').replace(/[.,，。、\/|()（）【】+]/g, '');
+    if (/(qq|扣扣|企鹅号|q号)[^0-9]{0,4}[0-9]{5,11}/.test(dz)) return 'QQ';
+    if (/(微信|威信|薇信|徽信|weixin|wechat|vx|wx|v信|加v|加微|vchat)[^a-z0-9]{0,4}[a-z0-9]{5,}/.test(dz)) return '微信';
+    if (!hard && /\d{8,}/.test(digits)) return '号码';   // 名片档案里「身价 50000000」这种钱数不拦
+    return '';
+  }
+
+  var _ves ={ editing: false, who: '', line: '', busy: false, nonce: 0, timer: 0 };
+  // 俱乐部的运行时状态（不落盘）：大厅名单、入会签名（小卡没变就不重复 join）、各种忙锁、除名
+  // moreRounds：取信「还有更多」时连着取的轮数（防服务器一直说 more 时死循环）；wbWait：等世界书回音的定时器（卸载时清）
+  // linesTried：这次加载里哪些存档已经问过「我有哪些线」（找回线一个存档一次加载最多问一次）
+  var _vl = { people: null, err: '', lobbyBusy: false, lastLobby: 0, joinedSig: '', joining: null, fetching: null, fetchAgain: false,
+    sending: false, banned: false, banReason: '', netWarned: 0, askTo: null, moreRounds: 0, wbWait: {}, injecting: false, quitting: false, linesTried: {},
+    // v3：recent＝大厅「今天来过」；closed / closedAt / closedMsg＝总开关关着（门关了）；blocks＝拉黑名单页从服务器拉的那份（null＝还没拉 / 没拉到）
+    recent: null, closed: false, closedAt: 0, closedMsg: '', blocks: null, blocksErr: '', blocksBusy: false };
+  var _vsTimer = 0, _vsFast = 0, _vsBoot = 0;   // 定时器句柄：脚本卸载（pagehide）时在 sbSelfCleanup 里清掉
+  // 报到 / 取信定时器：开关打开才起，关掉就停（关着＝和原来一样，连空转的定时器都没有）
+  function vesperTimers(on) {
+    if (on) {
+      if (!_vsTimer) _vsTimer = setInterval(function () { try { vesperTick(); } catch (e) {} }, VESPER_TICK_MS);
+      if (!_vsFast) _vsFast = setInterval(function () { try { vesperFastTick(); } catch (e) {} }, VESPER_FAST_MS);
+    } else {
+      clearInterval(_vsTimer); clearInterval(_vsFast); _vsTimer = 0; _vsFast = 0;
+    }
+    vesperVisWatch(on);
+  }
+  // ── 补漏（对照能工智人第 8、10 条）：酒馆标签页切到后台时 ──
+  // ① 来了新消息：闪酒馆标签页的标题（改的是 parent.document.title），回到前台立刻还原成闪之前的那个值；
+  // ② 连续切走约 5 分钟：不再报到、不再刷大厅（大厅里就不再算在场）；回到前台立刻报到并补收一次。
+  //    刀8：收信不停——报到那一拍照走，每 VESPER_AWAY_MAIL_MS（按拍数算）取一次信。
+  // 只在俱乐部开关开着时挂监听（vesperTimers 跟着开关走），关着＝和没有这个功能时一样。
+  var VESPER_AWAY_MS = 5 * 60000;
+  var VESPER_AWAY_MAIL_MS = 3 * 60000;   // 刀8：切走太久时收信不停，改成每 3 分钟取一次（来信照样闪标题、亮红点）；取信不改服务器的 last_seen，不算在场
+  var VESPER_FLASH_MS = 1200;
+  var VESPER_TITLE_ASK = '✦ 有人想见您', VESPER_TITLE_MAIL = '✦ 暮星有人留话';
+  var _vsVis = { on: false, hiddenAt: 0, flashT: 0, orig: null, text: '', phase: false, awayTicks: 0 };   // awayTicks：切走太久以后过了几拍报到
+  function vesperHidden() { try { return !!(DOC.hidden || DOC.visibilityState === 'hidden'); } catch (e) { return false; } }
+  function vesperAway() { return vesperHidden() && _vsVis.hiddenAt > 0 && Date.now() - _vsVis.hiddenAt >= VESPER_AWAY_MS; }
+  function vesperVisWatch(on) {
+    if (on && !_vsVis.on) {
+      try { DOC.addEventListener('visibilitychange', vesperOnVis); _vsVis.on = true; } catch (e) {}
+      _vsVis.hiddenAt = vesperHidden() ? Date.now() : 0;
+    } else if (!on && _vsVis.on) {
+      try { DOC.removeEventListener('visibilitychange', vesperOnVis); } catch (e) {}
+      _vsVis.on = false; _vsVis.hiddenAt = 0;
+      vesperFlashStop();
+    }
+  }
+  function vesperOnVis() {
+    if (vesperHidden()) { if (!_vsVis.hiddenAt) _vsVis.hiddenAt = Date.now(); return; }
+    var wasAway = _vsVis.hiddenAt > 0 && Date.now() - _vsVis.hiddenAt >= VESPER_AWAY_MS;
+    _vsVis.hiddenAt = 0; _vsVis.awayTicks = 0;
+    vesperFlashStop();
+    if (wasAway) { try { vesperTick(true); } catch (e) {} }   // 回来了：马上报到，不管邮筒报几封都补收一次
+  }
+  function vesperFlash(text) {
+    if (!vesperHidden()) return;
+    if (_vsVis.flashT) { if (text === VESPER_TITLE_ASK) _vsVis.text = text; return; }   // 已经在闪：有人想见＞留话
+    _vsVis.orig = DOC.title; _vsVis.text = text; _vsVis.phase = false;
+    var step = function () { _vsVis.phase = !_vsVis.phase; try { DOC.title = _vsVis.phase ? _vsVis.text : _vsVis.orig; } catch (e) {} };
+    step();
+    _vsVis.flashT = setInterval(step, VESPER_FLASH_MS);
+  }
+  function vesperFlashStop() {
+    if (!_vsVis.flashT) return;
+    clearInterval(_vsVis.flashT); _vsVis.flashT = 0;
+    try { DOC.title = _vsVis.orig; } catch (e) {}
+    _vsVis.orig = null; _vsVis.phase = false;
+  }
+  // 编辑中要重画页面之前，先把框里打了一半的字收回来（不然重画就冲掉了）
+  function vesperGrab() {
+    var w = chatEl.querySelector('#sd-vs-who'), l = chatEl.querySelector('#sd-vs-line');
+    if (w) _ves.who = w.value;
+    if (l) _ves.line = l.value;
+  }
+
+  // ── 服务器 ──
+  // 调法：POST {服务器}/rest/v1/rpc/函数名（GET 会把暗号拼进 URL）。服务器地址和 key 和榜单同一处（onlineCfg）。
+  // 永远 resolve：成功 {ok:true,...}；失败 {ok:false, err:码}。HTTP 错、断网、超时、回包不是对象 → err:'net'。
+  function vesperRpc(fn, args) {
+    var c = onlineCfg();
+    if (c.off) return Promise.resolve({ ok: false, err: 'offline' });
+    var url = normSrvUrl(c.server) || DEFAULT_SERVER;
+    var key = c.server ? (c.key || DEFAULT_KEY) : DEFAULT_KEY;
+    var ctl = null; try { ctl = new AbortController(); } catch (e) {}
+    var to = setTimeout(function () { try { if (ctl) ctl.abort(); } catch (e) {} }, VESPER_TIMEOUT_MS);
+    var p;
+    try {
+      p = fetch(url + '/rest/v1/rpc/' + fn, {
+        method: 'POST',
+        headers: { 'apikey': key, 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+        body: JSON.stringify(args || {}), signal: ctl ? ctl.signal : undefined,
+      });
+    } catch (e) { p = Promise.reject(e); }
+    return p.then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) {
+        if (!j || typeof j !== 'object' || Array.isArray(j)) return { ok: false, err: 'net' };
+        if (!j.ok && !j.err) j.err = 'net';
+        return j;
+      }, function () { return { ok: false, err: 'net' }; })
+      .then(function (j) { clearTimeout(to); if (j.ok) _vl.netWarned = 0; if (j.err === 'closed') vesperSetClosed(j.msg); return j; });
+  }
+  function vesperBase() { return { p_secret: vesperCfg().secret, p_save: vesperSaveId() }; }
+  // 失败一律出声（S. 的话）；有几个码还要顺手做事
+  function vesperFail(r, lineId, quietNet) {
+    var e = (r && r.err) || 'net';
+    if (e === 'banned') { vesperCheckStatus(); }
+    if (e === 'bad_secret') { _vl.joinedSig = ''; }
+    if (e === 'gone' && lineId) vesperMarkClosed(lineId, VESPER_COPY.closed);
+    if (e === 'closed') {   // v3：门关了——大厅那一块换成 S. 的话（vesperRpc 里已经记下）；后台的报到 / 取信不出声，玩家点的才说一声
+      if (quietNet) return;
+      toast('warning', '✦ S.：' + vesperClosedText());
+      return;
+    }
+    if (e === 'net' && quietNet) {   // 后台报到/取信断网：一次断网只说一次，别每分钟弹
+      if (_vl.netWarned) return;
+      _vl.netWarned = Date.now();
+    }
+    toast(e === 'net' ? 'error' : 'warning', '✦ S.：' + (VESPER_ERR[e] || VESPER_ERR.net));
+  }
+  function vesperReady() {
+    // 刀7：标记放在最后取（vesperEnsureTag 可能要写变量：只在开关开着、小卡写好、联机开着的时候才写）
+    return vesperOn() && !_vl.banned && !!vesperCfg().secret && !!state && !!String(vesperData().who || '').trim() && !onlineCfg().off && !!onlineCfg().handle && !!vesperEnsureTag();
+  }
+  function vesperSkinOk(k) { k = String(k || ''); return (/^[A-Za-z0-9_-]{1,32}$/.test(k) && SKIN_BY[k]) ? k : ''; }
+  // 递出去的小卡：演的是谁、今晚一句、余额几位数（＋白嫖榜名次）、慷慨榜第几、我用的气泡皮肤、允许被注入正文
+  function vesperCardOut() {
+    var d = vesperData(), bal = (state && state.wallet && state.wallet.balance) || 0;
+    return { who: String(d.who || '').trim(), line: String(d.line || '').trim(), tier: vesperTierOut(bal), rank: vesperRankNum(), skin: skinsOf().active || '', story: vesperInjectOn() };
+  }
+  // 入会 / 更新小卡：小卡、马甲、挂牌、存档有一样变了才调（同一次加载里没变就不重复打）
+  function vesperJoin(force) {
+    var cfg = vesperCfg(), d = vesperData(), oc = onlineCfg();
+    if (!cfg.secret || !String(d.who || '').trim() || !oc.handle || oc.off || !vesperOn()) return Promise.resolve(false);
+    var save = vesperEnsureTag(), cid = vesperChatId();   // 刀7：入会用存档标记（没有就在这一刻生成，存进 sb.vesper.tag）
+    if (!save) return Promise.resolve(false);
+    // 刀10：去掉「只逛不挂牌」——开关开＝人在门里＝小卡挂着；不想被看见就关开关。老存档 sb.vesper 里的 browse 字段留着（字段名只加不改）但不再读
+    var card = vesperCardOut(), listed = true, handle = String(oc.handle).trim().slice(0, 24);
+    var sig = JSON.stringify([save, handle, card, listed]);
+    if (!force && _vl.joinedSig === sig) return Promise.resolve(true);
+    if (_vl.joining) return _vl.joining;
+    _vl.joining = vesperRpc('vesper_join', { p_secret: cfg.secret, p_save: save, p_side: VESPER_MY_SIDE, p_handle: handle, p_card: card, p_listed: listed, p_joined_at: cfg.joinedAt || new Date().toISOString() })
+      .then(function (r) {
+        _vl.joining = null;
+        if (r.ok) { if (vesperSaveId() === save) _vl.joinedSig = sig; vesperRememberSave(save, cid); return true; }
+        vesperFail(r, null, true);
+        return false;
+      });
+    return _vl.joining;
+  }
+  // 每分钟一次：报到；邮筒里有信就取
+  // wake＝标签页切走很久后回到前台：报到完不管邮筒报几封，都补收一次
+  function vesperTick(wake) {
+    if (_vl.closed) { vesperClosedTick(); return; }   // v3：门关着＝不报到、不取信；隔一阵问一次 vesper_status，开门了自动恢复
+    if (!vesperReady()) return;
+    if (!wake && vesperAway()) {   // 标签页切走约 5 分钟了：不报到（不算在场）；刀8：取信改成每 3 分钟一次
+      var every = Math.max(1, Math.round(VESPER_AWAY_MAIL_MS / VESPER_TICK_MS));
+      if (++_vsVis.awayTicks % every === 0) vesperFetch();
+      return;
+    }
+    _vsVis.awayTicks = 0;
+    vesperJoin().then(function (ok) {
+      if (!ok || !vesperReady()) return;
+      return vesperRpc('vesper_ping', vesperBase()).then(function (r) {
+        if (!r.ok) { vesperFail(r, null, true); return; }
+        if (r.mail > 0 || wake) vesperFetch();
+      });
+    });
+  }
+  // 俱乐部页开着时：更勤地取信；大厅页再隔一阵刷一次名单
+  function vesperFastTick() {
+    if (!vesperReady() || !currentPage || vesperAway() || _vl.closed) return;
+    if (currentPage === 'vesper' || currentPage.indexOf('vesper:line:') === 0) vesperFetch();
+    if (currentPage === 'vesper' && !_ves.editing) vesperRefreshLobby(false);
+  }
+  function vesperRefreshLobby(force) {
+    if (!vesperReady() || _vl.closed) return;
+    if (_vl.lobbyBusy) return;
+    if (!force && (vesperAway() || Date.now() - _vl.lastLobby < VESPER_LOBBY_STALE_MS)) return;
+    _vl.lobbyBusy = true; _vl.lastLobby = Date.now();
+    var save0 = vesperSaveId();   // 刀7：拉的途中换了聊天 → 回来的名单不往新聊天里放
+    vesperJoin().then(function (ok) {
+      if (!ok || vesperSaveId() !== save0 || !vesperReady()) return null;
+      return vesperRpc('vesper_ping', vesperBase()).then(function () { vesperFetch(); return vesperSaveId() === save0 ? vesperRpc('vesper_lobby', vesperBase()) : null; });
+    }).then(function (r) {
+      if (vesperSaveId() !== save0) return;   // 换聊天时 onChatChanged 已经把 lobbyBusy 放了
+      _vl.lobbyBusy = false;
+      if (r) {
+        if (r.ok) { _vl.people = Array.isArray(r.people) ? r.people : []; _vl.recent = Array.isArray(r.recent) ? r.recent : []; _vl.err = ''; vesperSyncFaces(_vl.people.concat(_vl.recent)); }
+        else { _vl.err = r.err || 'net'; vesperFail(r, null, !force); }
+      }
+      if (currentPage === 'vesper' && !_ves.editing) openVesper();
+    });
+  }
+  // 取信 → 先入账并记下 id（同一次写）→ 读回来确认写进去了 → 签收
+  // 服务器一次最多给 fetch_limit 封、带 more=true：签收成功就马上接着取，直到取完（最多连取 50 轮，防服务器一直说 more）。
+  // 签收失败不接着取——没签收的信下一轮还会原样回来，再取只会白跑。
+  var VESPER_MORE_ROUNDS = 50;
+  function vesperFetch() {
+    if (!vesperReady() || _vl.closed) return Promise.resolve();
+    if (_vl.fetching) { _vl.fetchAgain = true; return _vl.fetching; }
+    var save = vesperSaveId();
+    var more = false;
+    var fin = function () {
+      _vl.fetching = null;
+      if (more && _vl.moreRounds < VESPER_MORE_ROUNDS) { _vl.moreRounds++; _vl.fetchAgain = false; vesperFetch(); return; }
+      _vl.moreRounds = 0;
+      if (_vl.fetchAgain) { _vl.fetchAgain = false; vesperFetch(); }
+    };
+    _vl.fetching = vesperRpc('vesper_fetch', vesperBase()).then(function (r) {
+      if (!r.ok) { vesperFail(r, null, true); return; }
+      var mail = Array.isArray(r.mail) ? r.mail : [];
+      if (!mail.length) return;
+      return vesperApplyMail(mail, save).then(function (ids) {
+        if (!ids.length) return;
+        return vesperRpc('vesper_ack', { p_secret: vesperCfg().secret, p_save: save, p_ids: ids }).then(function (a) {
+          if (a.ok && r.more === true) more = true;
+          else if (!a.ok) vesperFail(a, null, true);
+        });
+      });
+    }).then(fin, fin);
+    return _vl.fetching;
+  }
+  function vesperClock(ts) { var d = new Date(ts || Date.now()); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  function vesperItemClean(it) {
+    it = (it && typeof it === 'object') ? it : {};
+    var img = String(it.img || '');
+    return { name: String(it.name || '').trim().slice(0, 200) || '一件礼物', price: Math.max(0, Math.round(Number(it.price) || 0)), img: /^https:\/\//.test(img) ? img.slice(0, 500) : '' };
+  }
+  function vesperNewLine(vs, lid, from) {
+    if (!vs.lines || typeof vs.lines !== 'object') vs.lines = {};
+    var L = vs.lines[lid];
+    if (!L) L = vs.lines[lid] = { id: lid, with: { id: from || '', side: '', handle: '', card: {} }, status: 'open', mine: false, msgs: [], unread: 0, at: Date.now() };
+    if (!Array.isArray(L.msgs)) L.msgs = [];
+    return L;
+  }
+  // 一封信落到存档里（在 SBupdate 回调里跑；sb/vs 是变量那一份）
+  function vesperApplyOne(sb, vs, m, fresh) {
+    var lid = String(m.line), from = String(m.from || ''), kind = String(m.kind || '');
+    var b = (m.body && typeof m.body === 'object' && !Array.isArray(m.body)) ? m.body : {};
+    if (Array.isArray(vs.blocked) && vs.blocked.indexOf(from) !== -1) return;   // 我拉黑过的人：照收照签，不落地
+    // system（第三刀）：对方改了小卡（比如关掉「允许被注入」）时发来的通知。只换掉我这边存的对方小卡，不算一条消息、不亮红点；
+    // 线在我这边已经没了（拉黑、不见）就什么也不做，别凭一封通知凭空长出一条线
+    if (kind === 'system') {
+      var Ls = vs.lines && vs.lines[lid];
+      if (Ls && b.ev === 'card' && b.card && typeof b.card === 'object' && !Array.isArray(b.card) && Ls.with && Ls.with.id === from) {
+        Ls.with.card = vesperFaceCard(b.card);
+        fresh.push({ kind: kind, line: lid, handle: '', quiet: true });   // 只为让开着的对话页重画（按钮跟着出现 / 消失），不提示、不亮红点
+      }
+      return;
+    }
+    // nonce（补漏，两张卡同一约定）：对方没收到服务器回音、重试了同一笔＝两封信、同一个 nonce。按「这条线 + nonce」只认第一封，
+    // 后来的照收照签、不落地（不入账、不进衣橱、不多一条消息）。没有 nonce 的信照旧只按信的编号去重。sb.vesper.nonces 只加不改。
+    var nk = (kind !== 'ask' && kind !== 'open' && kind !== 'closed' && vesperNonceOk(b.nonce)) ? lid + ':' + b.nonce : '';
+    if (nk) {
+      if (!Array.isArray(vs.nonces)) vs.nonces = [];
+      if (vs.nonces.indexOf(nk) !== -1) return;
+      vs.nonces.push(nk);
+      if (vs.nonces.length > VESPER_SEEN_KEEP) vs.nonces = vs.nonces.slice(-VESPER_SEEN_KEEP);
+    }
+    var L = vesperNewLine(vs, lid, from);
+    var at = Date.parse(m.at) || Date.now();
+    var mk = function (o) { o.at = at; o.time = vesperClock(at); o.mid = Number(m.id); return o; };
+    if (b.from && typeof b.from === 'object' && b.from.id) L.with = b.from;   // 对方小卡全文（含「允许注入正文」story）留着：注入正文要用
+    var h = (L.with && L.with.handle) || '';
+    if (kind !== 'ask' && kind !== 'closed' && L.status === 'asking') L.status = 'open';
+    if (kind === 'ask') { L.status = 'asked_me'; L.mine = false; L.first = String(b.text || ''); L.msgs.push(mk({ k: 'text', me: false, text: L.first })); }
+    else if (kind === 'open') { L.status = 'open'; L.msgs.push(mk({ k: 'sys', text: VESPER_COPY.opened })); }
+    else if (kind === 'closed') { L.status = 'closed'; L.msgs.push(mk({ k: 'sys', text: VESPER_COPY.closed })); }
+    else if (kind === 'text') { L.msgs.push(mk({ k: 'text', me: false, text: String(b.text || ''), skin: String(b.skin || '') })); }
+    else if (kind === 'transfer') {
+      var amt = Math.round(Number(b.amount));
+      if (!(amt > 0) || amt > 1e12) L.msgs.push(mk({ k: 'sys', text: VESPER_COPY.badMoney }));
+      else {
+        if (!sb.wallet) sb.wallet = { balance: 0, bills: [], transactions: [] };
+        var w = sb.wallet;
+        w.balance = (w.balance || 0) + amt;
+        var tx = { direction: '+', amount: amt, counterparty: '俱乐部 · @' + h + ' 转来', channel: '俱乐部', note: '', time: nowT() };
+        if (!Array.isArray(w.transactions)) w.transactions = [];
+        w.transactions.push(tx);
+        if (w.transactions.length > 20) w.transactions = w.transactions.slice(-20);
+        if (!Array.isArray(w.allTransactions)) w.allTransactions = [];
+        w.allTransactions.push(Object.assign({ id: 'vs' + m.id, gameDay: (sb.game && sb.game.day) || 1, src: 'vs' + m.id }, tx));
+        if (w.allTransactions.length > 500) w.allTransactions = w.allTransactions.slice(-500);
+        L.msgs.push(mk({ k: 'transfer', me: false, amount: amt }));
+      }
+    }
+    else if (kind === 'gift') {
+      var it = vesperItemClean(b.item);
+      if (!Array.isArray(sb.closet)) sb.closet = [];
+      sb.closet.push({ name: it.name, price: it.price, to: '', from: '俱乐部 · @' + h, img: it.img, time: nowT(), gameDay: (sb.game && sb.game.day) || 1 });   // to 为空＝私信 ＋「送TA买好没送的」里看得到
+      if (sb.closet.length > 60) sb.closet = sb.closet.slice(-60);
+      L.msgs.push(mk({ k: 'gift', me: false, item: it, forLink: String(b.forLink || '') }));
+      if (b.forLink) for (var i = 0; i < L.msgs.length; i++) { var x = L.msgs[i]; if (x.k === 'gift_link' && x.me && x.lid === String(b.forLink)) x.bought = true; }
+    }
+    else if (kind === 'gift_link') { L.msgs.push(mk({ k: 'gift_link', me: false, item: vesperItemClean(b.item), lid: String(b.lid || m.id), bought: false })); }
+    // 名片只在同一边的人之间递（发的一方 ➕ 菜单里限制了）。v3：收的一方也核对——对方不是金主（或者认不出是哪一边）就不收，只留一行说明
+    else if (kind === 'card' && !(L.with && L.with.side === VESPER_MY_SIDE)) { L.msgs.push(mk({ k: 'sys', text: VESPER_COPY.cardSide.replace('{h}', h), kind: kind })); }
+    else if (kind === 'card' && vesperCardClean(b.card)) { L.msgs.push(mk({ k: 'card', me: false, card: vesperCardClean(b.card), taken: '' })); }   // 名片：等玩家点「收下」
+    else { L.msgs.push(mk({ k: 'sys', text: VESPER_COPY.unknownKind, kind: kind, raw: b })); }   // 认不得的（含缺名字的名片）原样留着
+    if (L.msgs.length > VESPER_MSG_KEEP) L.msgs = L.msgs.slice(-VESPER_MSG_KEEP);
+    L.unread = (L.unread || 0) + 1; L.at = at;
+    fresh.push({ kind: kind, line: lid, handle: h });
+  }
+  function vesperApplyMail(mail, save) {
+    var fresh = [], wrote = false;
+    var ids = mail.map(function (x) { return Number(x && x.id); }).filter(function (x) { return isFinite(x) && x > 0; });
+    return SBupdate(function (v) {
+      if (!v || !v.sb || vesperSaveIdOf(v.sb) !== save) return v;   // 中途换了存档（刀7：按要写进去的那份变量里的标记认）：这批信不落、不签收，下次在对的存档里再取
+      var vs = v.sb.vesper; if (!vs || typeof vs !== 'object') return v;
+      if (!Array.isArray(vs.seen)) vs.seen = [];
+      var seen = {}; for (var i = 0; i < vs.seen.length; i++) seen[vs.seen[i]] = 1;
+      for (var j = 0; j < mail.length; j++) {
+        var m = mail[j], id = Number(m && m.id);
+        if (!(id > 0) || seen[id]) continue;   // 同一封信再取到：不再入账
+        vesperApplyOne(v.sb, vs, m, fresh);
+        vs.seen.push(id); seen[id] = 1;
+      }
+      if (vs.seen.length > VESPER_SEEN_KEEP) vs.seen = vs.seen.slice(-VESPER_SEEN_KEEP);
+      wrote = true;
+      return v;
+    }).then(function () {
+      if (!wrote) return [];
+      var v2 = SBgetVars(), s2 = (v2 && v2.sb && v2.sb.vesper && v2.sb.vesper.seen) || [];
+      var okIds = ids.filter(function (id) { return s2.indexOf(id) !== -1; });   // 读回来确认真写进去了才签收
+      if (fresh.length) { SBemit('sb_updated'); vesperNotify(fresh.filter(function (f) { return !f.quiet; })); }
+      return okIds;
+    });
+  }
+  // live＝直接读聊天变量（刚落地的信），不读镜像 state：收信那一刻镜像还是旧的，要等下一拍 sb_updated 才换（见 vesperNotify）
+  function vesperUnread(live) {
+    if (!vesperOn()) return 0;
+    var src = state && state.vesper;
+    if (live) { var lv = SBgetVars(); src = lv && lv.sb && lv.sb.vesper; }
+    if (!src || !src.lines) return 0;
+    var n = 0, ls = src.lines, open = vesperOpenLineId();
+    for (var k in ls) { if (ls.hasOwnProperty(k) && ls[k] && k !== open) n += ls[k].unread || 0; }
+    return n;
+  }
+  function vesperOpenLineId() { return (currentPage && currentPage.indexOf('vesper:line:') === 0 && chatEl.style.display !== 'none') ? currentPage.slice(12) : null; }
+  function vesperNotify(fresh) {
+    var loud = fresh.filter(function (f) { return !f.quiet; });
+    if (loud.length && vesperHidden()) vesperFlash(loud.some(function (f) { return f.kind === 'ask'; }) ? VESPER_TITLE_ASK : VESPER_TITLE_MAIL);   // 酒馆在后台：闪标题（开着的那条线来信也算——人不在屏幕前）
+    var open = vesperOpenLineId();
+    var others = fresh.filter(function (f) { return f.line !== open && !f.quiet; });
+    if (!others.length) return;
+    var ask = null; for (var i = 0; i < others.length; i++) if (others[i].kind === 'ask') { ask = others[i]; break; }
+    var t = ask ? VESPER_COPY.askIn.replace('{h}', ask.handle || '') : VESPER_COPY.mailHint;
+    toast('info', '✦ S.：' + t);
+    setStatus('✦ ' + (ask ? '有人想见您' : VESPER_COPY.mailHint));
+    try { triggerVibration(); } catch (e) {}
+    // 第 11 项（偶发：回来不在对话页时悬浮球没亮）：这里跑的时候信已经写进聊天变量，可镜像 state 要等 sb_updated 那一拍才换，
+    // 以前按镜像算＝还是旧的未读数，红点要晚一拍才亮。改成按聊天变量算，信一落地红点就亮。
+    updateBadge(true);
+  }
+  // 本地写：镜像和变量各改一遍（fn 必须两次跑出同样结果——时间这类值在外面先定好）
+  function vsWrite(fn) {
+    if (state) { if (!state.vesper || typeof state.vesper !== 'object') state.vesper = {}; fn(state.vesper, state); }
+    return SBupdate(function (v) {
+      if (!v.sb) return v;
+      if (!v.sb.vesper || typeof v.sb.vesper !== 'object') v.sb.vesper = {};
+      fn(v.sb.vesper, v.sb);
+      return v;
+    });
+  }
+  function vesperLine(id) { var ls = vesperData().lines; return (ls && ls[id]) || null; }
+  function vesperPushMsg(id, msg) {
+    var m = JSON.parse(JSON.stringify(msg));
+    return vsWrite(function (vs) {
+      var L = vs.lines && vs.lines[id]; if (!L) return;
+      if (!Array.isArray(L.msgs)) L.msgs = [];
+      L.msgs.push(JSON.parse(JSON.stringify(m)));
+      if (L.msgs.length > VESPER_MSG_KEEP) L.msgs = L.msgs.slice(-VESPER_MSG_KEEP);
+      L.at = m.at;
+    });
+  }
+  function vesperMarkClosed(id, text) {
+    var at = Date.now(), tm = vesperClock(at);
+    vsWrite(function (vs) {
+      var L = vs.lines && vs.lines[id]; if (!L || L.status === 'closed') return;
+      L.status = 'closed';
+      if (!Array.isArray(L.msgs)) L.msgs = [];
+      L.msgs.push({ k: 'sys', text: text, at: at, time: tm });
+    });
+    if (vesperOpenLineId() === String(id)) openVesperLine(id);
+  }
+  // 启动：设备有暗号就先查是否被除名（开关关着也查——接口说明要求；联机全关时不查）；然后报到一次
+  function vesperCheckStatus() {
+    var c = vesperCfg();
+    if (!c.secret || onlineCfg().off) return Promise.resolve();
+    return vesperRpc('vesper_status', { p_secret: c.secret }).then(function (r) {
+      if (r && r.ok === true && r.banned === true) vesperLock(r.reason);   // 查不到（断网、超时、怪回包）一律放行
+      if (r && r.ok === true) { if (r.closed === true) vesperSetClosed(r.msg); else if (r.closed === false) vesperSetOpen(); }   // v3：总开关（锁屏照旧在前面）
+    });
+  }
+  // ── v3：总开关（服务器 vesper_status 带 closed:true，或者任何接口回 err:'closed'）──
+  // 门关着：大厅那一块换成 S. 的一句话（服务器给的 msg，没有就用 closedDefault）；报到、取信、刷大厅都停（定时器照跑，每一拍先看这里就回去）；
+  // 每隔 VESPER_CLOSED_RETRY_MS 问一次 vesper_status，开了就自动恢复（马上报到、补收、刷大厅）。除名锁屏和这张卡原有的封禁屏照旧在前面。
+  var VESPER_CLOSED_RETRY_MS = 10 * 60000;
+  function vesperClosedText() { return _vl.closedMsg || VESPER_COPY.closedDefault; }
+  function vesperSetClosed(msg) {
+    var was = _vl.closed;
+    _vl.closed = true; _vl.closedAt = Date.now();
+    if (msg != null) _vl.closedMsg = String(msg).trim();
+    if (!was) { _vl.people = null; _vl.recent = null; _vl.lobbyBusy = false; if (currentPage === 'vesper' && !_ves.editing) openVesper(); }
+  }
+  function vesperSetOpen() {
+    if (!_vl.closed) return;
+    _vl.closed = false; _vl.closedMsg = ''; _vl.lastLobby = 0; _vl.netWarned = 0; _vl.err = '';
+    if (currentPage === 'vesper' && !_ves.editing) openVesper();   // 重画时顺手拉名单（入会 / 报到 / 取信 / 大厅）
+    vesperTick(true);
+  }
+  function vesperClosedTick() {
+    if (!vesperOn() || _vl.banned || _vl.closedAsking || Date.now() - _vl.closedAt < VESPER_CLOSED_RETRY_MS) return;
+    _vl.closedAt = Date.now(); _vl.closedAsking = true;
+    vesperCheckStatus().then(function () { _vl.closedAsking = false; }, function () { _vl.closedAsking = false; });
+  }
+  function vesperBoot() { vesperCheckStatus().then(function () { vesperTick(); }); }
+  // 除名锁屏：盖住整块屏幕（在 .sb-screen 里，不在 root/chatEl 里——重画页面冲不掉它）
+  function vesperLock(reason) {
+    _vl.banned = true; _vl.banReason = String(reason || '').trim();
+    try { closeMsgMenu(); } catch (e) {}
+    currentPage = null; currentChatName = null;
+    try { chatEl.style.display = 'none'; root.style.display = ''; } catch (e) {}
+    var old = screenEl.querySelector('.sdv-ban'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    var box = DOC.createElement('div');
+    box.className = 'sdv-ban';
+    box.innerHTML = '<div class="sdv-ban-in"><span class="sdv-ban-ic">' + sbIcon('star', 26) + '</span><b>' + esc(VESPER_NAME[0]) + '</b><small>' + esc(VESPER_NAME[1]) + '</small>' +
+      '<div class="sdv-ban-body">' + VESPER_COPY.banL.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('') +
+      (_vl.banReason ? '<p class="sdv-ban-why">' + esc(VESPER_COPY.banReason) + esc(_vl.banReason) + '</p>' : '') + '</div><span class="sdv-sig">— S.</span></div>';
+    box.addEventListener('click', function (e) { e.stopPropagation(); });
+    screenEl.appendChild(box);
+    updateBadge();
+  }
+
+  // ── 页面：俱乐部（我的小卡 + 有人想见你 + 我的线 + 今晚在场）──
+  function vesperSideChip(side) { return '<span class="sdv-side ' + (side === 'sd' ? 'sd' : 'sb') + '">' + esc(VESPER_SIDE[side] || '？') + '</span>'; }
+  function vesperMetaHtml(side, c) {
+    var rk = c.rank ? '第 ' + esc(c.rank) + ' 位' : '没上榜';
+    if (side === 'sd') {
+      var st = vesperSplitTier(c.tier);
+      return '<span><i>余额</i>' + esc(st.tier || '—') + '</span><span><i>慷慨榜</i>' + rk + '</span><span><i>白嫖榜</i>' + esc(st.salt || '没上榜') + '</span>';
+    }
+    return '<span><i>余额</i>' + esc(c.tier || '—') + '</span><span><i>榜上</i>' + rk + '</span>';
+  }
+  // v3：「今天来过」的人，小卡上多一行多久前来过（服务器 seen＝最近一次报到）
+  function vesperAgo(seen) {
+    var t = Date.parse(seen); if (!isFinite(t)) return '';
+    var m = Math.max(1, Math.floor((Date.now() - t) / 60000));
+    return m < 60 ? m + ' 分钟前来过' : Math.floor(m / 60) + ' 小时前来过';
+  }
+  function vesperCardHtml(p, full, recent) {
+    var c = (p && p.card) || {};
+    var ago = recent ? vesperAgo(p.seen) : '';
+    return '<div class="sdv-p' + (full ? ' full' : '') + (recent ? ' away' : '') + '"' + (full ? '' : ' data-sdv="ask" data-p="' + esc(p.id) + '"' + (recent ? ' data-r="1"' : '')) + '>' +
+      '<div class="sdv-p-top">' + vesperSideChip(p.side) + '<b>@' + esc(p.handle || '') + '</b><span class="sdv-mark">' + sbIcon('star', 12) + '</span></div>' +
+      '<div class="sdv-p-who">' + esc(c.who || '') + '</div>' +
+      '<div class="sdv-p-meta">' + vesperMetaHtml(p.side, c) + '</div>' +
+      (c.line ? '<div class="sdv-p-line">「' + esc(c.line) + '」</div>' : '') +
+      (ago ? '<div class="sdv-p-seen">' + esc(ago) + '</div>' : '') + '</div>';
+  }
+  function vesperLinesSorted() {
+    var ls = vesperData().lines || {}, out = [];
+    for (var k in ls) if (ls.hasOwnProperty(k) && ls[k]) out.push(ls[k]);
+    out.sort(function (a, b) { return (b.at || 0) - (a.at || 0); });
+    return out;
+  }
+  function vesperPreview(L) {
+    if (L.status === 'asking') return VESPER_COPY.noReply;
+    var m = (L.msgs || [])[L.msgs.length - 1]; if (!m) return '';
+    var pre = m.me ? '您：' : '';
+    if (m.k === 'transfer') return pre + '[转账] ' + fmtCNY(m.amount);
+    if (m.k === 'gift') return pre + '[礼物] ' + ((m.item && m.item.name) || '');
+    if (m.k === 'gift_link') return pre + '[礼物链接] ' + ((m.item && m.item.name) || '');
+    if (m.k === 'card') return pre + '[名片] ' + ((m.card && m.card.name) || '');
+    return pre + String(m.text || '').slice(0, 60);
+  }
+  function openVesper(keepVals) {   // keepVals：_ves 里已经是要显示的新内容（起草刚回来），别再从框里收旧字盖掉
+    if (!vesperOn()) { closeChat(); return; }
+    if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }   // 匿名号被封：原来那块封禁屏，俱乐部不另说
+    if (_vl.banned) { vesperLock(_vl.banReason); return; }
+    if (_ves.editing && currentPage === 'vesper' && !keepVals) vesperGrab();
+    // 原地重画（名单/名次到货、来信）别把人弹回页顶：记下滚动位置，画完放回
+    var keepTop = 0; if (currentPage === 'vesper') { var ob = chatEl.querySelector('.sd-vs'); if (ob) keepTop = ob.scrollTop; }
+    currentPage = 'vesper'; currentChatName = null;
+    fetchRank();   // 名次读服务器真人榜；到货后 fetchRank 会回来重画本页（联机关着时它自己不发请求）
+    var d = vesperData(), oc = onlineCfg();
+    var bal = (state && state.wallet && state.wallet.balance) || 0;
+    var hasCard = !!String(d.who || '').trim();
+    var h = pageHeader(VESPER_NAME[0], VESPER_NAME[1], false, sbIcon('star', 15) + ' ');
+    h += '<div class="sb-msgs sd-vs" style="display:block;">';
+    // 有人想见你 / 我的线（只在小卡写好以后才可能有）
+    var lines = state ? vesperLinesSorted() : [];
+    var asks = lines.filter(function (L) { return L.status === 'asked_me'; });
+    var talks = lines.filter(function (L) { return L.status !== 'asked_me'; });
+    if (asks.length) {
+      h += '<div class="sb-sec">有人想见您</div>';
+      asks.forEach(function (L) {
+        var w = L.with || {};
+        h += '<div class="sdv-knock"><div class="sdv-kn-s">' + esc(VESPER_COPY.askIn.replace('{h}', w.handle || '')) + '<span class="sdv-sig">— S.</span></div>' +
+          vesperCardHtml(w, true) +
+          (L.first ? '<div class="sdv-kn-first">「' + esc(L.first) + '」</div>' : (L.recovered ? '<div class="sdv-kn-first sdv-rec">' + esc(VESPER_COPY.recovered) + '</div>' : '')) +   // 找回来的开口：第一句找不回来，老实说
+          '<div class="sdv-acts in"><button class="sdv-btn" data-sdv="no" data-l="' + esc(L.id) + '">' + esc(VESPER_COPY.askNo) + '</button><button class="sdv-btn solid" data-sdv="yes" data-l="' + esc(L.id) + '">' + esc(VESPER_COPY.askYes) + '</button></div></div>';
+      });
+    }
+    if (talks.length) {
+      h += '<div class="sb-sec">我的线</div><div class="sdv-lines">';
+      talks.forEach(function (L) {
+        var w = L.with || {};
+        h += '<div class="sdv-lrow' + (L.status === 'closed' ? ' off' : '') + '" data-sdv="line" data-l="' + esc(L.id) + '">' + vesperSideChip(w.side) +
+          '<div class="sdv-lr-b"><b>' + sbIcon('star', 11) + ' @' + esc(w.handle || '…') + '</b><small>' + esc(vesperPreview(L)) + '</small></div>' +
+          (L.unread ? '<span class="sdv-unread">' + L.unread + '</span>' : '') + '</div>';
+      });
+      h += '</div>';
+    }
+    // 刀8（4a 第二轮）：小卡写好以后，大厅（现在在场 / 今天来过）排到我的小卡、两个开关、拉黑名单入口上面；没写小卡照旧小卡在前
+    var iCard = h.length;
+    h += '<div class="sb-sec">我的小卡</div>';
+    if (!state) {
+      h += '<div class="sdv-empty">先在开场把表填了，存档有了，才有小卡可写。</div>';
+    } else if (_ves.editing) {
+      h += '<div class="sdv-form">' +
+        '<label for="sd-vs-who">身份<small>名字、年纪、做什么的、什么脾气</small></label>' +
+        '<textarea class="sdv-ta" id="sd-vs-who" rows="7" autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="写给第一次见您的人看">' + esc(_ves.who) + '</textarea>' +
+        '<div class="sdv-draftrow"><button class="sdv-link" data-sdv="draft"' + (_ves.busy ? ' disabled' : '') + '>' + (_ves.busy ? '起草中…' : '让 AI 照我的剧情起草') + '</button></div>' +
+        '<label for="sd-vs-line">今晚这一句<small>选填</small></label>' +
+        '<textarea class="sdv-ta" id="sd-vs-line" rows="2" autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + esc(VESPER_COPY.linePh) + '">' + esc(_ves.line) + '</textarea>' +
+        '<div class="sdv-gate" id="sd-vs-gate"></div>' +
+        '<div class="sdv-acts in"><button class="sdv-btn" data-sdv="cancel">取消</button><button class="sdv-btn solid" data-sdv="save">保存</button></div>' +
+        '</div>';
+    } else {
+      var who = String(d.who || ''), line = String(d.line || '');
+      h += '<div class="sdv-note">' + esc(VESPER_COPY.note) + '</div>';
+      h += '<div class="sdv-card">' +
+        '<div class="sdv-hd">' + vesperSideChip(VESPER_MY_SIDE) + (oc.handle
+          ? '<b>@' + esc(oc.handle) + '</b>'
+          : '<span class="sdv-nohd">' + esc(VESPER_COPY.noHandle) + '</span><button class="sdv-link" data-sdv="handle">起个马甲</button>') +
+        '<span class="sdv-mark">' + sbIcon('star', 13) + '</span></div>' +
+        '<div class="sdv-k">身份</div><div class="sdv-who' + (who.trim() ? '' : ' empty') + '">' + esc(who.trim() ? who : VESPER_COPY.whoEmpty) + '</div>' +
+        '<div class="sdv-k">自动带上 · 改不了</div><div class="sdv-auto"><span><i>余额</i>' + esc(vesperTier(bal)) + '</span><span><i>慷慨榜</i>' + esc(vesperRank()) + '</span><span><i>白嫖榜</i>' + esc(vesperSaltRank() ? '第 ' + vesperSaltRank() + ' 位' : '没上榜') + '</span><span><i>气泡</i>' + esc((SKIN_BY[skinsOf().active] || ['', '原版'])[1]) + '</span></div>' +
+        '<div class="sdv-k">今晚这一句</div><div class="sdv-line' + (line.trim() ? '' : ' empty') + '">' + esc(line.trim() ? '「' + line + '」' : VESPER_COPY.lineEmpty) + '</div>' +
+        '</div>';
+      h += '<div class="sdv-acts"><button class="sdv-btn" data-sdv="edit">编辑</button><button class="sdv-btn" data-sdv="draft"' + (_ves.busy ? ' disabled' : '') + '>' + (_ves.busy ? '起草中…' : '让 AI 照我的剧情起草') + '</button></div>';
+    }
+    if (state) {
+      var inj = vesperInjectOn();
+      h += '<div class="sdv-row"><div><b>' + esc(VESPER_COPY.injT) + '</b><small>' + esc(VESPER_COPY.injS) + '</small></div>' +
+        '<button class="sd-vs-sw' + (inj ? ' on' : '') + '" data-sdv="inject" role="switch" aria-checked="' + (inj ? 'true' : 'false') + '" aria-label="' + esc(VESPER_COPY.injT) + '"></button></div>';
+    }
+    if (state) {   // 拉黑名单（第三刀）：看我请出去了谁、能解除
+      var nBlk = Array.isArray(_vl.blocks) ? _vl.blocks.length : (Array.isArray(d.blocked) ? d.blocked.length : 0);   // v3：拉过服务器那份就按它数（整台设备共用）
+      h += '<div class="sdv-blkrow"><button class="sdv-link" data-sdv="blocks">' + esc(VESPER_COPY.blocksBtn) + (nBlk ? ' · ' + nBlk + ' 人' : '') + '</button></div>';
+    }
+    var cardPart = h.slice(iCard); h = h.slice(0, iCard);   // 小卡 + 两个开关 + 拉黑名单入口
+    // 大厅：现在在场 + 今天来过（v3）。门关着（总开关）＝这一整块换成 S. 的一句话
+    var sid = hasCard && !oc.off && !!oc.handle ? vesperEnsureTag() : vesperSaveId();   // 刀7：小卡写好了还没有标记＝这时生成
+    var ready = hasCard && !!sid && !oc.off && !!oc.handle;
+    if (_vl.closed && state && !oc.off) {
+      h += '<div class="sdv-closed"><span class="sdv-closed-ic">' + sbIcon('star', 22) + '</span><p>' + esc(vesperClosedText()) + '</p><span class="sdv-sig">— S.</span></div>';
+    } else {
+    h += '<div class="sb-sec sdv-sec-l"><span>现在在场</span>' + (ready ? '<button class="sdv-link" data-sdv="refresh"' + (_vl.lobbyBusy ? ' disabled' : '') + '>' + sbIcon('refresh', 12) + ' ' + (_vl.lobbyBusy ? '刷新中…' : '刷新') + '</button>' : '') + '</div>';
+    if (!state || !hasCard) {
+      h += '<div class="sdv-empty sdv-nocard">' + VESPER_COPY.noCard.map(esc).join('<br>') + '<span class="sdv-sig">— S.</span>' +
+        (state && !_ves.editing ? '<button class="sdv-btn solid sdv-go" data-sdv="edit">' + esc(VESPER_COPY.noCardBtn) + '</button>' : '') + '</div>';
+    } else if (oc.off) h += '<div class="sdv-empty">' + esc(VESPER_COPY.offline) + '<span class="sdv-sig">— S.</span></div>';
+    else if (!oc.handle) h += '<div class="sdv-empty">' + esc(VESPER_COPY.noHandleLobby) + '<span class="sdv-sig">— S.</span></div>';
+    else if (!sid) h += '<div class="sdv-empty">' + esc(VESPER_COPY.noSave) + '<span class="sdv-sig">— S.</span></div>';
+    else if (_vl.people === null) h += '<div class="sdv-empty">' + esc(_vl.err ? VESPER_COPY.lobbyErr + (VESPER_ERR[_vl.err] || '') : VESPER_COPY.loading) + '</div>';
+    else {
+      var blocked = d.blocked || [];
+      var ppl = _vl.people.filter(function (p) { return p && p.id && blocked.indexOf(p.id) === -1; });
+      // 今天来过：过去 24 小时报过到、现在不在场的人（服务器 recent，和「现在在场」不重叠）。一样能点开小卡、能开口；没人就不出这一栏
+      var rec = (_vl.recent || []).filter(function (p) { return p && p.id && blocked.indexOf(p.id) === -1; });
+      // 刀8：空大厅按实情说——今天有人来过 / 门里谁也没有（刀10 去掉了「只逛不挂牌」那一种）
+      var emp = rec.length ? VESPER_COPY.emptyLobbyRecent : VESPER_COPY.emptyLobby;   // 刀9：有「今天来过」名单就先说这套，免得上面说没人、下面列着人
+      if (!ppl.length) h += '<div class="sdv-empty sdv-nobody">' + emp.map(esc).join('<br>') + '<span class="sdv-sig">— S.</span></div>';
+      else { h += '<div class="sdv-ppl">'; ppl.forEach(function (p) { h += vesperCardHtml(p, false); }); h += '</div>'; }
+      if (rec.length) {
+        h += '<div class="sb-sec sdv-sec-r">今天来过</div><div class="sdv-ppl sdv-recent">';
+        rec.forEach(function (p) { h += vesperCardHtml(p, false, true); });
+        h += '</div>';
+      }
+    }
+    }
+    var lobbyPart = h.slice(iCard);
+    h = h.slice(0, iCard) + (hasCard ? lobbyPart + cardPart : cardPart + lobbyPart);
+    h += '<div class="sdv-foot"><b>' + esc(VESPER_NAME[0]) + '</b><span>' + esc(VESPER_NAME[1]) + '</span><small>' + esc(VESPER_NAME[2]) + '</small></div>';
+    h += '</div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    bindPageChrome(function () { _ves.editing = false; closeChat(); });
+    var box = chatEl.querySelector('.sd-vs'); if (box) { box.addEventListener('click', vesperClick); if (keepTop) box.scrollTop = keepTop; }
+    updateBadge();
+    if (ready && !_ves.editing) vesperRefreshLobby(false);   // 40 秒内刷过就不再打（防重画→拉名单→重画的回环）
+    vesperRecoverLines();   // 本地一条线都没有、设备又入过会：问一次服务器我有哪些线（一个存档一次加载最多问一次）
+  }
+  function vesperClick(ev) {
+    var el = ev.target && ev.target.closest && ev.target.closest('[data-sdv]'); if (!el) return;
+    ev.stopPropagation();   // 血泪教训：会开小窗（马甲输入）的点击别冒泡给「点外面收菜单」
+    if (el.disabled) return;
+    var k = el.getAttribute('data-sdv');
+    if (k === 'edit') { var d = vesperData(); _ves.editing = true; _ves.who = String(d.who || ''); _ves.line = String(d.line || ''); openVesper(); var ta = chatEl.querySelector('#sd-vs-who'); if (ta) try { ta.focus(); } catch (e) {} }
+    else if (k === 'cancel') { _ves.editing = false; openVesper(); }
+    else if (k === 'save') vesperSave();
+    else if (k === 'draft') vesperDraft();
+    else if (k === 'inject') {
+      if (!state) return;
+      var nb = !vesperInjectOn();
+      vsWrite(function (vs) { vs.inject = nb; });
+      toast('info', nb ? '✦ 对方可以把您注入 TA 的正文' : '✦ 对方不能把您注入 TA 的正文');
+      openVesper();
+      // 同意跟着小卡一起更新到服务器，还要告诉正在聊的人（对方的「注入正文」按钮跟着出现 / 消失）
+      if (vesperReady()) vesperJoin().then(function (ok) { if (ok) vesperNotifyCard(); });
+    }
+    else if (k === 'blocks') openVesperBlocks();
+    else if (k === 'handle') {
+      ensureIdentity().then(function (c) {
+        if (!c) toast('info', '没起马甲——别人会看到一张没署名的卡');
+        if (currentPage === 'vesper') openVesper();
+      }).catch(function (e) { toast('error', '起马甲失败：' + ((e && e.message) || e)); });
+    }
+    else if (k === 'refresh') { _vl.people = _vl.people || null; vesperRefreshLobby(true); openVesper(); }
+    else if (k === 'ask') {
+      var pid = el.getAttribute('data-p'), p = null, away = el.getAttribute('data-r') === '1';
+      ((away ? _vl.recent : _vl.people) || []).forEach(function (x) { if (x && x.id === pid) p = x; });
+      if (!p) return;
+      var ex = vesperLinesSorted().filter(function (L) { return L.with && L.with.id === pid && L.status !== 'closed'; })[0];
+      if (ex) { openVesperLine(ex.id); return; }
+      openVesperAsk(p, away);
+    }
+    else if (k === 'line') openVesperLine(el.getAttribute('data-l'));
+    else if (k === 'yes' || k === 'no') vesperAnswer(el.getAttribute('data-l'), k === 'yes', el);
+  }
+  function vesperSave() {
+    if (!state) { toast('warning', '还没有存档数据——先在开场把表填了'); return; }
+    vesperGrab();
+    var who = String(_ves.who || '').replace(/^\s+|\s+$/g, ''), line = String(_ves.line || '').replace(/^\s+|\s+$/g, '');
+    var gw = vesperGate(who), gl = vesperGate(line);
+    var wEl = chatEl.querySelector('#sd-vs-who'), lEl = chatEl.querySelector('#sd-vs-line'), gEl = chatEl.querySelector('#sd-vs-gate');
+    if (wEl) wEl.classList.toggle('bad', !!gw);
+    if (lEl) lEl.classList.toggle('bad', !!gl);
+    if (gw || gl) {
+      if (gEl) gEl.textContent = VESPER_COPY.gate + '（' + (gw ? '「身份」里像是' + gw : '') + (gw && gl ? '；' : '') + (gl ? '「今晚这一句」里像是' + gl : '') + '）';
+      toast('warning', VESPER_COPY.gate);
+      return;
+    }
+    // 服务器的上限：演的是谁 600 字、今晚一句 60 字。超了不替玩家砍，退回去让他自己改
+    if (who.length > 600 || line.length > 60) {
+      if (wEl) wEl.classList.toggle('bad', who.length > 600);
+      if (lEl) lEl.classList.toggle('bad', line.length > 60);
+      var over = (who.length > 600 ? '「身份」' + who.length + ' 字，最多 600' : '') + (who.length > 600 && line.length > 60 ? '；' : '') + (line.length > 60 ? '「今晚这一句」' + line.length + ' 字，最多 60' : '');
+      if (gEl) gEl.textContent = '写长了，门里递不过去：' + over + '。';
+      toast('warning', '✦ 小卡写长了：' + over);
+      return;
+    }
+    var at = Date.now();
+    vsWrite(function (vs) { vs.who = who; vs.line = line; vs.at = at; }).then(function () { toast('success', '✦ 小卡存好了'); });
+    _ves.editing = false; _ves.who = ''; _ves.line = '';
+    openVesper();
+    if (vesperReady()) { vesperRefreshLobby(true); vesperNotifyCard(); }   // 写好并保存后才入会 / 更新小卡，顺手拉名单；正在聊的人那边的小卡也换掉
+  }
+  // 起草：发事件给私信生成器（它走玩家设置的独立 API，没配才走主 API 的 generateRaw），结果只填进编辑框，不替玩家保存
+  function vesperDraft() {
+    if (_ves.busy) { toast('info', '还在起草，稍等'); return; }
+    if (!state) { toast('warning', '还没有存档数据——先在开场把表填了'); return; }
+    if (!_ves.editing) { var d = vesperData(); _ves.editing = true; _ves.who = String(d.who || ''); _ves.line = String(d.line || ''); }
+    else vesperGrab();
+    _ves.busy = true; _ves.nonce = Date.now();
+    var mine = _ves.nonce;
+    clearTimeout(_ves.timer);
+    // 生成器那头一直没回音（脚本没在跑/被关了）也得出声，不能让按钮永远卡在「起草中」
+    _ves.timer = setTimeout(function () {
+      if (!_ves.busy || _ves.nonce !== mine) return;
+      _ves.busy = false;
+      toast('error', '✦ 起草没回音——私信生成器脚本可能没在跑，检查一下酒馆助手脚本库');
+      if (currentPage === 'vesper') openVesper();
+    }, 240000);
+    openVesper();
+    setStatus('✦ 照您的剧情起草中…');
+    SBemit('sd_request_vesper_draft', { nonce: mine, current: _ves.who });
+  }
+  function vesperDraftDone(p) {
+    if (!p || p.nonce !== _ves.nonce || !_ves.busy) return;
+    _ves.busy = false; clearTimeout(_ves.timer);
+    if (currentPage === 'vesper' && _ves.editing) vesperGrab();
+    _ves.editing = true;
+    _ves.who = String(p.text || '');
+    var here = currentPage === 'vesper';
+    if (here) openVesper(true);
+    setStatus('✦ 起草好了');
+    toast('success', '✦ 起草好了，' + (here ? '已经填进编辑框' : '回「暮星」页就在编辑框里') + '——改到满意再点保存（还没存）');
+  }
+  var VESPER_FAIL = { empty: '模型回了一片空白', refused: '模型拒绝了这次起草', nodata: '料不够', error: '出错了' };
+  function vesperDraftFailed(p) {
+    if (!p || p.nonce !== _ves.nonce || !_ves.busy) return;
+    _ves.busy = false; clearTimeout(_ves.timer);
+    toast(p.kind === 'nodata' ? 'warning' : 'error', '✦ 起草没成：' + (VESPER_FAIL[p.kind] || VESPER_FAIL.error) + (p.msg ? '——' + p.msg : ''));
+    setStatus('⚠️ 起草没成');
+    if (currentPage === 'vesper') openVesper();
+  }
+  // 入会小窗（写死的文案，不调模型）：点「进门」才算打开
+  function vesperIntro(onYes, onNo) {
+    var old = panel.querySelector('.sdv-intro'); if (old && old.parentNode) old.parentNode.removeChild(old);
+    var box = DOC.createElement('div');
+    box.className = 'sdv-intro';
+    box.innerHTML = '<div class="sdv-in-card" role="dialog" aria-label="' + esc(VESPER_NAME[0] + ' ' + VESPER_NAME[1]) + '">' +
+      '<div class="sdv-in-h"><span class="sdv-in-ic">' + sbIcon('star', 20) + '</span><b>' + esc(VESPER_NAME[0]) + '</b><small>' + esc(VESPER_NAME[1]) + '</small><small class="sdv-in-by">' + esc(VESPER_NAME[2]) + '</small></div>' +   // 刀7：三行都上标题，原样、顺序不变
+      '<div class="sdv-in-from">S.</div>' +
+      '<div class="sdv-in-body">' + VESPER_COPY.intro.map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('') + '</div>' +
+      '<div class="sdv-in-b"><button class="sdv-in-no">' + esc(VESPER_COPY.no) + '</button><button class="sdv-in-yes">' + esc(VESPER_COPY.yes) + '</button></div></div>';
+    (screenEl || panel).appendChild(box);
+    box.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var b = e.target && e.target.closest && e.target.closest('button'); if (!b) return;
+      if (box.parentNode) box.parentNode.removeChild(box);
+      if (b.classList.contains('sdv-in-yes')) onYes(); else if (onNo) onNo();
+    });
+  }
+  // 面板内确认小窗（安卓不用 window.confirm/prompt）。o={title, body:[..], no, yes, note:占位文字(要备注框时), max}
+  // resolve：点了确认 → {note}；算了 → null
+  // 第三刀加的：val＝框里预填的字；rows＝框几行；check(字)＝返回一句话就是不行（小窗不关、把这句红字写在框下面）；
+  //   alt＝第二个确认键的字（三个键时竖着排），点它 resolve {note, alt:true}
+  function vesperConfirm(o) {
+    return new Promise(function (resolve) {
+      var old = screenEl.querySelector('.sdv-cfm'); if (old && old.parentNode) old.parentNode.removeChild(old);
+      var box = DOC.createElement('div');
+      box.className = 'sdv-cfm';
+      box.innerHTML = '<div class="sdv-in-card" role="dialog">' +
+        (o.from === '' ? '' : '<div class="sdv-in-from">' + esc(o.from || 'S.') + '</div>') + '<div class="sdv-cfm-t">' + esc(o.title || '') + '</div>' +   // 刀7：from:''＝不署 S. 的小窗（注入正文起名：讲的是 AI 和正文）
+        '<div class="sdv-in-body">' + (o.body || []).map(function (p) { return '<p>' + esc(p) + '</p>'; }).join('') + '</div>' +
+        (o.note != null ? '<textarea class="sdv-cfm-ta' + (o.rows === 1 ? ' one' : '') + '" rows="' + (o.rows || 3) + '" autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + esc(o.note) + '"></textarea><div class="sdv-gate sdv-cfm-err"></div>' : '') +
+        '<div class="sdv-in-b' + (o.alt ? ' col' : '') + '"><button class="sdv-cfm-no">' + esc(o.no || VESPER_COPY.no2) + '</button>' +
+        (o.alt ? '<button class="sdv-cfm-alt">' + esc(o.alt) + '</button>' : '') + '<button class="sdv-cfm-yes">' + esc(o.yes || '好') + '</button></div></div>';
+      screenEl.appendChild(box);
+      var ta0 = box.querySelector('.sdv-cfm-ta');
+      if (ta0 && o.val != null) { ta0.value = String(o.val); try { ta0.focus(); ta0.setSelectionRange(ta0.value.length, ta0.value.length); } catch (e) {} }
+      if (ta0) ta0.addEventListener('input', function () { var er0 = box.querySelector('.sdv-cfm-err'); if (er0) er0.textContent = ''; });
+      box.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var b = e.target && e.target.closest && e.target.closest('button'); if (!b) return;
+        var note = '';
+        var isAlt = b.classList.contains('sdv-cfm-alt');
+        if (b.classList.contains('sdv-cfm-yes') || isAlt) {
+          var ta = box.querySelector('.sdv-cfm-ta'), er = box.querySelector('.sdv-cfm-err');
+          note = ta ? ta.value.trim() : '';
+          if (o.max && note.length > o.max) { if (er) er.textContent = '写长了：' + note.length + ' 字，最多 ' + o.max + ' 字。'; return; }
+          if (o.check) { var why = o.check(note); if (why) { if (er) er.textContent = why; if (ta) try { ta.focus(); } catch (e2) {} return; } }
+          if (box.parentNode) box.parentNode.removeChild(box);
+          resolve(isAlt ? { note: note, alt: true } : { note: note });
+        } else if (b.classList.contains('sdv-cfm-no')) { if (box.parentNode) box.parentNode.removeChild(box); resolve(null); }
+      });
+    });
+  }
+
+  // ── 页面：开口（写第一句）──
+  // 刀8（4a 第二轮）：开口框的占位字——对方写了今晚这一句就引它（长了截到 40 字加「…」），没写就提醒问一件卡上写着的事
+  var VESPER_ASK_PH_MAX = 40;
+  function vesperAskPh(p) {
+    var l = String((p && p.card && p.card.line) || '').replace(/\s+/g, ' ').trim();
+    l = l.replace(/[。！？!?.…\s]+$/, '');   // 刀9：引号外面已经有句号，引号里那句结尾的 。！？… 去掉，免得「…的船。」。
+    if (!l) return VESPER_COPY.askPhNone;
+    var cs = Array.from(l);
+    if (cs.length > VESPER_ASK_PH_MAX) l = cs.slice(0, VESPER_ASK_PH_MAX).join('') + '…';
+    return VESPER_COPY.askPhLine.replace('{l}', function () { return l; });
+  }
+  function vesperAskHint(p) {   // 刀9：对方写了今晚这一句才说「接 TA 卡上那句话往下说」；没写就只留前半句
+    var l = String((p && p.card && p.card.line) || '').replace(/[。！？!?.…\s]+$/, '').trim();
+    return l ? VESPER_COPY.askHint : VESPER_COPY.askHintNone;
+  }
+  function openVesperAsk(p, away) {   // away：从「今天来过」点进来的（TA 这会儿不在，话等 TA 七天）
+    _vl.askTo = p;
+    currentPage = 'vesper:ask'; currentChatName = null;
+    var h = pageHeader('开口', '@' + (p.handle || ''), false, sbIcon('star', 15) + ' ');
+    h += '<div class="sb-msgs sd-vs sdv-askpg" style="display:block;">' + vesperCardHtml(p, true, !!away) +
+      (away ? '<div class="sdv-note sdv-away-note">' + esc(VESPER_COPY.askRecent) + '<span class="sdv-sig">— S.</span></div>' : '') +
+      '<div class="sdv-form"><label for="sd-vs-ask">第一句<small>' + esc(vesperAskHint(p)) + '</small></label>' +
+      '<textarea class="sdv-ta" id="sd-vs-ask" rows="4" autocomplete="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + esc(vesperAskPh(p)) + '"></textarea>' +   // 刀8：占位字引对方今晚那一句；框里不预填任何句子
+      '<div class="sdv-cnt" id="sd-vs-askcnt">0 / ' + VESPER_ASK_MAX + '</div><div class="sdv-gate" id="sd-vs-askgate"></div>' +
+      '<div class="sdv-acts in"><button class="sdv-btn" data-sdv="back">算了</button><button class="sdv-btn solid" data-sdv="send">递过去</button></div></div></div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    bindPageChrome(function () { openVesper(); });
+    var ta = chatEl.querySelector('#sd-vs-ask'), cnt = chatEl.querySelector('#sd-vs-askcnt');
+    if (ta) ta.addEventListener('input', function () {
+      var n = ta.value.trim().length; cnt.textContent = n + ' / ' + VESPER_ASK_MAX; cnt.classList.toggle('bad', n > VESPER_ASK_MAX);
+      ta.classList.remove('bad'); var g0 = chatEl.querySelector('#sd-vs-askgate'); if (g0) g0.textContent = '';   // 改过了就把上一次的拦截提示收掉
+    });
+    chatEl.querySelector('.sdv-askpg').addEventListener('click', function (ev) {
+      var el = ev.target && ev.target.closest && ev.target.closest('[data-sdv]'); if (!el) return;
+      ev.stopPropagation();
+      if (el.disabled) return;
+      if (el.getAttribute('data-sdv') === 'back') { openVesper(); return; }
+      if (el.getAttribute('data-sdv') === 'send') vesperAsk(p, el);
+    });
+  }
+  function vesperAsk(p, btn) {
+    var ta = chatEl.querySelector('#sd-vs-ask'), g = chatEl.querySelector('#sd-vs-askgate');
+    var txt = ta ? ta.value.trim() : '';
+    if (!txt) { toast('info', '先写一句'); return; }
+    if (txt.length > VESPER_ASK_MAX) { if (g) g.textContent = '写长了：' + txt.length + ' 字，第一句最多 ' + VESPER_ASK_MAX + ' 字。'; return; }
+    var gw = vesperGate(txt);
+    if (gw) { if (ta) ta.classList.add('bad'); if (g) g.textContent = VESPER_ERR.blocked_word + '（像是' + gw + '）'; toast('warning', '✦ S.：' + VESPER_ERR.blocked_word); return; }
+    if (!vesperReady()) { vesperFail({ err: !vesperSaveId() ? 'nosave' : (onlineCfg().off ? 'offline' : 'net') }); return; }
+    btn.disabled = true; btn.textContent = '递过去中…';
+    var at = Date.now();
+    vesperJoin().then(function (ok) {
+      if (!ok) return { ok: false, err: 'net', _quiet: true };
+      return vesperRpc('vesper_ask', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_to: p.id, p_text: txt });
+    }).then(function (r) {
+      var stillHere = currentPage === 'vesper:ask';
+      if (r.ok || r.err === 'already') {
+        var lid = String(r.line || '');
+        if (!lid) { vesperFail(r); return; }
+        // already 带 status（11-06 服务器补的）：open＝已通，带去那条对话；asked＝我开过口、还在等回音。不再靠本地猜
+        var stA = r.ok ? 'asking' : (r.status === 'open' ? 'open' : 'asking');
+        var face = { id: p.id, side: p.side, handle: p.handle, card: p.card || {} };
+        vsWrite(function (vs) {
+          var fresh = !(vs.lines && vs.lines[lid]);
+          var L = vesperNewLine(vs, lid, p.id);
+          if (fresh || r.ok) { L.with = JSON.parse(JSON.stringify(face)); L.mine = true; }
+          L.status = stA;
+          if (r.ok) { L.first = txt; L.msgs.push({ k: 'text', me: true, text: txt, at: at, time: vesperClock(at) }); L.at = at; }
+          else if (fresh) L.msgs.push({ k: 'sys', text: VESPER_COPY.recovered, at: at, time: vesperClock(at) });   // 本地没这条线（存档丢过）：之前的话找不回来，老实说
+        });
+        if (r.ok) toast('success', '✦ S.：' + VESPER_COPY.askSent); else toast('info', '✦ S.：' + (stA === 'open' ? VESPER_ERR.already : VESPER_COPY.alreadyAsked));
+        openVesperLine(lid);
+        return;
+      }
+      if (!r._quiet) vesperFail(r);
+      if (stillHere) { btn.disabled = false; btn.textContent = '递过去'; if (r.err === 'blocked_word' && g) g.textContent = VESPER_ERR.blocked_word; }
+    });
+  }
+  function vesperAnswer(lid, yes, btn) {
+    if (btn) btn.disabled = true;
+    vesperRpc('vesper_answer', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_line: Number(lid), p_yes: !!yes }).then(function (r) {
+      if (!r.ok) {
+        vesperFail(r);
+        if (r.err === 'gone') vsWrite(function (vs) { if (vs.lines) delete vs.lines[lid]; });
+        if (currentPage === 'vesper') openVesper();
+        return;
+      }
+      if (yes) {
+        var at = Date.now();
+        vsWrite(function (vs) {
+          var L = vs.lines && vs.lines[lid]; if (!L) return;
+          L.status = 'open'; L.unread = 0;
+          if (r.with && r.with.id) L.with = JSON.parse(JSON.stringify(r.with));
+          L.msgs.push({ k: 'sys', text: VESPER_COPY.opened, at: at, time: vesperClock(at) });
+        });
+        openVesperLine(lid);
+      } else {
+        vsWrite(function (vs) { if (vs.lines) delete vs.lines[lid]; });   // 不见＝静默：对方什么也收不到，我这边这条也收起来
+        toast('info', '✦ S.：' + VESPER_COPY.askNoDone);
+        if (currentPage === 'vesper') openVesper();
+      }
+      updateBadge();
+    });
+  }
+
+  // ── 页面：和真人的对话（气泡复用 renderOneMsg；我这半边用我的皮肤，对方那半边用对方带来的皮肤代号）──
+  function vesperBubble(L, m, i) {
+    var isU = !!m.me;
+    if (m.k === 'sys') return '<div class="sb-msg system">' + esc(m.text || '') + '</div>';
+    if (m.k === 'text') {
+      var s = renderOneMsg({ sender: isU ? 'USER' : 'THEM', time: m.time || '', type: 'text', content: m.text || '', note: '' }, null, null, false, false, false, '');
+      if (!isU) { var sk = vesperSkinOk(m.skin) || vesperSkinOk(((L.with || {}).card || {}).skin); if (sk) s = s.replace('class="sb-msg them', 'class="sb-msg them sk-' + sk); }
+      return s;
+    }
+    if (m.k === 'transfer') return renderOneMsg({ sender: isU ? 'USER' : 'THEM', time: m.time || '', type: 'transfer', content: m.amount, note: '俱乐部' }, null, null, false, false, false, '').replace('class="sb-msg transfer', 'class="sb-msg transfer sdv-tf');
+    var it = m.item || {};
+    if (m.k === 'gift') return '<div class="sb-msg transfer sdv-gift' + (isU ? ' me' : '') + '"><div class="tl">Gift · 俱乐部</div><div class="ta" style="font-size:16px;">🎁 ' + esc(it.name || '') + '</div>' +
+      '<div class="tl">' + (it.price ? fmtCNY(it.price) + ' · ' : '') + (isU ? '送到 TA 手上了' : '收在「买好没送的」里') + '</div><span class="mt">' + esc(m.time || '') + '</span></div>';
+    if (m.k === 'gift_link') {
+      var act = isU ? '<div class="rc-f">' + (m.bought ? 'TA 买下了 · 收在「买好没送的」里' : '等 TA 点「买给 TA」') + '</div>'
+        : (m.bought ? '<div class="rc-f">您买下了</div>' : '<button class="sdv-buy" data-sdv="buy" data-i="' + i + '">买给 TA · ' + fmtCNY(it.price || 0) + '</button>');
+      return '<div class="sb-msg sb-rcpt sdv-link-card' + (isU ? '' : ' them') + '"><div class="rc-h">SUGARELITE · WISHLIST</div><div class="rc-n">' + esc(it.name || '') + '</div><div class="rc-m">' + fmtCNY(it.price || 0) + '</div>' + act + '<span class="mt">' + esc(m.time || '') + '</span></div>';
+    }
+    if (m.k === 'card') {   // 名片：名字、标签、是谁（几行）；对方推来的带「收下」
+      var c = m.card || {};
+      var actC = isU ? '<div class="rc-f">' + esc(VESPER_COPY.cardMine) + '</div>'
+        : (m.taken ? '<div class="rc-f">' + esc(VESPER_COPY.cardTaken) + (m.taken !== c.name ? '（叫「' + esc(m.taken) + '」）' : '') + '</div>'
+          : '<button class="sdv-take" data-sdv="take" data-i="' + i + '">' + esc(VESPER_COPY.cardTake) + '</button>');
+      return '<div class="sb-msg sb-rcpt sdv-ncard' + (isU ? '' : ' them') + '"><div class="rc-h">' + esc(VESPER_COPY.cardHd) + '</div><div class="rc-n">' + esc(c.name || '') + '</div>' +
+        (c.archetype ? '<div class="sdv-nc-tag">' + esc(c.archetype) + '</div>' : '') +
+        (c.bio ? '<div class="sdv-nc-bio">' + esc(c.bio) + '</div>' : '') + actC + '<span class="mt">' + esc(m.time || '') + '</span></div>';
+    }
+    return '<div class="sb-msg system">' + esc(m.text || VESPER_COPY.unknownKind) + '</div>';
+  }
+  function openVesperLine(id) {
+    id = String(id);
+    if (isBanned(onlineCfg().token)) { renderBanScreen(); return; }
+    if (_vl.banned) { vesperLock(_vl.banReason); return; }
+    var L = vesperLine(id); if (!L) { openVesper(); return; }
+    var draft = null;
+    if (currentPage === 'vesper:line:' + id && chatEl.style.display !== 'none') {
+      var ta0 = chatEl.querySelector('.sdv-cbar textarea');
+      if (ta0) { try { draft = { v: ta0.value, f: ta0.ownerDocument.activeElement === ta0 }; } catch (e) {} }
+    }
+    currentPage = 'vesper:line:' + id; currentChatName = null;
+    if (L.unread) vsWrite(function (vs) { var x = vs.lines && vs.lines[id]; if (x) x.unread = 0; });
+    var w = L.with || {};
+    var h = '<div class="sb-ch sdv-lnh"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b><span class="sdv-real" title="真人">' + sbIcon('star', 13) + '</span>@' + esc(w.handle || '…') + '</b><small>' + esc(VESPER_SIDE[w.side] || '') + '</small></div>' +
+      '<button class="sb-ch-del sb-ik sdv-ln-more" title="更多">' + sbIcon('more') + '</button></div>';
+    h += '<div class="sb-msgs sdv-ln">';
+    (L.msgs || []).forEach(function (m, i) { h += vesperBubble(L, m, i); });
+    if (L.status === 'asking') h += '<div class="sb-msg system sdv-wait">' + esc(VESPER_COPY.noReply) + '</div>';
+    if (L.status === 'asked_me') h += '<div class="sdv-knock in"><div class="sdv-kn-s">' + esc(VESPER_COPY.askIn.replace('{h}', w.handle || '')) + '<span class="sdv-sig">— S.</span></div>' +
+      '<div class="sdv-acts in"><button class="sdv-btn" data-sdv="no" data-l="' + esc(id) + '">' + esc(VESPER_COPY.askNo) + '</button><button class="sdv-btn solid" data-sdv="yes" data-l="' + esc(id) + '">' + esc(VESPER_COPY.askYes) + '</button></div></div>';
+    h += '</div>';
+    // 「注入正文」：对话最下面一条（对方小卡上「允许被注入」关着就不出现；TA 一句话都没说过也不出现）
+    var ij = vesperInjState(L);
+    if (ij.show) h += '<div class="sdv-injbar"><div class="sdv-inj-t">' + esc(ij.npc ? VESPER_COPY.injDoneHint.replace('{n}', ij.npc) : VESPER_COPY.injHint) + '</div>' +
+      '<button class="sdv-injbtn" type="button">' + sbIcon('star', 13) + '<span>' + esc(ij.npc ? VESPER_COPY.injAgain + (ij.fresh ? ' · ' + ij.fresh : '') : VESPER_COPY.injBtn) + '</span></button></div>';
+    if (L.status === 'open') h += '<div class="sb-cbar sdv-cbar"><button class="plus" title="转账 / 送礼 / 礼物链接">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="说点什么…"></textarea><button class="send">发送</button></div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    var box = chatEl.querySelector('.sdv-ln'); if (box) box.scrollTop = box.scrollHeight;
+    chatEl.querySelector('.sb-ch-back').addEventListener('click', function () { openVesper(); });
+    chatEl.querySelector('.sdv-ln-more').addEventListener('click', function (ev) { ev.stopPropagation(); vesperLineMenu(id); });
+    box.addEventListener('click', function (ev) {
+      var el = ev.target && ev.target.closest && ev.target.closest('[data-sdv]'); if (!el) return;
+      ev.stopPropagation();
+      if (el.disabled) return;
+      var k = el.getAttribute('data-sdv');
+      if (k === 'yes' || k === 'no') vesperAnswer(id, k === 'yes', el);
+      else if (k === 'buy') vesperBuyLink(id, parseInt(el.getAttribute('data-i'), 10), el);
+      else if (k === 'take') vesperTakeCard(id, parseInt(el.getAttribute('data-i'), 10), el);
+    });
+    var ijb = chatEl.querySelector('.sdv-injbtn');
+    if (ijb) ijb.addEventListener('click', function (ev) { ev.stopPropagation(); vesperInject(id, ijb); });   // 会开起名小窗：别冒泡
+    var ta = chatEl.querySelector('.sdv-cbar textarea');
+    if (ta) {
+      if (draft && (draft.v || draft.f)) { ta.value = draft.v; try { if (draft.f) ta.focus(); } catch (e) {} }
+      ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); vesperSendText(id); } });
+      chatEl.querySelector('.sdv-cbar .send').addEventListener('click', function (ev) { ev.stopPropagation(); vesperSendText(id); });
+      chatEl.querySelector('.sdv-cbar .plus').addEventListener('click', function (ev) { ev.stopPropagation(); vesperPlusMenu(id); });
+    }
+    updateBadge();
+  }
+  function vesperLineGuard(id) {
+    var L = vesperLine(id);
+    if (!L || L.status !== 'open') { toast('warning', '✦ S.：' + VESPER_ERR.gone); return null; }
+    if (!vesperReady()) { vesperFail({ err: !vesperSaveId() ? 'nosave' : (onlineCfg().off ? 'offline' : 'net') }); return null; }
+    if (_vl.sending) { toast('info', '上一句还在递，稍等'); return null; }
+    return L;
+  }
+  // quiet：这几个错误码由调用的一方自己出声（比如转账超时、名片被拦），这里不再说一遍通用的
+  function vesperSendRaw(id, kind, body, quiet) {
+    _vl.sending = true;
+    return vesperRpc('vesper_send', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_line: Number(id), p_kind: kind, p_body: body })
+      .then(function (r) { _vl.sending = false; if (!r.ok && !(quiet && quiet.indexOf(r.err) !== -1)) vesperFail(r, id); return r; });
+  }
+  // ── 补漏（对照能工智人第 12 条）：转账 / 礼物 / 礼物链接带 nonce，防网络卡顿时重复到账 ──
+  // 约定（两张卡一样）：body.nonce＝发的一方生成的 24 位随机串。收的一方按「这条线 + nonce」去重：同一个 nonce 只入账一次。
+  // 发的一方：一次「想发这一笔」只生成一个 nonce，先记在 sb.vesper.sendPend[意图]；没收到服务器的 ok（超时、断网、报错）就留着，
+  // 玩家再点同一笔（同一条线、同一种、同一金额 / 同一件东西）＝重试，原样用同一个 body（同一个 nonce、同一个链接号）；收到 ok 才删。
+  // 不自动重发：只在玩家自己再点时重试——对方要是还在用不认 nonce 的老版本，自动重发会让 TA 收两笔。
+  var VESPER_PEND_MS = 7 * 86400000;   // 和服务器的信一样，最多留 7 天
+  function vesperNonce() {
+    var b = new Uint8Array(18), s = '';
+    try { (window.crypto || (DOC.defaultView || window).crypto).getRandomValues(b); }
+    catch (e) { for (var i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256); }
+    for (var j = 0; j < b.length; j++) s += String.fromCharCode(b[j]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');   // 18 字节 → 24 位
+  }
+  function vesperNonceOk(n) { return typeof n === 'string' && n.length >= 1 && n.length <= 200; }
+  // intent：这一笔是什么（同一条线上同样的 intent＝同一笔）；make()：第一次发时造 body（不含 nonce）
+  function vesperSendMoney(id, kind, intent, make) {
+    var key = String(id) + '|' + kind + '|' + intent, now = Date.now();
+    // 刀7：挂着的那笔先看聊天变量（真源），再看镜像——镜像可能刚被 loadState 用还没落盘的变量换过，那样重试会换新 nonce、对方收两笔
+    var lv = SBgetVars(), vPend = lv && lv.sb && lv.sb.vesper && lv.sb.vesper.sendPend, mPend = vesperData().sendPend;
+    var old = (vPend && typeof vPend === 'object' && vPend[key]) || (mPend && mPend[key]) || null;
+    var body = (old && old.body && vesperNonceOk(old.body.nonce) && now - (old.at || 0) < VESPER_PEND_MS) ? old.body : null;
+    if (!body) { body = make(); body.nonce = vesperNonce(); }
+    var rec = JSON.parse(JSON.stringify({ body: body, at: old && old.body === body ? old.at : now }));
+    // 刀7：先把「要发这一笔」落进聊天变量，落盘了再发请求（以前是同时发：断网时请求比写变量先失败，那一小段里变量里还没有这一笔）
+    _vl.sending = true;   // 等落盘这一小段也算「正在递」，防连点
+    var money = kind === 'transfer' || kind === 'gift';
+    return vsWrite(function (vs) {
+      if (!vs.sendPend || typeof vs.sendPend !== 'object') vs.sendPend = {};
+      for (var k in vs.sendPend) if (vs.sendPend.hasOwnProperty(k) && !(now - ((vs.sendPend[k] && vs.sendPend[k].at) || 0) < VESPER_PEND_MS)) delete vs.sendPend[k];   // 过期的顺手清
+      vs.sendPend[key] = JSON.parse(JSON.stringify(rec));
+    }).then(function () {
+      return vesperSendRaw(id, kind, body, money ? ['net'] : null);
+    }).then(function (r) {
+      // 送到了（含 v3 的 dup:true＝这一笔服务器早收到了），或者这一笔本身过不去（联系方式 / 不合规矩：原样再递也一样）：挂着的这笔撤掉
+      if (r.ok || r.err === 'blocked_word' || r.err === 'bad_input') vsWrite(function (vs) { if (vs.sendPend && vs.sendPend[key] && vs.sendPend[key].body && vs.sendPend[key].body.nonce === body.nonce) delete vs.sendPend[key]; });
+      // 第 10 项：没等到回音（超时 / 断网）——可能已经送到了。说清楚：钱先没扣，再递同一笔按同一笔算，对方不会收两次
+      if (!r.ok && r.err === 'net' && money) toast('error', '✦ S.：' + VESPER_COPY.payNet);
+      r.body = body;
+      // 第 7 项：dup:true 按成功处理。本地要是已经记过这一笔（同一个 nonce），就不再扣钱、不再多显示一条
+      r.already = !!(r.ok && vesperSentAlready(id, body.nonce));
+      return r;
+    });
+  }
+  function vesperSentAlready(id, nonce) {
+    var L = vesperLine(id); if (!L || !nonce) return false;
+    return (L.msgs || []).some(function (m) { return m && m.me && m.nonce === nonce; });
+  }
+  // v3：服务器把礼物名字 / 留言也过联系方式拦截了——发之前先照文字消息那一套查一遍，拦下时说的话和文字消息一样，钱不扣、东西不出
+  function vesperItemGate(it) {
+    var gw = vesperGate(String((it && it.name) || ''));
+    if (gw) toast('warning', '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）');
+    return !!gw;
+  }
+  function vesperItemKey(it) { return JSON.stringify([String((it && it.name) || ''), Number((it && it.price) || 0)]); }
+  function vesperSendText(id) {
+    var ta = chatEl.querySelector('.sdv-cbar textarea'); if (!ta) return;
+    var txt = ta.value.trim(); if (!txt) return;
+    if (txt.length > VESPER_TEXT_MAX) { toast('warning', '✦ 这一句写长了：' + txt.length + ' 字，一条最多 ' + VESPER_TEXT_MAX + ' 字。拆成两句发'); return; }
+    var gw = vesperGate(txt);
+    if (gw) { toast('warning', '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）'); return; }
+    if (!vesperLineGuard(id)) return;
+    var mySkin = skinsOf().active || '';
+    vesperSendRaw(id, 'text', { text: txt, skin: mySkin }).then(function (r) {
+      if (!r.ok) return;
+      var at = Date.now();
+      var cur = currentPage === 'vesper:line:' + id ? chatEl.querySelector('.sdv-cbar textarea') : null;
+      if (cur && cur.value.trim() === txt) cur.value = '';
+      vesperPushMsg(id, { k: 'text', me: true, text: txt, skin: mySkin, at: at, time: vesperClock(at) });
+      if (currentPage === 'vesper:line:' + id) openVesperLine(id);
+    });
+  }
+  function vesperMenu(title, items, onPick) {   // items: [[key, label]]
+    closeMsgMenu();
+    var menu = DOC.createElement('div');
+    menu.className = 'sb-msgmenu sdv-menu';
+    menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '14%';
+    var mh = title ? '<div class="sdv-menu-t">' + esc(title) + '</div>' : '';
+    items.forEach(function (x) { mh += '<button data-sdvm="' + esc(x[0]) + '">' + esc(x[1]) + '</button>'; });
+    mh += '<button data-sdvm="">✕ 算了</button>';
+    menu.innerHTML = mh;
+    panel.appendChild(menu);
+    menu.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var b = e.target && e.target.closest && e.target.closest('[data-sdvm]'); if (!b) return;
+      var k = b.getAttribute('data-sdvm');
+      closeMsgMenu();
+      if (k) onPick(k);
+    });
+    _msgMenu = menu;
+  }
+  function vesperLineMenu(id) {
+    var L = vesperLine(id); if (!L) return;
+    var h = (L.with && L.with.handle) || '';
+    var items = [['card', '看 TA 的小卡']];
+    if (L.status === 'open') items.push(['hang', '挂线']);
+    if (L.status === 'asking') items.push(['withdraw', '收回这句话']);
+    items.push(['block', '拉黑'], ['report', '举报']);
+    vesperMenu('@' + h, items, function (k) {
+      if (k === 'card') vesperShowCard(L);
+      else if (k === 'hang' || k === 'withdraw') {
+        var hang = k === 'hang';
+        vesperConfirm({ title: hang ? VESPER_COPY.hangT : VESPER_COPY.withdrawT, body: hang ? VESPER_COPY.hangB : VESPER_COPY.withdrawB, yes: hang ? VESPER_COPY.hangYes : VESPER_COPY.withdrawYes }).then(function (ok) {
+          if (!ok) return;
+          vesperRpc('vesper_hangup', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_line: Number(id) }).then(function (r) {
+            if (!r.ok) { vesperFail(r, id); return; }
+            if (hang) vesperMarkClosed(id, VESPER_COPY.hungup);
+            else { vsWrite(function (vs) { if (vs.lines) delete vs.lines[id]; }); openVesper(); }
+          });
+        });
+      }
+      else if (k === 'block') vesperBlock(L);
+      else if (k === 'report') vesperReport(L);
+    });
+  }
+  function vesperShowCard(L) {
+    var w = L.with || {};
+    vesperConfirm({ title: '@' + (w.handle || ''), body: [], yes: '好' }).then(function () {});
+    var card = screenEl.querySelector('.sdv-cfm .sdv-in-body');
+    if (card) card.innerHTML = vesperCardHtml(w, true);
+  }
+  function vesperBlock(L) {
+    var w = L.with || {}, pid = w.id;
+    if (!pid) return;
+    vesperConfirm({ title: VESPER_COPY.blockT.replace('{h}', w.handle || ''), body: VESPER_COPY.blockB, yes: VESPER_COPY.blockYes }).then(function (ok) {
+      if (!ok) return;
+      vesperRpc('vesper_block', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_target: pid }).then(function (r) {
+        if (!r.ok) { vesperFail(r); return; }
+        var bInfo = { handle: String(w.handle || ''), side: String(w.side || ''), at: Date.now() };
+        // 拉黑后：这个人和所有跟他的线从我这边消失（记下公开号，之后他的信照收照签但不落地）
+        vsWrite(function (vs) {
+          if (!Array.isArray(vs.blocked)) vs.blocked = [];
+          if (vs.blocked.indexOf(pid) === -1) vs.blocked.push(pid);
+          // 第三刀：拉黑名单页要显示是谁（马甲、哪一边、哪天）——blocked 只存公开号，另存一份名字
+          if (!vs.blockedInfo || typeof vs.blockedInfo !== 'object') vs.blockedInfo = {};
+          vs.blockedInfo[pid] = JSON.parse(JSON.stringify(bInfo));
+          var ls = vs.lines || {};
+          for (var k in ls) if (ls.hasOwnProperty(k) && ls[k] && ls[k].with && ls[k].with.id === pid) delete ls[k];
+        });
+        if (_vl.people) _vl.people = _vl.people.filter(function (p) { return p && p.id !== pid; });
+        if (_vl.recent) _vl.recent = _vl.recent.filter(function (p) { return p && p.id !== pid; });
+        _vl.blocks = null;   // 拉黑名单页下次进来重新拉
+        toast('info', '✦ S.：' + VESPER_COPY.blockDone);
+        openVesper();
+      });
+    });
+  }
+  function vesperReport(L) {
+    var w = L.with || {};
+    vesperConfirm({ title: VESPER_COPY.reportT, body: VESPER_COPY.reportB, yes: VESPER_COPY.reportYes, note: VESPER_COPY.reportPh, max: 500 }).then(function (ok) {
+      if (!ok) return;
+      // 节选：对方的小卡 + 最近 N 条（谁说的、什么种类、原话 / 金额 / 东西、时间）——都是本机存的
+      var ex = [{ who: 'them', kind: 'card', handle: w.handle || '', side: w.side || '', card: w.card || {} }];
+      (L.msgs || []).slice(-VESPER_EXCERPT_N).forEach(function (m) {
+        var o = { who: m.me ? 'me' : (m.k === 'sys' ? 'sys' : 'them'), kind: m.k, at: m.at ? new Date(m.at).toISOString() : '' };
+        if (m.text != null) o.text = String(m.text);
+        if (m.amount != null) o.amount = m.amount;
+        if (m.item) o.item = m.item.name;
+        if (m.card) o.card = m.card.name;
+        ex.push(o);
+      });
+      vesperRpc('vesper_report', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_target: w.id || '', p_excerpt: ex, p_note: ok.note || '' }).then(function (r) {
+        if (!r.ok) { vesperFail(r); return; }   // v3 的 no_line（没说过话）走 VESPER_ERR.no_line
+        if (r.already === true) { toast('info', '✦ S.：' + VESPER_COPY.reportAlready); return; }   // v3：同一对人已经有一条没处理的
+        toast('success', '✦ S.：' + VESPER_COPY.reportDone);
+      });
+    });
+  }
+  // ➕：转账 / 买礼物送 / 发礼物链接（任意方向都能发，不按金主/甜心限制）
+  function vesperItems() {
+    var out = [];
+    (_pool || []).forEach(function (g) { if (g && g.name && g.price > 0) out.push({ name: (g.brand ? g.brand + ' ' : '') + g.name, price: Math.round(g.price), img: g.image_url || '' }); });
+    var mag = magOf() || {};   // 橱窗表没到货时退到本期会刊目录
+    if (!out.length) (mag.catalog || []).concat(mag.trend || []).forEach(function (x) { if (x && x.name && x.price > 0) out.push({ name: x.name, price: Math.round(x.price), img: '' }); });
+    return out.slice(0, 14);
+  }
+  function vesperPlusMenu(id) {
+    var L = vesperLine(id);
+    var items = [['pay', '💸 转账给 TA（从您钱包扣）'], ['gift', '🎁 买礼物送 TA'], ['link', '🔗 发礼物链接（TA 买给您）']];
+    if (L && L.with && L.with.side === VESPER_MY_SIDE) items.push(['card', VESPER_COPY.cardMenu]);   // 推名片只在同一边的人之间（这张卡＝金主对金主）
+    vesperMenu('', items, function (k) {
+      if (k === 'pay') vesperPay(id);
+      else if (k === 'card') vesperPickCard(id);
+      else vesperPickItem(id, k);
+    });
+  }
+  function vesperBal() { return (state && state.wallet && state.wallet.balance) || 0; }
+  function vesperPay(id) {
+    var L = vesperLine(id); if (!L) return;
+    var h = (L.with && L.with.handle) || '';
+    panelPrompt(VESPER_COPY.payAsk.replace('{h}', h).replace('{b}', fmtCNY(vesperBal())), '').then(function (d) {
+      if (d == null) return;
+      var amt = Math.round(parseFloat(String(d).replace(/[,，\s¥￥]/g, '')));
+      if (!(amt > 0)) { if (String(d).trim()) toast('warning', '没看懂这个数字'); return; }
+      if (amt > vesperBal()) { toast('warning', '✦ S.：' + VESPER_COPY.poor + '（余额 ' + fmtCNY(vesperBal()) + '）'); return; }
+      vesperConfirm({ title: VESPER_COPY.payT.replace('{a}', fmtCNY(amt)).replace('{h}', h), body: VESPER_COPY.payB, yes: VESPER_COPY.payYes }).then(function (ok) {
+        if (!ok || !vesperLineGuard(id)) return;
+        if (amt > vesperBal()) { toast('warning', '✦ S.：' + VESPER_COPY.poor); return; }
+        vesperSendMoney(id, 'transfer', String(amt), function () { return { amount: amt }; }).then(function (r) {
+          if (!r.ok || r.already) return;
+          debit(amt, '俱乐部 · 转给 @' + h, '俱乐部', '俱乐部 · 转账');   // 钱只走 debit 这一个口子。刀7：流水写上对方马甲；楼层那行照旧不带（真人的名字不进正文）
+          var at = Date.now();
+          vesperPushMsg(id, { k: 'transfer', me: true, amount: amt, nonce: r.body.nonce, at: at, time: vesperClock(at) });
+          toast('success', '💸 已转 ' + fmtCNY(amt) + ' 给 @' + h);
+          SBemit('sb_updated');
+        });
+      });
+    });
+  }
+  function vesperPickItem(id, mode) {
+    var items = vesperItems();
+    if (!items.length) { fetchPool(true); toast('info', '✦ S.：' + VESPER_COPY.noItems); return; }
+    vesperMenu(mode === 'gift' ? '挑一件送 TA' : '挑一件发给 TA', items.map(function (it, i) { return [String(i), it.name + ' — ' + fmtCNY(it.price)]; }), function (k) {
+      var it = items[parseInt(k, 10)]; if (!it) return;
+      var L = vesperLine(id); if (!L) return;
+      var h = (L.with && L.with.handle) || '';
+      if (mode === 'gift') {
+        if (it.price > vesperBal()) { toast('warning', '✦ S.：' + VESPER_COPY.poor + '（余额 ' + fmtCNY(vesperBal()) + '）'); return; }
+        if (vesperItemGate(it)) return;
+        vesperConfirm({ title: VESPER_COPY.giftT.replace('{h}', h), body: [it.name + ' · ' + fmtCNY(it.price), VESPER_COPY.giftB], yes: VESPER_COPY.giftYes }).then(function (ok) {
+          if (!ok || !vesperLineGuard(id)) return;
+          if (it.price > vesperBal()) { toast('warning', '✦ S.：' + VESPER_COPY.poor); return; }
+          vesperSendMoney(id, 'gift', vesperItemKey(it), function () { return { item: it }; }).then(function (r) {
+            if (!r.ok || r.already) return;
+            debit(it.price, '俱乐部 · 送给 @' + h + '：' + it.name, '俱乐部', '俱乐部 · 送礼：' + it.name);   // 刀7：流水带对方马甲，楼层不带
+            var at = Date.now();
+            vesperPushMsg(id, { k: 'gift', me: true, item: it, nonce: r.body.nonce, at: at, time: vesperClock(at) });
+            toast('success', '🎁 「' + it.name + '」送出去了');
+            SBemit('sb_updated');
+          });
+        });
+      } else {
+        if (vesperItemGate(it)) return;
+        vesperConfirm({ title: VESPER_COPY.linkT.replace('{h}', h), body: [it.name + ' · ' + fmtCNY(it.price)].concat(VESPER_COPY.linkB), yes: VESPER_COPY.linkYes }).then(function (ok) {
+          if (!ok || !vesperLineGuard(id)) return;
+          vesperSendMoney(id, 'gift_link', vesperItemKey(it), function () { return { item: it, lid: 'k' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) }; }).then(function (r) {
+            if (!r.ok || r.already) return;
+            var at = Date.now(), lk = r.body.lid;   // 重试时链接号也跟着沿用（同一个 body）
+            vesperPushMsg(id, { k: 'gift_link', me: true, item: it, lid: lk, nonce: r.body.nonce, bought: false, at: at, time: vesperClock(at) });
+            if (currentPage === 'vesper:line:' + id) openVesperLine(id);
+          });
+        });
+      }
+    });
+  }
+  // 对方发来的礼物链接，点「买给 TA」：扣我的钱，东西到 TA 手上（以一封 gift 信回过去，带上链接号）
+  function vesperBuyLink(id, idx, btn) {
+    var L = vesperLine(id); if (!L) return;
+    var m = (L.msgs || [])[idx]; if (!m || m.k !== 'gift_link' || m.me || m.bought) return;
+    var it = vesperItemClean(m.item), h = (L.with && L.with.handle) || '';
+    if (it.price > vesperBal()) { toast('warning', '✦ S.：' + VESPER_COPY.poor + '（余额 ' + fmtCNY(vesperBal()) + '）'); return; }
+    if (vesperItemGate(it)) return;
+    vesperConfirm({ title: VESPER_COPY.buyT.replace('{h}', h), body: [it.name + ' · ' + fmtCNY(it.price), VESPER_COPY.giftB], yes: VESPER_COPY.buyYes }).then(function (ok) {
+      if (!ok || !vesperLineGuard(id)) return;
+      if (it.price > vesperBal()) { toast('warning', '✦ S.：' + VESPER_COPY.poor); return; }
+      vesperSendMoney(id, 'gift', 'link:' + String(m.lid) + ':' + vesperItemKey(it), function () { return { item: it, forLink: m.lid }; }).then(function (r) {
+        if (!r.ok || r.already) return;
+        debit(it.price, '俱乐部 · 送给 @' + h + '：' + it.name, '俱乐部', '俱乐部 · 买给对方：' + it.name);   // 刀7：替对方买下＝送出，流水带对方马甲；楼层不带
+        var at = Date.now(), lk = m.lid, nc = r.body.nonce;
+        vsWrite(function (vs) {
+          var X = vs.lines && vs.lines[id]; if (!X) return;
+          X.msgs.forEach(function (x) { if (x.k === 'gift_link' && !x.me && x.lid === lk) x.bought = true; });
+          X.msgs.push({ k: 'gift', me: true, item: it, forLink: lk, nonce: nc, at: at, time: vesperClock(at) });
+          X.at = at;
+        });
+        toast('success', '🎁 替 @' + h + ' 买下了「' + it.name + '」');
+        SBemit('sb_updated');
+      });
+    });
+  }
+
+  // ══ 第三刀（2026-11-06 从《纸醉金迷》搬来）：注入正文 · 推名片 · 拉黑名单 · 退出俱乐部 · 找回线 ══
+  // 这张卡有「导入旧识」那一套（通讯录页 openImportContact → 生成器 handleImport → 聊天世界书「旧识-名字」条目），
+  // 所以注入正文和收名片都走它的后半段：联系人写进 sb.npcs（字段和旧识一样：bio/dossier/voice/dm_style/imported/pinned/origin_wb/
+  // imp_identity/imp_relation/imp_v，只加不改），档案再交给生成器写一条「旧识-名字」绿灯条目进聊天世界书。**不调模型**。
+  // 私信生成器本来就认 imported 的联系人（声音卡常驻、被点名时整份档案上车），主线摘要也照常带上。
+  // 新加的字段（老存档没有，读的地方都兜着）：
+  //   注入来的联系人：vesper（对方公开号）、vesper_line（从哪条线搬的）、vesper_ix（搬到第几句）、vesper_handle、vesper_at
+  //   收下名片的联系人：vesper_from（引荐人的公开号）、vesper_from_handle
+  //   线上：ixSeq（给每句话编的号，只增不减，L.msgs 砍旧的也不乱）、每句的 ix、injected（注入后在通讯录里叫什么）、recovered（找回来的线）
+  //   拉黑：vs.blockedInfo[公开号] = {handle, side, at}；找回线：vs.linesChecked（问过服务器的时间）
+  //   imp_v = 0 的意思是「没经过模型蒸馏，档案是原样搬来的」
+  function vesperUtf8Len(s) {
+    s = String(s);
+    try { return new TextEncoder().encode(s).length; } catch (e) {}
+    try { return unescape(encodeURIComponent(s)).length; } catch (e2) { return s.length * 3; }
+  }
+  // 对方小卡（服务器整理过的那六样）。从对方客户端直接来的（system 通知）也过一遍，只留这六样
+  function vesperFaceCard(c) {
+    c = (c && typeof c === 'object' && !Array.isArray(c)) ? c : {};
+    var rk = Number(c.rank);
+    return { who: String(c.who == null ? '' : c.who), line: String(c.line == null ? '' : c.line), tier: String(c.tier == null ? '' : c.tier),
+      rank: (isFinite(rk) && rk > 0) ? Math.round(rk) : null, skin: String(c.skin == null ? '' : c.skin), story: c.story === true };
+  }
+  // 大厅名单回来时：我线上存的对方小卡跟着换成最新的（对方改了小卡、关了「允许被注入」，这边才知道）
+  function vesperSyncFaces(people) {
+    if (!state || !state.vesper || !state.vesper.lines || !Array.isArray(people)) return;
+    var by = {}; people.forEach(function (p) { if (p && p.id) by[p.id] = p; });
+    var ch = [], ls = state.vesper.lines;
+    for (var k in ls) {
+      if (!ls.hasOwnProperty(k) || !ls[k] || !ls[k].with) continue;
+      var p = by[ls[k].with.id]; if (!p) continue;
+      var fc = vesperFaceCard(p.card);
+      if (JSON.stringify(fc) !== JSON.stringify(vesperFaceCard(ls[k].with.card)) || (p.handle && p.handle !== ls[k].with.handle)) ch.push([k, fc, String(p.handle || '')]);
+    }
+    if (!ch.length) return;
+    vsWrite(function (vs) {
+      ch.forEach(function (c) { var X = vs.lines && vs.lines[c[0]]; if (X && X.with) { X.with.card = JSON.parse(JSON.stringify(c[1])); if (c[2]) X.with.handle = c[2]; } });
+    });
+  }
+  // 我改了小卡（关掉「允许被注入」、改了演的是谁）→ 给每条通着的线发一封 system 通知，对方那边立刻换掉存的小卡
+  function vesperNotifyCard() {
+    var ls = vesperLinesSorted().filter(function (L) { return L.status === 'open'; });
+    if (!ls.length || !vesperReady() || _vl.closed) return;   // v3：门关着不发（开门后小卡跟着下一次入会更新）
+    vesperJoin().then(function (ok) {
+      if (!ok) return;
+      var card = vesperCardOut(), warned = false;
+      ls.forEach(function (L) {
+        vesperRpc('vesper_send', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_line: Number(L.id), p_kind: 'system', p_body: { ev: 'card', card: card } }).then(function (r) {
+          if (r.ok || r.err === 'gone' || warned) return;   // 线断了就算了；别的错只说一次
+          warned = true; vesperFail(r, null, true);
+        });
+      });
+    });
+  }
+  // 故事里本来就有的人（注入起名、收名片都不许撞）：这张卡的固定角色名单 + 别名 + 兄弟群 / 雪茄房 + 任何 persistent 的联系人
+  function vesperFixedName(n) {
+    var k = String(n || '').replace(/\s+/g, '').toLowerCase();
+    if (!k) return false;
+    var names = FIXED_ROSTER.map(function (r) { return r[0]; }).concat(VESPER_FIXED_ALIAS, [GROUP_NAME, ANON_GROUP_NAME]);
+    for (var i = 0; i < names.length; i++) if (String(names[i]).replace(/\s+/g, '').toLowerCase() === k) return true;
+    var np = state && state.npcs && state.npcs[String(n).trim()];
+    return !!(np && np.persistent);
+  }
+  function vesperInjectedName(pid) {
+    var np = (state && state.npcs) || {};
+    if (!pid) return '';
+    for (var k in np) if (np.hasOwnProperty(k) && np[k] && np[k].vesper === pid) return k;
+    return '';
+  }
+  // 对话页最下面那条：显不显示、注入过没有、还有几句没搬
+  function vesperInjState(L) {
+    var w = (L && L.with) || {}, c = w.card || {};
+    if (c.story !== true) return { show: false, off: true };
+    var words = (L.msgs || []).some(function (m) { return m && !m.me && m.k === 'text' && String(m.text || '').trim(); });
+    if (!words) return { show: false };
+    var nm = vesperInjectedName(w.id), fresh = 0;
+    if (nm) {
+      var n = state.npcs[nm], mark = n.vesper_line === String(L.id) ? (Number(n.vesper_ix) || 0) : 0;
+      (L.msgs || []).forEach(function (m) { if (m && m.k !== 'sys' && !(m.ix > 0 && m.ix <= mark)) fresh++; });
+    }
+    return { show: true, npc: nm, fresh: fresh };
+  }
+  // 声线样本：对方在这条线里亲手写的原话，从新到旧挑整句（单句太长的不进样本——它们照样在私信记录里），攒到 600 字为止
+  function vesperVoiceOf(L) {
+    var out = [], used = 0, ms = L.msgs || [];
+    for (var i = ms.length - 1; i >= 0; i--) {
+      var m = ms[i]; if (!m || m.me || m.k !== 'text') continue;
+      var t = String(m.text || '').trim(); if (!t || t.length > VESPER_VOICE_LINE) continue;
+      if (used + t.length > VESPER_VOICE_MAX && out.length) break;
+      out.unshift('「' + t + '」'); used += t.length;
+    }
+    return out.length ? '【TA 在俱乐部里亲口说过的话（腔调照这个来，不要照抄）】\n' + out.join('\n') : '';
+  }
+  var VESPER_INJ_STYLE = '接着你们在俱乐部里的话头往下聊；开口的样子照 TA 在俱乐部里写下的原话。';
+  // 档案＝对方小卡全文：边、演的是谁、余额几位数、榜上名次、今晚一句（一个字不改，不调模型整理）。
+  // 金主的小卡：余额档后面挂着白嫖榜（vesperSplitTier 拆开），rank 是慷慨榜；甜心的小卡：rank 是她那边的榜。User 是男性金主（代词用「他」）
+  function vesperInjProfile(L, name) {
+    var w = L.with || {}, c = w.card || {}, side = VESPER_SIDE[w.side] || '甜心';
+    var rk = c.rank ? '第 ' + c.rank + ' 位' : '没上榜', bottom;
+    if (w.side === 'sd') { var st = vesperSplitTier(c.tier); bottom = '余额：' + (st.tier || '不详') + '；慷慨榜：' + rk + '；白嫖榜：' + (st.salt || '没上榜'); }
+    else bottom = '余额：' + (c.tier || '不详') + '；榜上：' + rk;
+    var dossier = '角色：' + name + '（暮星俱乐部里认识的' + side + '）' +
+      '\n\n【TA 是谁（TA 自己写在小卡上的原话）】\n' + String(c.who || '').trim() +
+      '\n\n【底细】' + bottom +
+      (String(c.line || '').trim() ? '\n\n【那晚 TA 留的一句】「' + String(c.line).trim() + '」' : '') +
+      '\n\n【和User的关系】' + VESPER_COPY.injRel +
+      '\n\n【认知边界】TA 只记得自己和 User 在俱乐部里说过的话、做过的事；看不到 User 的手机，不知道他和别人聊了什么。';
+    return { bio: String(c.who || '').trim(), dossier: dossier, voice: vesperVoiceOf(L), dm_style: VESPER_INJ_STYLE };
+  }
+  // 线上的一句 → 私信记录里的一条。钱和东西只写成旁白（type system），不当真转账：
+  // 这些钱在俱乐部里已经真走过一次了，私信记录里再记成 transfer，删消息 / 重 roll 会把它当成要回退的钱
+  function vesperDmRec(m, name, day) {
+    if (!m || m.k === 'sys') return null;
+    var u = !!m.me, rec = { sender: u ? 'USER' : 'THEM', time: m.time || '', ts: m.at || Date.now(), type: 'text', content: '', note: '', zh: '', gameDay: day, vs: m.ix || 0 };
+    var it = (m.item && m.item.name) || '';
+    if (m.k === 'text') { rec.content = String(m.text || ''); if (!rec.content.trim()) return null; return rec; }
+    // 旁白用「您」（刀9：这张卡俱乐部里对玩家一律用「您」；玩家在私信里看得到这行）
+    rec.sender = 'THEM'; rec.type = 'system';
+    var cn = (m.card && m.card.name) || '';
+    if (m.k === 'transfer') rec.content = '在俱乐部里，' + (u ? '您转给 ' + name : name + ' 转给您') + ' ' + fmtCNY(m.amount || 0);
+    else if (m.k === 'gift') rec.content = '在俱乐部里，' + (u ? '您送了 ' + name : name + ' 送了您') + '「' + it + '」';
+    else if (m.k === 'gift_link') rec.content = '在俱乐部里，' + (u ? '您把「' + it + '」发给 ' + name + '，想要 TA 买给您' : name + ' 把「' + it + '」发给您，想要您买给 TA');
+    else if (m.k === 'card') rec.content = '在俱乐部里，' + (u ? '您把「' + cn + '」的名片推给了 ' + name : name + ' 把「' + cn + '」的名片推给了您');
+    else return null;
+    return rec;
+  }
+  function vesperNameProblem(n, pid) {
+    n = String(n || '').trim();
+    if (!n) return VESPER_COPY.injEmpty;
+    if (n.length > 24) return VESPER_COPY.injLong;
+    if (vesperFixedName(n)) return VESPER_COPY.injFixed.replace('{n}', n);
+    var ex = state && state.npcs && state.npcs[n];
+    if (ex && ex.vesper !== pid) return VESPER_COPY.injTaken.replace('{n}', n);
+    return '';
+  }
+  // 点「注入正文」：第一次先问名字（面板内小窗，默认马甲，撞名拦下）；再点＝补新话、刷新档案，不再问
+  // 刀7（11-07 实测：对方关了「允许注入」，我这边收到通知之前照样注入成功）：点的时候先问服务器一次对方现在的小卡。
+  // vesper_lobby 的 people（在场）和 recent（24 小时内来过）都查；找到了就用服务器这份的开关（顺手把线上存的对方小卡换成这份）；
+  // 找不到（对方退出了 / 超过 24 小时没来 / 撤了牌）、问不了（开关关着、联机关着、门关着）或者没问到（断网）才用本地存的那份。
+  function vesperInjFresh(id) {
+    var L = vesperLine(id), pid = String((L && L.with && L.with.id) || '');
+    if (!pid || _vl.closed || !vesperReady()) return Promise.resolve();
+    return vesperJoin().then(function (ok) {
+      return ok ? vesperRpc('vesper_lobby', vesperBase()) : null;
+    }).then(function (r) {
+      if (!r) return;
+      if (!r.ok) { if (r.err === 'banned') vesperFail(r); return; }
+      _vl.people = Array.isArray(r.people) ? r.people : []; _vl.recent = Array.isArray(r.recent) ? r.recent : []; _vl.err = ''; _vl.lastLobby = Date.now();
+      var hit = null;
+      _vl.people.concat(_vl.recent).forEach(function (p) { if (p && String(p.id) === pid) hit = p; });
+      if (!hit) return;
+      var fc = vesperFaceCard(hit.card), hd = String(hit.handle || '');
+      return vsWrite(function (vs) {   // 镜像当场就换（下一行就要读），变量随后落
+        var X = vs.lines && vs.lines[id];
+        if (X && X.with && String(X.with.id) === pid) { X.with.card = JSON.parse(JSON.stringify(fc)); if (hd) X.with.handle = hd; }
+      });
+    }).then(function () {}, function () {});
+  }
+  // 注入正文一路的提示不署 S.（讲的是 AI 和正文，S. 站在这个世界里，不该说这些）——和纸醉金迷刀5 同一个做法
+  function vesperInject(id, btn) {
+    if (_vl.injecting) { toast('info', '上一次还在搬，稍等'); return; }
+    var L0 = vesperLine(id); if (!L0 || !state) return;
+    _vl.injecting = true; if (btn) btn.disabled = true;
+    vesperInjFresh(id).then(function () {
+      _vl.injecting = false; if (btn) btn.disabled = false;
+      var L = vesperLine(id); if (!L || !state) return;
+      var st = vesperInjState(L), w = L.with || {};
+      if (!st.show) {
+        toast('warning', '✦ ' + (st.off ? VESPER_COPY.injOff : VESPER_COPY.injNoWords));
+        if (currentPage === 'vesper:line:' + id) openVesperLine(id);   // 按钮跟着服务器那份收起来
+        return;
+      }
+      if (st.npc) { vesperInjectWrite(id, st.npc); return; }
+      vesperConfirm({ from: '', title: VESPER_COPY.injNameT, body: VESPER_COPY.injNameB, note: VESPER_COPY.injNamePh, val: String(w.handle || '').slice(0, 24), rows: 1, yes: VESPER_COPY.injYes,
+        check: function (n) { return vesperNameProblem(n, w.id); } }).then(function (r) {
+        if (!r) return;
+        _vl.injecting = true;
+        vesperInjFresh(id).then(function () {   // 小窗开着的这段时间对方可能关了同意：落笔之前再问一次
+          _vl.injecting = false;
+          var L2 = vesperLine(id);
+          if (!L2 || !vesperInjState(L2).show) {
+            toast('warning', '✦ ' + VESPER_COPY.injOff);
+            if (currentPage === 'vesper:line:' + id) openVesperLine(id);
+            return;
+          }
+          vesperInjectWrite(id, r.note);
+        });
+      });
+    });
+  }
+  function vesperInjectWrite(id, name) {
+    var L = vesperLine(id); if (!L || !state) return;
+    var w = L.with || {}, pid = String(w.id || ''), at = Date.now(), tm = nowT(), day = (state.game && state.game.day) || 1;
+    var prof = vesperInjProfile(L, name), isNew = !(state.npcs && state.npcs[name]), moved = 0;
+    var arche = '暮星·' + (VESPER_SIDE[w.side] || '甜心');
+    _vl.injecting = true;
+    vsWrite(function (vs, sb) {
+      var X = vs.lines && vs.lines[id]; if (!X) return;
+      if (!Array.isArray(X.msgs)) X.msgs = [];
+      if (!(X.ixSeq >= 0)) X.ixSeq = 0;
+      X.msgs.forEach(function (m) { if (m && !(m.ix > 0)) m.ix = ++X.ixSeq; });   // 新到的话编上号（老的号不动）
+      if (!sb.npcs) sb.npcs = {};
+      var n = sb.npcs[name];
+      if (!n) n = sb.npcs[name] = { name: name, archetype: arche, persistent: false, engaged: false, unlocked: true, total_transfers: 0, relationship: 0,
+        last_contact: tm, last_ts: at, unread: 0, last_message: '', dm_history: [] };
+      var mark = n.vesper_line === String(id) ? (Number(n.vesper_ix) || 0) : 0;   // 换了一条线（挂断后重新开口）＝新线从头搬
+      var recs = [];
+      X.msgs.forEach(function (m) { if (m && m.ix > mark) { var r = vesperDmRec(m, name, day); if (r) recs.push(r); } });
+      if (!Array.isArray(n.dm_history)) n.dm_history = [];
+      n.dm_history = n.dm_history.concat(JSON.parse(JSON.stringify(recs)));
+      if (n.dm_history.length > VESPER_DM_KEEP) n.dm_history = n.dm_history.slice(-VESPER_DM_KEEP);
+      n.archetype = n.archetype || arche;
+      n.imported = true; n.pinned = true; n.unlocked = true; if (n.muted) n.muted = false;
+      n.bio = prof.bio; n.dossier = prof.dossier; n.voice = prof.voice; n.dm_style = prof.dm_style;
+      n.origin_wb = ''; n.imp_identity = ''; n.imp_relation = VESPER_COPY.injRel; n.imp_v = 0;
+      n.vesper = pid; n.vesper_line = String(id); n.vesper_ix = X.ixSeq; n.vesper_handle = String(w.handle || ''); n.vesper_at = at;
+      if (recs.length) {
+        var last = recs[recs.length - 1];
+        n.last_ts = at; n.last_contact = tm; n.last_message = lastPreview(last);
+        if (recs.some(function (r) { return r.sender === 'USER'; })) n.engaged = true;
+      }
+      X.injected = name;
+      moved = recs.length;
+    }).then(function () {
+      _vl.injecting = false;
+      SBemit('sb_updated');   // 生成器听 sb_updated 重算私信摘要 → 回灌主线（不另起注入通道）
+      var t = isNew ? VESPER_COPY.injOk : (moved ? VESPER_COPY.injMore : VESPER_COPY.injNone);
+      toast('success', '✦ ' + t.replace('{n}', name).replace('{c}', moved));   // 刀7：不署 S.
+      vesperAskEntry(name, prof.dossier, prof.voice);
+      if (currentPage === 'vesper:line:' + id) openVesperLine(id);
+    }, function (e) { _vl.injecting = false; toast('error', '✦ 注入没写进存档：' + ((e && e.message) || e)); });
+  }
+  // 交给生成器写世界书条目；等它回音（done / failed），太久没回音也出声
+  function vesperAskEntry(name, dossier, voice) {
+    var nonce = 'vi' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    _vl.wbWait[nonce] = setTimeout(function () {
+      if (!_vl.wbWait[nonce]) return;
+      delete _vl.wbWait[nonce];
+      toast('warning', '📖 ' + VESPER_COPY.wbSlow.replace('{n}', name));
+    }, VESPER_WB_WAIT_MS);
+    SBemit('sd_request_import_entry', { nonce: nonce, name: name, dossier: dossier, voice: voice });
+  }
+  function vesperEntryDone(p) {
+    if (!p || !_vl.wbWait[p.nonce]) return;
+    clearTimeout(_vl.wbWait[p.nonce]); delete _vl.wbWait[p.nonce];
+    toast('success', '📖 ' + VESPER_COPY.wbOk.replace('{n}', p.name || '').replace('{b}', p.book || '聊天世界书'));
+  }
+  function vesperEntryFailed(p) {
+    if (!p || !_vl.wbWait[p.nonce]) return;
+    clearTimeout(_vl.wbWait[p.nonce]); delete _vl.wbWait[p.nonce];
+    toast('warning', '📖 ' + VESPER_COPY.wbFail.replace('{n}', p.name || '').replace('{m}', p.msg || '未知原因'));
+  }
+
+  // ── 推名片：只在同一边的人之间（➕ 菜单里才有这一项；这张卡＝金主对金主）──
+  // 能推：陌生人、应聘来的、论坛认识的、导入的旧识、别人推给我的……凡是有档案的非固定联系人。
+  // 不能推：卡里本来就有的人（两边本来都有）、群、从真人注入来的（那是别人的角色）、什么档案都没有的。
+  function vesperCardable(np) {
+    if (!np || !np.name || np.isGroup || np.persistent || np.vesper || np.unlocked === false) return false;
+    if (vesperFixedName(np.name)) return false;
+    return !!(String(np.bio || '').trim() || String(np.dossier || '').trim() || String(np.voice || '').trim());
+  }
+  function vesperPickCard(id) {
+    var L = vesperLine(id); if (!L || !L.with || L.with.side !== VESPER_MY_SIDE) return;
+    var h = L.with.handle || '', npcs = (state && state.npcs) || {};
+    var list = Object.keys(npcs).filter(function (k) { return vesperCardable(npcs[k]); })
+      .sort(function (a, b) { return (npcs[b].last_ts || 0) - (npcs[a].last_ts || 0); }).slice(0, 30);
+    if (!list.length) { toast('info', '✦ S.：' + VESPER_COPY.cardNone); return; }
+    vesperMenu(VESPER_COPY.cardPickT.replace('{h}', h), list.map(function (k, i) { return [String(i), k + (npcs[k].archetype ? ' · ' + npcs[k].archetype : '')]; }), function (k) {
+      var nm = list[parseInt(k, 10)]; if (nm) vesperSendCard(id, nm);
+    });
+  }
+  function vesperSendCard(id, name) {
+    var L = vesperLine(id), np = state && state.npcs && state.npcs[name];
+    if (!L || !np || !vesperCardable(np)) return;
+    var h = (L.with && L.with.handle) || '';
+    var s = function (k) { return np[k] == null ? '' : String(np[k]); };
+    // 只推档案字段，不带聊天记录（dm_history 一条也不拿）
+    var card = { name: name, archetype: s('archetype'), bio: s('bio'), dossier: s('dossier'), voice: s('voice'), dm_style: s('dm_style') };
+    var gw = vesperGate([card.name, card.archetype, card.bio, card.dossier, card.voice, card.dm_style].join('\n'), true);
+    if (gw) { toast('warning', '✦ S.：' + VESPER_COPY.cardGate.replace('{n}', name).replace('{w}', gw)); return; }
+    var body = { card: card }, bytes = vesperUtf8Len(JSON.stringify(body));
+    if (bytes > VESPER_CARD_MAX) {   // 超了整张不发、明说，不替玩家删字
+      toast('warning', '✦ S.：' + VESPER_COPY.cardBig.replace('{n}', name).replace('{k}', (bytes / 1024).toFixed(1)).replace('{m}', Math.floor(VESPER_CARD_MAX / 1024)));
+      return;
+    }
+    vesperConfirm({ title: VESPER_COPY.cardT.replace('{n}', name).replace('{h}', h), body: VESPER_COPY.cardB.map(function (x) { return x.replace('{h}', h); }), yes: VESPER_COPY.cardYes }).then(function (ok) {
+      if (!ok || !vesperLineGuard(id)) return;
+      vesperSendRaw(id, 'card', body, ['blocked_word']).then(function (r) {
+        if (!r.ok && r.err === 'blocked_word') { toast('warning', '✦ S.：' + VESPER_COPY.cardSrvGate.replace('{n}', name)); return; }   // v3：服务器也查名片，被它拦下＝名片里的资料带了联系方式
+        if (!r.ok) return;
+        var at = Date.now();
+        vesperPushMsg(id, { k: 'card', me: true, card: { name: card.name, archetype: card.archetype, bio: card.bio }, at: at, time: vesperClock(at) });
+        toast('success', '✦ S.：' + VESPER_COPY.cardSent.replace('{n}', name));
+        if (currentPage === 'vesper:line:' + id) openVesperLine(id);
+      });
+    });
+  }
+  // 收到的名片：只认这六样字段，名字 1–24 字（缺名字＝认不得，原样留着当「认不得的东西」）
+  function vesperCardClean(c) {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
+    var name = String(c.name == null ? '' : c.name).trim();
+    if (!name || name.length > 24) return null;
+    var s = function (k) { return c[k] == null ? '' : String(c[k]); };
+    return { name: name, archetype: s('archetype').trim(), bio: s('bio'), dossier: s('dossier'), voice: s('voice'), dm_style: s('dm_style') };
+  }
+  // 点「收下」：写进我的 sb.npcs + 聊天世界书（同旧识的后半段，不调模型）；「怎么认识的」＝@某某 引荐的。
+  // 重名：只刷新档案，聊天记录、置顶、关系原样（和导入旧识重名时一样）
+  function vesperTakeCard(id, idx, btn) {
+    var L = vesperLine(id); if (!L || !state) return;
+    var m = (L.msgs || [])[idx]; if (!m || m.k !== 'card' || m.me || m.taken) return;
+    var c = vesperCardClean(m.card);
+    if (!c) { toast('warning', '✦ S.：' + VESPER_COPY.cardBad); return; }
+    if (!(L.with && L.with.side === VESPER_MY_SIDE)) { toast('warning', '✦ S.：' + VESPER_COPY.cardSide.replace('{h}', (L.with && L.with.handle) || '')); return; }   // v3：收的一方也核对边（老存档里早先收进来的也拦）
+    var name = c.name;
+    if (vesperFixedName(name)) { toast('warning', '✦ S.：' + VESPER_COPY.cardFixed.replace('{n}', name)); return; }
+    var ex = state.npcs && state.npcs[name];
+    if (ex && (ex.isGroup || ex.vesper)) { toast('warning', '✦ S.：' + VESPER_COPY.cardClash.replace('{n}', name)); return; }
+    if (btn) btn.disabled = true;
+    var h = (L.with && L.with.handle) || '', rel = VESPER_COPY.cardFrom.replace('{h}', h);
+    var dossier = (c.dossier.trim() ? c.dossier.trim() : ('角色：' + name + (c.archetype ? '（' + c.archetype + '）' : '') + (c.bio.trim() ? '\n\n【TA 是谁】\n' + c.bio.trim() : ''))) +
+      '\n\n【和User怎么认识的（最高优先级，与上文冲突时以此为准）】\n' + rel;
+    var at = Date.now(), tm = nowT(), mat = m.at, mmid = m.mid, isNew = !ex, fromId = String((L.with && L.with.id) || '');
+    vsWrite(function (vs, sb) {
+      if (!sb.npcs) sb.npcs = {};
+      var n = sb.npcs[name];
+      if (!n) n = sb.npcs[name] = { name: name, archetype: c.archetype || '引荐', persistent: false, engaged: false, unlocked: true, total_transfers: 0, relationship: 0,
+        last_contact: tm, last_ts: at, unread: 0, last_message: '', dm_history: [] };
+      n.archetype = n.archetype || c.archetype || '引荐';
+      n.imported = true; n.pinned = true; n.unlocked = true; if (n.muted) n.muted = false;
+      n.bio = c.bio; n.dossier = dossier; n.voice = c.voice; n.dm_style = c.dm_style;
+      n.origin_wb = ''; n.imp_identity = ''; n.imp_relation = rel; n.imp_v = 0;
+      n.vesper_from = fromId; n.vesper_from_handle = h;
+      var X = vs.lines && vs.lines[id]; if (!X || !Array.isArray(X.msgs)) return;
+      for (var i = 0; i < X.msgs.length; i++) { var x = X.msgs[i]; if (x && x.k === 'card' && !x.me && x.at === mat && x.mid === mmid) { x.taken = name; break; } }
+    }).then(function () {
+      SBemit('sb_updated');
+      toast('success', '✦ S.：' + (isNew ? VESPER_COPY.cardOk.replace('{n}', name).replace('{r}', rel) : VESPER_COPY.cardRefresh.replace('{n}', name)));
+      vesperAskEntry(name, dossier, c.voice);
+      if (currentPage === 'vesper:line:' + id) openVesperLine(id);
+    }, function (e) { if (btn) btn.disabled = false; toast('error', '✦ 名片没收进存档：' + ((e && e.message) || e)); });
+  }
+
+  // ── 拉黑名单页：我请出去了谁，能解除 ──
+  // v3：名单从服务器拉（vesper_my_blocks）：整台设备共用（在哪个存档拉的都列在一起），对方已经退出的也在、也能解除。
+  // 本地的 blocked / blockedInfo 照旧记着（收信时「照收照签不落地」要用），只是不再当名单的来源；服务器拉不到时退回本地那份。
+  // fresh：进页面时拉一次；解除以后再拉一次。
+  function vesperBlocksFetch() {
+    if (_vl.blocksBusy) return;
+    var c = vesperCfg(), save = vesperSaveId();
+    if (!c.secret || !save || onlineCfg().off) { _vl.blocks = null; _vl.blocksErr = !c.secret ? '' : (!save ? 'nosave' : 'offline'); return; }
+    _vl.blocksBusy = true; _vl.blocksErr = '';
+    vesperRpc('vesper_my_blocks', { p_secret: c.secret, p_save: save }).then(function (r) {
+      _vl.blocksBusy = false;
+      if (r.ok) { _vl.blocks = (Array.isArray(r.blocks) ? r.blocks : []).filter(function (x) { return x && x.id; }); _vl.blocksErr = ''; }
+      else { _vl.blocks = null; _vl.blocksErr = r.err || 'net'; if (r.err === 'banned') vesperFail(r); }
+      if (currentPage === 'vesper:blocks') openVesperBlocks(true);
+      else if (currentPage === 'vesper' && !_ves.editing) openVesper();
+    });
+  }
+  function vesperBlockRows() {   // 名单：服务器那份；没拉到就用本地记的那份
+    if (Array.isArray(_vl.blocks)) return _vl.blocks.map(function (x) { return { id: String(x.id), handle: x.handle == null ? '' : String(x.handle), side: String(x.side || ''), at: Date.parse(x.at) || 0 }; });
+    var d = vesperData(), ids = Array.isArray(d.blocked) ? d.blocked : [], info = (d.blockedInfo && typeof d.blockedInfo === 'object') ? d.blockedInfo : {};
+    return ids.slice().reverse().map(function (pid) { var x = info[pid] || {}; return { id: pid, handle: String(x.handle || ''), side: String(x.side || ''), at: x.at || 0, local: true }; });
+  }
+  function openVesperBlocks(fresh) {
+    if (_vl.banned) { vesperLock(_vl.banReason); return; }
+    var first = currentPage !== 'vesper:blocks';
+    currentPage = 'vesper:blocks'; currentChatName = null;
+    if (first && !fresh) { _vl.blocks = null; vesperBlocksFetch(); }
+    var rows = vesperBlockRows(), loading = _vl.blocksBusy && !Array.isArray(_vl.blocks);
+    var h = pageHeader(VESPER_COPY.blocksBtn, VESPER_COPY.blocksSub, false, sbIcon('star', 15) + ' ');
+    h += '<div class="sb-msgs sd-vs sdv-blkpg" style="display:block;">';
+    h += '<div class="sdv-note sdv-blk-note">' + esc(VESPER_COPY.blocksNote) + '</div>';
+    if (loading) h += '<div class="sdv-empty">' + esc(VESPER_COPY.blocksLoading) + '</div>';
+    else {
+      if (!Array.isArray(_vl.blocks) && _vl.blocksErr) h += '<div class="sdv-note sdv-blk-err">' + esc(VESPER_COPY.blocksErr + (VESPER_ERR[_vl.blocksErr] || '')) + '</div>';
+      if (!rows.length) h += '<div class="sdv-empty">' + esc(VESPER_COPY.blocksEmpty) + '<span class="sdv-sig">— S.</span></div>';
+      else {
+        h += '<div class="sdv-lines">';
+        rows.forEach(function (x) {
+          var dt = x.at ? new Date(x.at) : null;
+          h += '<div class="sdv-lrow sdv-blk">' + (x.side ? vesperSideChip(x.side) : '') + '<div class="sdv-lr-b"><b>' + (x.handle ? '@' + esc(x.handle) : esc(VESPER_COPY.blkGone)) + '</b><small>' +
+            esc(dt ? (dt.getMonth() + 1) + '/' + dt.getDate() + ' 请出去的' : '更早请出去的') + '</small></div>' +
+            '<button class="sdv-unblk" type="button" data-sdv="unblock" data-p="' + esc(x.id) + '">' + esc(VESPER_COPY.unblockBtn) + '</button></div>';
+        });
+        h += '</div>';
+      }
+    }
+    h += '</div>';
+    chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
+    bindPageChrome(function () { openVesper(); });
+    chatEl.querySelector('.sdv-blkpg').addEventListener('click', function (ev) {
+      var el = ev.target && ev.target.closest && ev.target.closest('[data-sdv]'); if (!el) return;
+      ev.stopPropagation();   // 要开确认小窗
+      if (el.disabled) return;
+      if (el.getAttribute('data-sdv') === 'unblock') vesperUnblock(el.getAttribute('data-p'), el);
+    });
+    updateBadge();
+  }
+  function vesperUnblock(pid, btn) {
+    var row = null; vesperBlockRows().forEach(function (x) { if (x.id === pid) row = x; });
+    var h = (row && row.handle) || VESPER_COPY.blkGone;
+    vesperConfirm({ title: VESPER_COPY.unblockT.replace('@{h}', row && row.handle ? '@' + row.handle : h).replace('{h}', h), body: VESPER_COPY.unblockB, yes: VESPER_COPY.unblockYes }).then(function (ok) {
+      if (!ok) return;
+      if (!vesperReady()) { vesperFail({ err: !vesperSaveId() ? 'nosave' : (onlineCfg().off ? 'offline' : 'net') }); return; }
+      if (btn) btn.disabled = true;
+      vesperJoin().then(function (j) {
+        if (!j) return { ok: false, err: 'net', _quiet: true };
+        return vesperRpc('vesper_unblock', { p_secret: vesperCfg().secret, p_save: vesperSaveId(), p_target: pid });
+      }).then(function (r) {
+        if (!r.ok) { if (!r._quiet) vesperFail(r); if (btn) btn.disabled = false; return; }
+        vsWrite(function (vs) {
+          vs.blocked = (Array.isArray(vs.blocked) ? vs.blocked : []).filter(function (y) { return y !== pid; });
+          if (vs.blockedInfo && typeof vs.blockedInfo === 'object') delete vs.blockedInfo[pid];
+        });
+        if (Array.isArray(_vl.blocks)) _vl.blocks = _vl.blocks.filter(function (x) { return x && String(x.id) !== pid; });
+        _vl.lastLobby = 0;   // 回大厅时马上重拉，这位又在名单里了
+        toast('success', '✦ S.：' + VESPER_COPY.unblockDone.replace('@{h}', row && row.handle ? '@' + row.handle : h).replace('{h}', h));
+        if (currentPage === 'vesper:blocks') { openVesperBlocks(true); vesperBlocksFetch(); }
+      });
+    });
+  }
+
+  // ── 设置页：开关关掉＝从大厅撤牌（别等三分钟自己过期）；退出俱乐部 ──
+  function vesperUnlistNow() {
+    var c = vesperCfg(), save = vesperSaveId();
+    _vl.joinedSig = '';   // 再打开时重新 join（join 一律重新挂牌）
+    _vl.people = null;
+    if (!c.secret || !save || onlineCfg().off || !state || !String(vesperData().who || '').trim()) return Promise.resolve(true);
+    return vesperRpc('vesper_set_listed', { p_secret: c.secret, p_save: save, p_listed: false }).then(function (r) {
+      if (r.ok || r.err === 'bad_secret') return true;   // bad_secret＝这个存档本来就不在门里，没有可撤的
+      if (r.err === 'banned') { vesperFail(r); return false; }
+      toast('warning', '✦ S.：' + VESPER_COPY.offFail.replace('{e}', VESPER_ERR[r.err] || VESPER_ERR.net));
+      return false;
+    });
+  }
+  // 退出：这台设备入过会的每个存档逐个调 vesper_quit（退出是按存档算的）；本地的对话记录留不留由玩家选（只管当前存档）。
+  // 暗号留着不换：拉黑和除名认的是设备，退出不是洗掉它们的办法。
+  function vesperQuit(onDone) {
+    if (_vl.quitting) return;
+    if (_vl.banned) { vesperLock(_vl.banReason); return; }
+    vesperConfirm({ title: VESPER_COPY.quitT, body: VESPER_COPY.quitB, yes: VESPER_COPY.quitKeep, alt: VESPER_COPY.quitDrop }).then(function (r) {
+      if (!r) return;
+      var drop = !!r.alt, c = vesperCfg(), cur = vesperSaveId();
+      if (onlineCfg().off) { vesperFail({ err: 'offline' }); return; }
+      var saves = c.saves.slice(); if (cur && saves.indexOf(cur) === -1) saves.push(cur);
+      _vl.quitting = true;
+      var i = 0;
+      var next = function () {
+        if (i >= saves.length) return Promise.resolve({ ok: true });
+        var sv = saves[i++];
+        return vesperRpc('vesper_quit', { p_secret: c.secret, p_save: sv }).then(function (q) {
+          if (q.ok || q.err === 'bad_secret') return next();   // bad_secret＝这个存档早就不在门里了
+          return q;
+        });
+      };
+      (c.secret ? next() : Promise.resolve({ ok: true })).then(function (q) {
+        _vl.quitting = false;
+        if (!q.ok) { vesperFail(q); return; }
+        saveVesperCfg({ on: false, joinedAt: '', secret: c.secret, saves: [], tags: c.tags });
+        vesperTimers(false);   // 这张卡的报到 / 取信定时器跟着开关走：退出＝关
+        _vl.joinedSig = ''; _vl.people = null; _vl.lastLobby = 0;
+        var at = Date.now(), tm = vesperClock(at);
+        if (state && state.vesper) vsWrite(function (vs) {
+          var ls = vs.lines || {};
+          if (drop) { vs.lines = {}; return; }
+          for (var k in ls) {   // 留着：都标成断了（服务器那边线已经全断）
+            if (!ls.hasOwnProperty(k) || !ls[k]) continue;
+            if (ls[k].status === 'asked_me' || ls[k].status === 'asking') { delete ls[k]; continue; }   // 没通过的开口，留着也没意义
+            if (ls[k].status !== 'closed') { ls[k].status = 'closed'; if (!Array.isArray(ls[k].msgs)) ls[k].msgs = []; ls[k].msgs.push({ k: 'sys', text: VESPER_COPY.quitLine, at: at, time: tm }); }
+            ls[k].unread = 0;
+          }
+        });
+        toast('info', '✦ S.：' + VESPER_COPY.quitDone);
+        updateBadge();
+        if (onDone) onDone();
+      });
+    });
+  }
+
+  // ── 找回线（11-06 服务器加的 vesper_my_lines）：本地这个存档一条线都没有、设备又入过会（比如清过聊天变量），
+  // 进俱乐部页时问一次服务器「我有哪些线」，把活着的线按对方去重（同一个人优先留已通的）放回本地列表。
+  // 聊天记录服务器上没有，找不回来——每条找回来的线里老实写一句。平时不调：问过一次就在存档里记 linesChecked，
+  // 只有存档被清空（linesChecked 跟着没了）才会再问；同一次加载、同一个存档最多问一次（_vl.linesTried）。
+  function vesperRecoverLines() {
+    if (!state || !vesperOn() || _vl.banned) return;
+    var c = vesperCfg(), save = vesperSaveId(), oc = onlineCfg();
+    // 「入过会」认 saves：这个存档在这台设备上 join 成功过（vesperRememberSave 记的，跟设备走，清聊天变量也还在）
+    if (!c.secret || !c.joinedAt || !save || c.saves.indexOf(save) === -1 || oc.off || _vl.linesTried[save]) return;
+    var d = vesperData();
+    if (d.linesChecked) return;
+    var ls = d.lines || {};
+    for (var k in ls) if (ls.hasOwnProperty(k) && ls[k]) return;   // 本地有线：不用找
+    _vl.linesTried[save] = true;
+    vesperRpc('vesper_my_lines', { p_secret: c.secret, p_save: save }).then(function (r) {
+      if (vesperSaveId() !== save) return;   // 中途换了存档：不往别的存档里写
+      if (!r.ok) {
+        if (r.err === 'banned') vesperFail(r);   // 别的（bad_secret＝这个存档没入过会、rate、断网）都不出声：这是后台补救，不是玩家点的
+        return;
+      }
+      var got = Array.isArray(r.lines) ? r.lines : [], by = {};
+      got.forEach(function (x) {   // 按对方去重：已通的优先，同样状态留线号大的（新的）
+        if (!x || !x.line || !x.with || !x.with.id || (x.status !== 'open' && x.status !== 'asked')) return;
+        var o = by[x.with.id];
+        if (!o || (x.status === 'open' && o.status !== 'open') || (x.status === o.status && Number(x.line) > Number(o.line))) by[x.with.id] = x;
+      });
+      var pick = Object.keys(by).map(function (k2) { return by[k2]; });
+      var at = Date.now(), tm = vesperClock(at), n = 0;
+      vsWrite(function (vs) {
+        vs.linesChecked = at;
+        if (!vs.lines || typeof vs.lines !== 'object') vs.lines = {};
+        var blocked = Array.isArray(vs.blocked) ? vs.blocked : [];
+        n = 0;
+        pick.forEach(function (x) {
+          var lid = String(x.line);
+          if (vs.lines[lid] || blocked.indexOf(x.with.id) !== -1) return;
+          var st = x.status === 'open' ? 'open' : (x.mine ? 'asking' : 'asked_me');
+          var t0 = Date.parse(x.at) || at;
+          vs.lines[lid] = { id: lid, with: JSON.parse(JSON.stringify({ id: x.with.id, side: x.with.side || '', handle: x.with.handle || '', card: vesperFaceCard(x.with.card) })),
+            status: st, mine: !!x.mine, first: '', recovered: true, unread: 0, at: t0,
+            msgs: [{ k: 'sys', text: VESPER_COPY.recovered, at: at, time: tm }] };
+          n++;
+        });
+      }).then(function () {
+        if (n) { toast('info', '✦ S.：' + VESPER_COPY.recoveredToast.replace('{c}', n)); updateBadge(); }
+        if (currentPage === 'vesper' && !_ves.editing) openVesper();
+      });
+    });
+  }
   // 优先剧情时间（正文 [TIME:] 标记 → sb.game.time）：手机时钟和正文同步，没有才退回真实时钟
   function nowT() {
     try { var v = SBgetVars(); var gt = v && v.sb && v.sb.game && v.sb.game.time; if (gt && /^\d{1,2}:\d{2}$/.test(String(gt).trim())) return String(gt).trim(); } catch (e) {}
@@ -1658,6 +3762,180 @@
     '#sbnyc-panel .sb-calllog .cl i svg{width:15px;height:15px;}',
     // 装置开着时悬浮手机外面一圈梅紫晕光，亮度跟实时强度走（--tk 由 toyFab 每 100ms 写）
     '#sbnyc-fab.toy-on{filter:drop-shadow(0 6px 14px rgba(6,10,20,.55)) drop-shadow(0 0 calc(3px + var(--tk,0) * 12px) rgba(196,110,214,calc(.25 + var(--tk,0) * .6)));}',
+    // ── ✦ Club Vesper 暮星俱乐部：颜色全走面板变量（夜间自动跟着换）；表单控件颜色自己钉死，不让酒馆主题渗进来 ──
+    '#sbnyc-panel .sd-vs-set{display:flex;align-items:center;gap:12px;margin:6px 14px 20px;padding:12px 14px;border:.5px solid var(--gold);border-radius:14px;background:var(--paper-2);}',
+    '#sbnyc-panel .sd-vs-set .sdv-tt{flex:1;min-width:0;display:flex;flex-direction:column;}',
+    '#sbnyc-panel .sd-vs-set .sdv-tt b{font-family:var(--font-en);font-size:14px;line-height:1.35;color:var(--ink);font-weight:600;letter-spacing:.5px;}',
+    '#sbnyc-panel .sd-vs-set .sdv-tt b + b{font-family:var(--font-cn);font-size:13px;letter-spacing:2px;color:var(--gold);font-weight:500;}',
+    '#sbnyc-panel .sd-vs-set .sdv-tt small{font-size:10.5px;color:var(--ink-sub);margin-top:4px;line-height:1.4;}',
+    '#sbnyc-panel button.sd-vs-sw{position:relative;flex:none;width:44px;height:26px;min-width:44px;border-radius:13px;border:1px solid var(--line);background:var(--paper-3);cursor:pointer;padding:0;margin:0;-webkit-appearance:none;appearance:none;box-shadow:none;outline:none;transition:background .18s,border-color .18s;}',
+    '#sbnyc-panel button.sd-vs-sw::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .18s;}',
+    '#sbnyc-panel button.sd-vs-sw.on{background:var(--gold);border-color:var(--gold);}',
+    '#sbnyc-panel button.sd-vs-sw.on::after{left:20px;}',
+    '#sbnyc-panel .sd-vs{padding-bottom:18px;}',
+    '#sbnyc-panel .sd-vs .sdv-note{font-size:11px;color:var(--ink-faint);padding:0 20px 6px;}',
+    '#sbnyc-panel .sd-vs .sdv-card{margin:2px 14px 8px;padding:13px 15px 13px;border-radius:16px;background:linear-gradient(160deg,var(--paper-2),var(--paper-3));border:.5px solid var(--gold);box-shadow:0 6px 18px rgba(26,42,58,.08);}',
+    '#sbnyc-panel .sd-vs .sdv-hd{display:flex;align-items:center;gap:8px;padding-bottom:9px;margin-bottom:2px;border-bottom:.5px dashed var(--line);}',
+    '#sbnyc-panel .sd-vs .sdv-hd b{flex:1;min-width:0;font-family:var(--font-en);font-size:14.5px;color:var(--ink);font-weight:600;word-break:break-all;}',
+    '#sbnyc-panel .sd-vs .sdv-nohd{flex:1;min-width:0;font-size:11.5px;color:var(--ink-sub);line-height:1.5;}',
+    '#sbnyc-panel .sd-vs .sdv-mark{flex:none;display:inline-flex;color:var(--gold);}',
+    '#sbnyc-panel .sd-vs .sdv-k{font-size:9.5px;letter-spacing:2px;color:var(--gold);margin:10px 0 4px;font-weight:600;}',
+    '#sbnyc-panel .sd-vs .sdv-who,#sbnyc-panel .sd-vs .sdv-line{font-family:var(--font-cn);font-size:13px;line-height:1.75;color:var(--ink);white-space:pre-wrap;word-break:break-word;}',
+    '#sbnyc-panel .sd-vs .sdv-who.empty,#sbnyc-panel .sd-vs .sdv-line.empty{color:var(--ink-faint);font-style:italic;font-size:12px;}',
+    '#sbnyc-panel .sd-vs .sdv-auto{display:flex;flex-wrap:wrap;gap:6px;}',
+    '#sbnyc-panel .sd-vs .sdv-auto span{display:inline-flex;align-items:baseline;gap:6px;padding:4px 10px;border-radius:999px;border:.5px solid var(--line);background:var(--paper);font-size:12px;color:var(--ink);}',
+    '#sbnyc-panel .sd-vs .sdv-auto i{font-style:normal;font-size:10px;color:var(--ink-sub);}',
+    '#sbnyc-panel .sd-vs .sdv-acts{display:flex;gap:8px;padding:2px 14px 8px;}',
+    '#sbnyc-panel .sd-vs .sdv-acts.in{padding:10px 0 0;}',
+    '#sbnyc-panel .sd-vs button.sdv-btn{flex:1;padding:9px 6px;border-radius:12px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-size:12.5px;line-height:1.3;cursor:pointer;font-family:var(--font-sans);box-shadow:none;}',
+    '#sbnyc-panel .sd-vs button.sdv-btn.solid{background:var(--gold);color:#fff;}',
+    '#sbnyc-panel .sd-vs button.sdv-btn[disabled],#sbnyc-panel .sd-vs button.sdv-link[disabled]{opacity:.55;cursor:default;}',
+    '#sbnyc-panel .sd-vs button.sdv-link{flex:none;background:none;border:none;box-shadow:none;color:var(--gold);font-size:11.5px;cursor:pointer;padding:4px 2px;font-family:var(--font-sans);text-decoration:underline;text-underline-offset:3px;}',
+    '#sbnyc-panel .sd-vs .sdv-form{margin:2px 14px 8px;padding:12px 13px;border-radius:16px;border:.5px solid var(--gold);background:var(--paper-2);}',
+    '#sbnyc-panel .sd-vs .sdv-form label{display:block;font-size:12px;color:var(--ink);margin:2px 0 6px;font-weight:600;}',
+    '#sbnyc-panel .sd-vs .sdv-form label small{font-weight:400;color:var(--ink-sub);font-size:10.5px;margin-left:6px;}',
+    '#sbnyc-panel .sd-vs .sdv-form textarea.sdv-ta{display:block;width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.65;font-family:var(--font-cn);background:var(--paper);color:var(--ink);-webkit-text-fill-color:var(--ink);caret-color:var(--gold);outline:none;box-shadow:none;resize:vertical;min-height:46px;max-height:320px;overflow-y:auto;color-scheme:light;opacity:1;}',
+    '#sbnyc-panel.night .sd-vs .sdv-form textarea.sdv-ta{color-scheme:dark;}',
+    '#sbnyc-panel .sd-vs .sdv-form textarea.sdv-ta::placeholder{color:var(--ink-faint);-webkit-text-fill-color:var(--ink-faint);opacity:1;}',
+    '#sbnyc-panel .sd-vs .sdv-form textarea.sdv-ta:focus{border-color:var(--gold);}',
+    '#sbnyc-panel .sd-vs .sdv-form textarea.sdv-ta.bad{border-color:var(--red);}',
+    '#sbnyc-panel .sd-vs .sdv-draftrow{display:flex;justify-content:flex-end;margin:3px 0 8px;}',
+    '#sbnyc-panel .sd-vs .sdv-gate{font-size:11.5px;color:var(--red);line-height:1.6;margin-top:6px;}',
+    '#sbnyc-panel .sd-vs .sdv-gate:empty{display:none;}',
+    '#sbnyc-panel .sd-vs .sdv-empty{margin:2px 14px 8px;padding:16px;border-radius:14px;border:.5px dashed var(--line);text-align:center;font-family:var(--font-cn);font-size:12.5px;line-height:1.85;color:var(--ink-sub);}',
+    '#sbnyc-panel .sd-vs .sdv-sig{display:block;margin-top:6px;font-family:var(--font-en);font-size:11px;color:var(--gold);letter-spacing:1px;}',
+    '#sbnyc-panel .sd-vs .sdv-row{display:flex;align-items:center;gap:10px;margin:6px 14px;padding:10px 12px;border:.5px solid var(--line);border-radius:12px;}',
+    '#sbnyc-panel .sd-vs .sdv-row > div{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}',
+    '#sbnyc-panel .sd-vs .sdv-row b{font-size:13px;color:var(--ink);font-weight:600;}',
+    '#sbnyc-panel .sd-vs .sdv-row small{font-size:10.5px;color:var(--ink-sub);line-height:1.45;}',
+    '#sbnyc-panel .sd-vs .sdv-foot{text-align:center;padding:18px 0 4px;color:var(--ink-faint);}',
+    '#sbnyc-panel .sd-vs .sdv-foot b{display:block;font-family:var(--font-en);font-size:12px;letter-spacing:3px;color:var(--gold);font-weight:600;}',
+    '#sbnyc-panel .sd-vs .sdv-foot span{display:block;font-family:var(--font-cn);font-size:11px;letter-spacing:3px;margin-top:2px;color:var(--ink-sub);}',
+    '#sbnyc-panel .sd-vs .sdv-foot small{display:block;font-size:10px;margin-top:3px;}',
+    // 入会小窗：盖住整块屏幕（screen 本身是圆角 + overflow:hidden），先淡入遮罩再浮起卡片
+    '@keyframes sdVsFade{from{opacity:0}to{opacity:1}}',
+    '@keyframes sdVsRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}',
+    '#sbnyc-panel .sdv-intro{position:absolute;top:0;left:0;right:0;bottom:0;z-index:80;background:rgba(10,12,18,.58);display:flex;align-items:center;justify-content:center;padding:18px;animation:sdVsFade .28s ease both;}',
+    '#sbnyc-panel .sdv-in-card{width:100%;max-width:320px;max-height:calc(100% - 16px);overflow-y:auto;background:var(--paper-2);border:.5px solid var(--gold);border-radius:18px;padding:18px 18px 14px;box-shadow:0 18px 40px rgba(0,0,0,.35);animation:sdVsRise .34s cubic-bezier(.2,.8,.25,1) both;}',
+    '#sbnyc-panel .sdv-in-h{display:flex;flex-direction:column;align-items:center;gap:2px;color:var(--gold);margin-bottom:12px;}',
+    '#sbnyc-panel .sdv-in-h b{font-family:var(--font-en);font-size:17px;letter-spacing:3px;color:var(--ink);font-weight:600;margin-top:4px;}',
+    '#sbnyc-panel .sdv-in-h small{font-family:var(--font-cn);font-size:12px;letter-spacing:4px;color:var(--gold);}',
+    '#sbnyc-panel .sdv-in-h small.sdv-in-by{font-size:10.5px;letter-spacing:1px;color:var(--ink-sub);margin-top:2px;}',
+    '#sbnyc-panel .sdv-in-from{font-family:var(--font-en);font-size:10px;letter-spacing:2px;color:var(--ink-faint);margin-bottom:6px;padding-top:10px;border-top:.5px dashed var(--line);}',
+    '#sbnyc-panel .sdv-in-body p{font-family:var(--font-cn);font-size:13px;line-height:1.75;color:var(--ink);margin:0 0 7px;}',
+    '#sbnyc-panel .sdv-in-b{display:flex;gap:10px;margin-top:14px;}',
+    '#sbnyc-panel .sdv-in-b button{flex:1;padding:10px 0;border-radius:12px;font-size:13.5px;letter-spacing:3px;cursor:pointer;font-family:var(--font-cn);box-shadow:none;}',
+    '#sbnyc-panel .sdv-in-b .sdv-in-no{background:transparent;border:1px solid var(--line);color:var(--ink-sub);}',
+    '#sbnyc-panel .sdv-in-b .sdv-in-yes{background:var(--gold);border:1px solid var(--gold);color:#fff;}',
+    // ✦ 第二刀：大厅名单、有人想见你、我的线、对话页、确认小窗、除名锁屏（颜色全走面板变量；尺寸上限用像素）
+    '#sbnyc-panel .sd-vs .sdv-sec-l{display:flex;align-items:center;justify-content:space-between;gap:8px;}',
+    '#sbnyc-panel .sd-vs .sdv-sec-l .sdv-link{display:inline-flex;align-items:center;gap:4px;text-decoration:none;font-size:11px;letter-spacing:0;}',
+    '#sbnyc-panel .sdv-side{flex:none;display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;line-height:1.6;letter-spacing:1px;font-weight:600;border:.5px solid currentColor;font-family:var(--font-cn);}',
+    '#sbnyc-panel .sdv-side.sb{color:#c27a95;}',
+    '#sbnyc-panel .sdv-side.sd{color:#4f7fb8;}',
+    '#sbnyc-panel.night .sdv-side.sb{color:#e3a3bb;}',
+    '#sbnyc-panel.night .sdv-side.sd{color:#8db4e6;}',
+    '#sbnyc-panel .sdv-p{margin:6px 14px;padding:11px 13px;border-radius:14px;border:.5px solid var(--line);background:var(--paper-2);cursor:pointer;}',
+    '#sbnyc-panel .sdv-p.full{cursor:default;border-color:var(--gold);}',
+    '#sbnyc-panel .sdv-p-top{display:flex;align-items:center;gap:7px;margin-bottom:6px;}',
+    '#sbnyc-panel .sdv-p-top b{flex:1;min-width:0;font-family:var(--font-en);font-size:13.5px;color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '#sbnyc-panel .sdv-p .sdv-mark{flex:none;display:inline-flex;color:var(--gold);}',
+    '#sbnyc-panel .sdv-p-who{font-family:var(--font-cn);font-size:12.5px;line-height:1.7;color:var(--ink);white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}',
+    '#sbnyc-panel .sdv-p.full .sdv-p-who{display:block;-webkit-line-clamp:unset;max-height:260px;overflow-y:auto;}',
+    '#sbnyc-panel .sdv-p-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;}',
+    '#sbnyc-panel .sdv-p-meta span{display:inline-flex;align-items:baseline;gap:5px;padding:2px 9px;border-radius:999px;border:.5px solid var(--line);background:var(--paper);font-size:11px;color:var(--ink);}',
+    '#sbnyc-panel .sdv-p-meta i{font-style:normal;font-size:9.5px;color:var(--ink-sub);}',
+    '#sbnyc-panel .sdv-p-line{margin-top:6px;font-family:var(--font-cn);font-size:12px;color:var(--ink-sub);line-height:1.6;word-break:break-word;}',
+    // v3：今天来过的小卡（淡一点、多一行多久前来过）；门关着时大厅那一块；向不在的人开口时那句提示
+    '#sbnyc-panel .sdv-p.away{opacity:.86;}',
+    '#sbnyc-panel .sdv-p-seen{margin-top:6px;font-size:10.5px;color:var(--ink-faint);letter-spacing:.3px;}',
+    '#sbnyc-panel .sd-vs .sdv-sec-r{margin-top:6px;}',
+    '#sbnyc-panel .sd-vs .sdv-closed{margin:14px 14px 10px;padding:28px 18px 22px;border-radius:16px;border:.5px solid var(--line);background:var(--paper);text-align:center;}',
+    '#sbnyc-panel .sd-vs .sdv-closed-ic{display:inline-flex;color:var(--gold);margin-bottom:10px;}',
+    '#sbnyc-panel .sd-vs .sdv-closed p{margin:0;font-family:var(--font-cn);font-size:13.5px;line-height:1.9;color:var(--ink);white-space:pre-wrap;word-break:break-word;}',
+    '#sbnyc-panel .sd-vs .sdv-away-note{padding:8px 20px 2px;font-size:12px;line-height:1.7;color:var(--ink-sub);}',
+    '#sbnyc-panel .sd-vs .sdv-away-note .sdv-sig{display:inline;margin:0 0 0 6px;}',
+    '#sbnyc-panel .sdv-nocard .sdv-go{display:block;margin:10px auto 0;max-width:180px;width:100%;}',
+    '#sbnyc-panel .sdv-knock{margin:6px 14px 10px;padding:12px 12px 10px;border-radius:16px;border:1px solid var(--gold);background:var(--paper-2);}',
+    '#sbnyc-panel .sdv-knock .sdv-p{margin:8px 0;}',
+    '#sbnyc-panel .sdv-kn-s{font-family:var(--font-cn);font-size:13px;line-height:1.75;color:var(--ink);}',
+    '#sbnyc-panel .sdv-kn-s .sdv-sig{display:block;margin-top:2px;font-family:var(--font-en);font-size:11px;color:var(--gold);letter-spacing:1px;}',
+    '#sbnyc-panel .sdv-kn-first{font-family:var(--font-cn);font-size:12.5px;color:var(--ink);line-height:1.7;padding:2px 2px 4px;word-break:break-word;white-space:pre-wrap;}',
+    '#sbnyc-panel .sdv-knock.in{margin:8px 4px;}',
+    '#sbnyc-panel .sdv-knock button.sdv-btn{flex:1;padding:9px 6px;border-radius:12px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-size:12.5px;cursor:pointer;font-family:var(--font-sans);box-shadow:none;}',
+    '#sbnyc-panel .sdv-knock button.sdv-btn.solid{background:var(--gold);color:#fff;}',
+    '#sbnyc-panel .sdv-knock .sdv-acts{display:flex;gap:8px;}',
+    '#sbnyc-panel .sdv-lines{margin:2px 14px 6px;border:.5px solid var(--line);border-radius:14px;overflow:hidden;}',
+    '#sbnyc-panel .sdv-lrow{display:flex;align-items:center;gap:9px;padding:10px 12px;cursor:pointer;border-bottom:.5px dashed var(--line);}',
+    '#sbnyc-panel .sdv-lrow:last-child{border-bottom:none;}',
+    '#sbnyc-panel .sdv-lrow.off{opacity:.55;}',
+    '#sbnyc-panel .sdv-lr-b{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;}',
+    '#sbnyc-panel .sdv-lr-b b{display:flex;align-items:center;gap:4px;font-size:13px;color:var(--ink);font-weight:600;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}',
+    '#sbnyc-panel .sdv-lr-b b svg{color:var(--gold);flex:none;}',
+    '#sbnyc-panel .sdv-lr-b small{font-size:11px;color:var(--ink-sub);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}',
+    '#sbnyc-panel .sdv-unread{flex:none;min-width:18px;height:18px;padding:0 5px;box-sizing:border-box;border-radius:9px;background:var(--red);color:#fff;font-size:10.5px;line-height:18px;text-align:center;}',
+    '#sbnyc-panel .sb-abtn .sdv-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--red);margin-left:3px;vertical-align:top;}',
+    '#sbnyc-panel .sdv-cnt{text-align:right;font-size:10.5px;color:var(--ink-faint);margin-top:3px;}',
+    '#sbnyc-panel .sdv-cnt.bad{color:var(--red);}',
+    // 对话页：名字旁一颗金色小星＝真人
+    '#sbnyc-panel .sdv-lnh .sb-ch-name b{display:flex;align-items:center;gap:5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+    '#sbnyc-panel .sdv-lnh .sdv-real{display:inline-flex;color:var(--gold);flex:none;}',
+    '#sbnyc-panel .sdv-ln .sdv-wait{font-style:italic;}',
+    // 对话页输入框：颜色自己钉死（借来的 .sb-cbar 是白底 + var(--ink)，夜间 --ink 变浅＝白底白字）
+    '#sbnyc-panel .sdv-cbar textarea{background:var(--paper);color:var(--ink);-webkit-text-fill-color:var(--ink);caret-color:var(--gold);color-scheme:light;opacity:1;}',
+    '#sbnyc-panel.night .sdv-cbar textarea{color-scheme:dark;}',
+    '#sbnyc-panel .sdv-cbar textarea::placeholder{color:var(--ink-faint);-webkit-text-fill-color:var(--ink-faint);opacity:1;}',
+    '#sbnyc-panel .sdv-ln .sdv-link-card .rc-m{font-size:13px;}',
+    '#sbnyc-panel .sdv-ln .sdv-link-card.them{align-self:flex-start;margin-right:auto;}',
+    '#sbnyc-panel .sdv-ln button.sdv-buy{display:block;width:100%;margin-top:8px;padding:8px 6px;border-radius:10px;border:1px solid var(--gold);background:var(--gold);color:#fff;font-size:12.5px;cursor:pointer;box-shadow:none;font-family:var(--font-sans);}',
+    '#sbnyc-panel .sdv-menu-t{padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;}',
+    '#sbnyc-panel .sdv-menu{max-height:70%;overflow-y:auto;}',
+    // 确认小窗：同入会小窗的样子
+    '#sbnyc-panel .sdv-cfm{position:absolute;top:0;left:0;right:0;bottom:0;z-index:85;background:rgba(10,12,18,.58);display:flex;align-items:center;justify-content:center;padding:18px;animation:sdVsFade .22s ease both;}',
+    '#sbnyc-panel .sdv-cfm .sdv-in-from{border-top:none;padding-top:0;}',
+    '#sbnyc-panel .sdv-cfm-t{font-family:var(--font-cn);font-size:15px;font-weight:600;color:var(--ink);margin:0 0 8px;line-height:1.5;word-break:break-word;}',
+    '#sbnyc-panel .sdv-cfm .sdv-in-body .sdv-p{margin:0;}',
+    '#sbnyc-panel .sdv-cfm textarea.sdv-cfm-ta{display:block;width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.6;font-family:var(--font-cn);background:var(--paper);color:var(--ink);-webkit-text-fill-color:var(--ink);caret-color:var(--gold);outline:none;box-shadow:none;resize:vertical;min-height:60px;max-height:200px;color-scheme:light;opacity:1;}',
+    '#sbnyc-panel.night .sdv-cfm textarea.sdv-cfm-ta{color-scheme:dark;}',
+    '#sbnyc-panel .sdv-cfm textarea.sdv-cfm-ta::placeholder{color:var(--ink-faint);-webkit-text-fill-color:var(--ink-faint);opacity:1;}',
+    '#sbnyc-panel .sdv-cfm .sdv-in-b button{flex:1;padding:10px 0;border-radius:12px;font-size:13.5px;letter-spacing:2px;cursor:pointer;font-family:var(--font-cn);box-shadow:none;}',
+    '#sbnyc-panel .sdv-cfm .sdv-cfm-no{background:transparent;border:1px solid var(--line);color:var(--ink-sub);}',
+    '#sbnyc-panel .sdv-cfm .sdv-cfm-yes{background:var(--gold);border:1px solid var(--gold);color:#fff;}',
+    // 除名锁屏：盖住整块屏幕
+    '#sbnyc-panel .sdv-ban{position:absolute;top:0;left:0;right:0;bottom:0;z-index:95;background:var(--paper);display:flex;align-items:center;justify-content:center;padding:28px 22px;text-align:center;}',
+    '#sbnyc-panel .sdv-ban-in{max-width:300px;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--gold);}',
+    '#sbnyc-panel .sdv-ban-in b{font-family:var(--font-en);font-size:17px;letter-spacing:3px;color:var(--ink);font-weight:600;margin-top:8px;}',
+    '#sbnyc-panel .sdv-ban-in small{font-family:var(--font-cn);font-size:12px;letter-spacing:4px;color:var(--gold);}',
+    '#sbnyc-panel .sdv-ban-body{margin-top:18px;padding-top:14px;border-top:.5px dashed var(--line);}',
+    '#sbnyc-panel .sdv-ban-body p{font-family:var(--font-cn);font-size:13.5px;line-height:1.8;color:var(--ink);margin:0 0 6px;}',
+    '#sbnyc-panel .sdv-ban-body p.sdv-ban-why{color:var(--ink-sub);font-size:12.5px;margin-top:10px;}',
+    '#sbnyc-panel .sdv-ban .sdv-sig{display:block;margin-top:8px;font-family:var(--font-en);font-size:11px;color:var(--gold);letter-spacing:1px;}',
+    // ✦ 第三刀：注入正文条、名片卡、起名框、三键确认、拉黑名单、退出（颜色全走面板变量；按钮颜色自己钉死，不吃酒馆主题）
+    '#sbnyc-panel .sdv-injbar{flex:none;display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:.5px solid var(--line);background:var(--paper-2);}',
+    '#sbnyc-panel .sdv-inj-t{flex:1;min-width:0;font-family:var(--font-cn);font-size:11px;line-height:1.55;color:var(--ink-sub);word-break:break-word;}',
+    '#sbnyc-panel button.sdv-injbtn{flex:none;display:inline-flex;align-items:center;gap:5px;max-width:160px;padding:7px 12px;border-radius:999px;border:1px solid var(--gold);background:var(--gold);color:#fff;-webkit-text-fill-color:#fff;font-size:12px;line-height:1.3;cursor:pointer;font-family:var(--font-sans);box-shadow:none;white-space:nowrap;}',
+    '#sbnyc-panel button.sdv-injbtn span{overflow:hidden;text-overflow:ellipsis;}',
+    '#sbnyc-panel button.sdv-injbtn svg{flex:none;}',
+    '#sbnyc-panel .sdv-ln .sdv-ncard{max-width:240px;}',
+    '#sbnyc-panel .sdv-ln .sdv-ncard.them{align-self:flex-start;margin-right:auto;}',
+    '#sbnyc-panel .sdv-ncard .sdv-nc-tag{font-size:10.5px;letter-spacing:1px;color:var(--gold);margin-top:2px;}',
+    '#sbnyc-panel .sdv-ncard .sdv-nc-bio{font-family:var(--font-cn);font-size:11.5px;line-height:1.6;margin-top:6px;opacity:.85;white-space:pre-wrap;word-break:break-word;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;}',
+    '#sbnyc-panel .sdv-ln button.sdv-take{display:block;width:100%;margin-top:8px;padding:8px 6px;border-radius:10px;border:1px solid var(--gold);background:var(--gold);color:#fff;-webkit-text-fill-color:#fff;font-size:12.5px;cursor:pointer;box-shadow:none;font-family:var(--font-sans);}',
+    '#sbnyc-panel .sdv-ln button.sdv-take[disabled]{opacity:.55;cursor:default;}',
+    '#sbnyc-panel .sdv-npc-star{display:inline-flex;vertical-align:-1px;margin-right:3px;color:var(--gold);}',
+    '#sbnyc-panel .sdv-cfm .sdv-cfm-err{font-size:11.5px;color:var(--red);line-height:1.6;margin-top:6px;}',
+    '#sbnyc-panel .sdv-cfm .sdv-cfm-err:empty{display:none;}',
+    '#sbnyc-panel .sdv-cfm textarea.sdv-cfm-ta.one{min-height:40px;resize:none;}',
+    '#sbnyc-panel .sdv-cfm .sdv-in-b.col{flex-direction:column-reverse;gap:8px;}',
+    '#sbnyc-panel .sdv-cfm .sdv-cfm-alt{background:transparent;border:1px solid var(--gold);color:var(--gold);}',
+    '#sbnyc-panel .sd-vs .sdv-blkrow{display:flex;justify-content:center;padding:10px 0 0;}',
+    '#sbnyc-panel .sd-vs .sdv-blk-note{padding:12px 20px 8px;line-height:1.6;}',
+    '#sbnyc-panel .sd-vs .sdv-blk{cursor:default;}',
+    '#sbnyc-panel .sd-vs button.sdv-unblk{flex:none;padding:6px 14px;border-radius:999px;border:1px solid var(--gold);background:transparent;color:var(--gold);font-size:12px;cursor:pointer;font-family:var(--font-sans);box-shadow:none;}',
+    '#sbnyc-panel .sd-vs button.sdv-unblk[disabled]{opacity:.55;cursor:default;}',
+    '#sbnyc-panel .sdv-kn-first.sdv-rec{font-style:normal;font-size:11.5px;color:var(--ink-sub);}',
+    '#sbnyc-panel .sd-vs-set .sd-vs-quit{display:block;margin-top:8px;padding-top:7px;border-top:.5px dashed var(--line);}',
+    '#sbnyc-panel .sd-vs-set .sd-vs-quit button{background:none;border:none;box-shadow:none;padding:2px 0;margin:0;color:var(--red);-webkit-text-fill-color:var(--red);font-size:12px;cursor:pointer;font-family:var(--font-sans);text-decoration:underline;text-underline-offset:3px;}',
   ].join('\n');
 
   // ── 挂载（先拆旧的，脚本重载/换聊天时不留双份） ──
@@ -1709,6 +3987,7 @@
     'The Weeknd — Starboy',
     'JAY-Z — Empire State of Mind',
   ];
+  var PLAYLIST0 = PLAYLIST.slice();   // 刀7：换聊天时退回垫场歌单（新聊天的 AI 歌单由 refreshView 读 / 请求）
   var songIdx = Math.floor(Math.random() * PLAYLIST.length);
   var plRequested = false;
   var statusUntil = 0;
@@ -1873,8 +4152,8 @@
     return n;
   }
   function totalUnread() { return (state && state.npcs) ? countUnread(state.npcs) : 0; }
-  function updateBadge() {
-    var n = totalUnread();
+  function updateBadge(vsLive) {
+    var n = totalUnread() + vesperUnread(vsLive);   // ✦ 暮星的未读（不在那条对话页时）也让悬浮球亮红点；开关关着时恒为 0
     badgeEl.style.display = n > 0 ? 'flex' : 'none';
     badgeEl.textContent = n > 9 ? '9+' : String(n);
   }
@@ -1893,7 +4172,7 @@
     fetchPool();   // 橱窗池顺手保鲜（10分钟节流，关联机则直接返回）
     fetchBanned();   // 封禁名单顺手保鲜（5分钟节流；本机被封则当场落锁）
     if (!state) {
-      root.innerHTML = '<div class="sb-wait">⏳ 等待游戏数据<br>先在开场消息里填表并提交<br><span style="font-size:10px">（提交后金主们的第一批私信会自动进来）</span></div>';
+      root.innerHTML = '<div class="sb-wait">⏳ 等待游戏数据<br>先在开场消息里填表并提交<br><span style="font-size:10px">（提交后，手机里第一批私信会自动进来）</span></div>';
       runRenderHooks('wait');
       phoneRendered('wait');   // 🔌 二创接口：等待屏也通知（外挂好知道主屏插槽没了）
       return;
@@ -1949,7 +4228,8 @@
   }
   function renderActions() {
     return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">' + sbIcon('refresh', 14) + ' 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button></div>' +
-      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn' + ((TK.live && TK.live.on) ? ' tk-on' : '') + '" data-act="remote">' + sbIcon('toy', 14) + ' 遥控</button></div>' +   // 第二行（UWU 的两个新页面）
+      '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn' + ((TK.live && TK.live.on) ? ' tk-on' : '') + '" data-act="remote">' + sbIcon('toy', 14) + ' 遥控</button>' +
+      (vesperOn() ? '<button class="sb-abtn" data-act="vesper" title="Club Vesper · 暮星俱乐部">' + sbIcon('star', 14) + ' 暮星' + (vesperUnread() > 0 ? '<i class="sdv-dot"></i>' : '') + '</button>' : '') + '</div>' +   // 第二行（UWU 的两个新页面）；✦ 暮星只在设置里打开了才出现
       '<div class="sb-slot" data-sb-slot="home"></div>';   // 🔌 主屏插槽（SugarOS.onHomeSlot），空着就不占地方
   }
   function renderDMList(npcs) {
@@ -1976,7 +4256,9 @@
       var tagsR = npc.isGroup
         ? (npc.anon ? '匿名' : ((npc.members || []).length + ' 人'))
         : (npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已拉黑你' : '');
-      if (tagsR) h += '<div class="sb-dmtags">' + esc(tagsR) + '</div>';
+      // ✦ 暮星注入来的：一颗小星 +「真人开的头 · AI 接着演」，和真人那条线一眼分开
+      if (npc.vesper && !npc.isGroup) h += '<div class="sb-dmtags sdv-npc-tag"><span class="sdv-npc-star">' + sbIcon('star', 11) + '</span>' + esc(VESPER_COPY.npcTag) + '</div>';
+      else if (tagsR) h += '<div class="sb-dmtags">' + esc(tagsR) + '</div>';
       h += '<div class="sb-dmlast">' + esc(npc.last_message || '') + (readMark(npc) ? '<span class="sb-rd"> · 已读</span>' : '') + '</div></div>';
       // 🔕 免打扰的群：红角标换成一个小灰点（占原来角标的位置，知道有动静就行）
       if (npc.unread > 0) h += quiet ? '<span class="sb-dnd-dot"></span>' : '<span class="sb-badge">' + npc.unread + '</span>';
@@ -2104,6 +4386,7 @@
       else if (a === 'calendar') { openCalendar(); SBemit('sb_daybook'); }   // 📅 生成器重算完会发 sb_updated，日历自己刷新
       else if (a === 'trans') openTransactions();
       else if (a === 'remote') openRemote();
+      else if (a === 'vesper') openVesper();   // ✦ 编辑到一半离开（或起草在页外回来）的，回来接着编
     }); })(btns[j]); }
     // 行程 todolist：⭕/✅打勾切换、点文字编辑、✕直接删（都不弹确认，误删了让TA重加——手机上确认框比误删烦）
     var chks = root.querySelectorAll('.sb-schk');
@@ -2360,18 +4643,24 @@
   }
 
   // 排行榜：分数 = 脚本直接读钱包余额，没有输入框，想编都没地方编
-  var _rank = null, _rankAt = 0;
+  var _rank = null, _rankAt = 0, _rankErr = false;
   async function fetchRank(force) {
     if (onlineCfg().off) return;
     if (!force && _rank && Date.now() - _rankAt < 5 * 60 * 1000) return;
+    if (!force && !_rank && _rankErr && Date.now() - _rankAt < 60 * 1000) return;   // ✦ 刚失败过：一分钟内别反复打（暮星页每次重画都会来问）
     _rankAt = Date.now();
     try {
       var rows = await srvFetch('sd_rank?order=amount.desc&limit=100');   // 群众要求加位：25 → 干脆 100（瓶颈在这，不在渲染）
       if (Array.isArray(rows)) {
-        _rank = rows;
+        _rank = rows; _rankErr = false;
         if (currentPage === 'board:sb') openBoard('sb');   // 榜单页开着 → 真人数据到了就重画
+        else if (currentPage === 'vesper' && !_ves.editing) openVesper();   // ✦ 暮星小卡上的慷慨榜名次跟着更新
       }
-    } catch (e) { console.warn('[SD-S v4] rank fetch failed', e); }
+    } catch (e) {
+      console.warn('[SD-S v4] rank fetch failed', e);
+      _rankErr = true;
+      if (currentPage === 'vesper' && !_ves.editing) openVesper();   // ✦ 名次那格从「拉取中」换成「没拉到」
+    }
   }
   // 全服姐妹楼（sd_posts 表，动森论坛同款零后端）：楼主帖 + 回帖(parent_id)，读匿名，写用马甲
   var _gposts = null, _gpostsAt = 0;
@@ -2507,11 +4796,16 @@
     else if (currentPage === 'calendar') openCalendar();
     else if (currentPage === 'transactions') openTransactions();
     else if (currentPage === 'remote') openRemote();   // 🎛 她在私信里戴上/摘下 → 控制区跟着变
+    else if (currentPage === 'vesper') { if (!_ves.editing) openVesper(); }   // ✦ 编辑框开着时不重画（会冲掉正在打的字）
+    else if (currentPage && currentPage.indexOf('vesper:line:') === 0) openVesperLine(currentPage.slice(12));   // ✦ 和真人的对话页（输入框里的字会原样放回）
+    else if (currentPage === 'vesper:ask') {}   // ✦ 正在写第一句：不重画
+    else if (currentPage === 'vesper:blocks') openVesperBlocks();   // ✦ 拉黑名单
     else if (currentPage && currentPage.indexOf('board:') === 0) openBoard(currentPage.slice(6));
     else if (currentPage && currentPage.indexOf('group:') === 0) openGroupMembers(currentPage.slice(6));   // 👥 成员页开着时（有人进群/退群）跟着刷新
   }
   // 系统权威扣款（买东西/订阅走这里，不靠主线 LLM 记账；主线消息里注明"已付款"防止它再补记）
-  function debit(amount, what, channel) {
+  // floorWhat（刀7，选填）：往「手机动态」楼层记的那一行用这个说法（不填＝和流水一样）。俱乐部转出 / 送出时流水写上对方马甲，楼层那行不带——真人的名字不进正文
+  function debit(amount, what, channel, floorWhat) {
     var bal = (state && state.wallet && state.wallet.balance) || 0;
     if (amount > bal) { toast('warning', '💸 余额不够（' + fmtCNY(bal) + '）——这笔先放放，或者等回款'); return false; }   // 翻面残留：原文是"先去挣"（SB 视角）
     var atId = Date.now() + '-' + Math.random().toString(36).slice(2, 6);   // 总账 id 先定好，变量和镜像记同一个
@@ -2549,7 +4843,7 @@
       if (state.wallet.allTransactions.length > 500) state.wallet.allTransactions = state.wallet.allTransactions.slice(-500);
     }
     // 消费也进「手机动态」楼层（开关关着时生成器那头会直接忽略）
-    SBemit('sb_floor_log', { lines: ['💳〔' + nowT() + '〕-' + fmtCNY(amount) + ' · ' + what] });
+    SBemit('sb_floor_log', { lines: ['💳〔' + nowT() + '〕-' + fmtCNY(amount) + ' · ' + (floorWhat || what)] });
     return true;
   }
   // 买到的东西进衣橱（sb.closet）→ 注入主线摘要，AI 写她出场时真的会穿戴用上；之后还能出二手
@@ -4753,9 +7047,44 @@
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重置所有联系人和私信记录，游戏日回到第 1 天，钱包/日程清空——但保留你的个人档案（名字/年龄/签证/学校）。需<b>连续确认三次</b>才会执行，防止误触。</div>';
     // 二创致谢（Fan 拍板的署名规则：有开关的写在开关上，没开关的列在这里）
     h += '<div class="sb-empty" style="padding:14px 16px 18px;">🎁 📅日历 · 💳流水 · 🖼️壁纸 · ⏱点时间校准 · 消息带日期与时间分割线 · 📤数据导出/导入/回档 —— 来自 UWU 老师的二创贡献<br>❤️ 透明背景模式 —— 来自藐姑射仙老师，爱来自藐姑射仙<br>😀 88 张表情包 —— 《霖州往事》作者好大鱼老师授权提供，感谢好大鱼老师<br>📞 语音/视频通话 —— 好大鱼老师授权移植（通话屏、接听/拒接、视频画面、通话纪要和配套的破限提示词），感谢好大鱼老师<br>🎙 真人语音通话 —— 流式播放、逐句朗读、酒馆代理等参考并移植自常夜灯老师的《镜译》（MirrorTranslate）与 Yoren 老师的《通用通讯终端 V4》，感谢两位老师授权<br>🎚 自动来消息的三路开关（冷清/活跃/按轮数/按分钟）—— 来自凌keke老师的二创《私信生成器控制版》<br>👤 个人主页（房产/车/公司/收藏，点主屏「个人主页」进）—— 来自凌keke老师的二创《一掷千金 · 用户个人主页》，感谢凌keke老师</div>';
+    // ✦ Club Vesper 暮星俱乐部：设置页最下面一行开关（默认关；跟设备走）
+    var vsOn = vesperOn();
+    // 退出俱乐部（第三刀）：放在开关这张卡里、名字三行下面（开关这一块仍是设置页最后一样）；入过会才有，开关关着也能退
+    h += '<div class="sd-vs-set"><div class="sdv-tt"><b>' + esc(VESPER_NAME[0]) + '</b><b>' + esc(VESPER_NAME[1]) + '</b><small>' + esc(VESPER_NAME[2]) + '</small>' +
+      '<span class="sd-vs-quit" id="sd-vesper-quitrow"' + (vesperCfg().joinedAt ? '' : ' style="display:none;"') + '><button type="button" id="sd-vesper-quit">' + esc(VESPER_COPY.quitBtn) + '</button></span></div>' +
+      '<button class="sd-vs-sw' + (vsOn ? ' on' : '') + '" id="sd-vesper-toggle" role="switch" aria-checked="' + (vsOn ? 'true' : 'false') + '" aria-label="Club Vesper 暮星俱乐部"></button></div>';
     h += '</div>';
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     chatEl.querySelector('.sb-ch-back').addEventListener('click', closeChat);
+    var vsT = chatEl.querySelector('#sd-vesper-toggle');
+    if (vsT) vsT.addEventListener('click', function (ev) {
+      ev.stopPropagation();   // 要开小窗的点击别冒泡（这张卡在冒泡上栽过三次）
+      var setSw = function (on) { vsT.classList.toggle('on', on); vsT.setAttribute('aria-checked', on ? 'true' : 'false'); vesperHomeSync(); };   // 原地改，不重画（重画会跳回页顶）；首页在后面先画好（刀9）
+      var c = vesperCfg();
+      var qr = chatEl.querySelector('#sd-vesper-quitrow');
+      if (c.on) {
+        c.on = false;
+        if (saveVesperCfg(c)) { setSw(false); vesperTimers(false); toast('info', VESPER_COPY.offDone); vesperUnlistNow(); }   // 关掉＝马上从大厅撤牌
+        return;
+      }
+      if (c.joinedAt) { c.on = true; if (saveVesperCfg(c)) { setSw(true); vesperTimers(true); toast('success', '✦ 暮星俱乐部开了，首页有入口'); } return; }   // 入过会就不再问
+      vesperIntro(function () {
+        // 设备暗号在「进门」这一刻才生成（以前生成过就沿用：丢了暗号＝换了一个新身份）
+        if (saveVesperCfg({ on: true, joinedAt: new Date().toISOString(), secret: c.secret || vesperNewSecret(), saves: c.saves, tags: c.tags })) {
+          setSw(true); vesperTimers(true); toast('success', '✦ S.：' + VESPER_COPY.welcome);
+          if (qr) qr.style.display = '';
+        }
+      }, function () { toast('info', '✦ S.：' + VESPER_COPY.declined); });
+    });
+    var vsQ = chatEl.querySelector('#sd-vesper-quit');
+    if (vsQ) vsQ.addEventListener('click', function (ev) {
+      ev.stopPropagation();   // 要开确认小窗
+      vesperQuit(function () {
+        if (vsT) { vsT.classList.remove('on'); vsT.setAttribute('aria-checked', 'false'); }
+        var qr2 = chatEl.querySelector('#sd-vesper-quitrow'); if (qr2) qr2.style.display = 'none';
+        vesperHomeSync();   // 刀9：退了会，首页入口跟着没
+      });
+    });
     // 🔄 拉取模型：也是连通性测试——拉得到 = 地址/Key/CORS 都通，私信生成基本就能用
     var fbtn = chatEl.querySelector('#sbnyc-cfg-fetch');
     fbtn.addEventListener('click', async function () {
@@ -5095,7 +7424,7 @@
     var hist = npc.dm_history || [];
     var subLine = isGrp
       ? '<span class="sb-gmem">' + ((npc.members || []).length) + ' 人 ›</span>' + (npc.anon ? ' 匿名 · 你是「' + esc(npc.myHandle || '？') + '」' : '')
-      : esc(npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已把你拉黑' : '');
+      : (npc.vesper ? '<span class="sdv-npc-star">' + sbIcon('star', 11) + '</span>' + esc(VESPER_COPY.npcTag) : esc(npc.archetype || '')) + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已把你拉黑' : '');   // ✦ 暮星注入来的那位
     var tkO = !isGrp && toysOf().owned[name];   // 🎛 她有遥控玩具 → 名字下面一眼看到戴没戴（Fan 10-11 真机：「我找不到对方戴了没有」）
     if (tkO) subLine += '<span class="sb-tk-chip' + (tkO.wearing ? ' on' : '') + '" data-tkchip="1">TOY·LINK · ' + ((TK.live && TK.live.on && TK.live.who === name) ? '开着' : (tkO.wearing ? '戴着' : '还没戴')) + ' ›</span>';
     var h = '<div class="sb-ch" data-npc="' + esc(name) + '" data-kind="' + npcKind(name, npc) + '"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + '</small></div>' +
@@ -6408,6 +8737,7 @@
   try { VIEW.SugarOS = sbPublicApi; } catch (e) {}
   function sbSelfCleanup() {
     try { if (VIEW.SugarOS === sbPublicApi) delete VIEW.SugarOS; } catch (e) {}   // 🔌 二创接口：只摘自己挂的那个
+    try { eventRemoveListener(tavern_events.CHAT_CHANGED, onChatChanged); } catch (e) {}   // 刀7：换聊天的监听（函数声明会提升，这里引用得到）
     try { var _rt = phoneRendered._t || {}; for (var _rk in _rt) clearTimeout(_rt[_rk]); } catch (e) {}
     try { clearInterval(_songTimer); } catch (e) {}
     try { clearInterval(_revealTimer); } catch (e) {}
@@ -6415,6 +8745,10 @@
     try { clearTimeout(_bubTimer); } catch (e) {}
     try { if (_bubObs) _bubObs.disconnect(); } catch (e) {}                   // 气泡观察器：挂在 parent 的 DOM 上，必须自己断
     try { clearTimeout(_kvTimer); } catch (e) {}
+    try { clearTimeout(_ves.timer); } catch (e) {}  // ✦ 暮星起草的兜底计时
+    try { clearInterval(_vsTimer); clearInterval(_vsFast); clearTimeout(_vsBoot); } catch (e) {}   // ✦ 暮星：报到 / 取信 / 启动查除名
+    try { vesperVisWatch(false); } catch (e) {}   // ✦ 暮星：摘掉 parent.document 上的切后台监听；正在闪的标题还原
+    try { for (var vw in _vl.wbWait) if (_vl.wbWait.hasOwnProperty(vw)) clearTimeout(_vl.wbWait[vw]); _vl.wbWait = {}; } catch (e) {}   // ✦ 暮星：等世界书回音
     try { VIEW.removeEventListener('resize', keepInView); } catch (e) {}
     try { if (VIEW.visualViewport) VIEW.visualViewport.removeEventListener('resize', keepInView); } catch (e) {}
     try {
@@ -6787,6 +9121,45 @@
     setStatus('📰 本期内容已更新');
     if (chatEl.style.display !== 'none' && currentPage && currentPage !== 'settings') reopenPage();
   });
+  SBon('sd_vesper_draft', vesperDraftDone);            // ✦ 暮星：起草回来了 → 填进编辑框（不保存）
+  SBon('sd_vesper_draft_failed', vesperDraftFailed);   // ✦ 暮星：起草没成 → 说清是空白、被拒还是别的
+  SBon('sd_import_entry_done', vesperEntryDone);       // ✦ 暮星：注入正文 / 收下名片 → 世界书条目写好了
+  SBon('sd_import_entry_failed', vesperEntryFailed);   // ✦ 暮星：世界书没写成（TA 只活在手机里）
+  // ✦ 暮星俱乐部的定时器（句柄接住，卸载时在 sbSelfCleanup 里清）：
+  //   开关关着就不起报到/取信定时器（设置里打开那一刻才起，关掉就停）；起了以后每一拍也先问 vesperReady()。
+  //   设备上有暗号（入过会）时，启动查一次是否被除名——开关关着也查（接口说明要求）。从没入过会的设备什么都不起。
+  if (vesperCfg().on) vesperTimers(true);
+  if (vesperCfg().secret) _vsBoot = setTimeout(function () { try { vesperBoot(); } catch (e) {} }, 1200);
+  // ── 换聊天（刀7，11-07 实测：A→B→A 首页钱包还是 B 的余额；俱乐部的线显示「找回来的」）──
+  // 同一张卡里换聊天，酒馆助手不重载脚本：state 镜像还是上一个聊天的，内存里的缓存也是。这里当成「脚本重载了一次」：
+  // 收掉和聊天绑在一起的东西 → 从新聊天的变量重读 state → 手机开着就回首页重画 → 俱乐部开关开着就重新报到。
+  // 设备上的东西（开关、暗号、除名锁、门关没关、夜间、壁纸偏好）不动；开关关着时这里不发任何请求、不写任何变量。
+  function onChatChanged() {
+    try {
+      // ✦ 暮星：先停计时器，内存里按存档记的全清掉（名单、入会签名、忙锁、找回线问过没有、拉黑名单那份、起草）
+      vesperTimers(false);
+      _vl.people = null; _vl.recent = null; _vl.err = ''; _vl.lobbyBusy = false; _vl.lastLobby = 0; _vl.joinedSig = ''; _vl.joining = null;
+      _vl.fetching = null; _vl.fetchAgain = false; _vl.sending = false; _vl.netWarned = 0; _vl.askTo = null; _vl.moreRounds = 0;
+      _vl.injecting = false; _vl.quitting = false; _vl.linesTried = {}; _vl.blocks = null; _vl.blocksErr = ''; _vl.blocksBusy = false;
+      clearTimeout(_ves.timer); _ves.editing = false; _ves.who = ''; _ves.line = ''; _ves.busy = false; _ves.nonce = 0;   // nonce 清零：上一个聊天的起草回来也不认
+      // 手机原有的：开着的小窗 / 菜单 / 多选 / 通话 / 遥控、按聊天记的内存表
+      try { closeMsgMenu(); } catch (e) {}
+      try { exitMultiSel(); } catch (e) {}
+      try { ['.sdv-cfm', '.sb-pp'].forEach(function (q) { var o = panel.querySelector(q); if (o && o.parentNode) o.parentNode.removeChild(o); }); } catch (e) {}
+      try { if (_call) { var c0 = _call; _call = null; closeCallScreen(c0); } } catch (e) {}   // 上一个聊天的电话：直接收掉，不落纪要（不往新聊天里写）
+      try { clearInterval(TK.timer); TK.timer = 0; TK.env = 0; TK.live = null; toyFab(0); } catch (e) {}   // 遥控：只停本地，不写变量（新聊天的 run 由 loadState→toySync 收拾）
+      _seenThem = {}; _grpAutoFired = {}; _grpPick = {}; _grpCands = []; _impResults = []; _pendingTrs = {}; _bookPending = null; _onTaxReady = null;
+      _calMonthOffset = 0; _expShow = []; _windfall = 0; PLAYLIST = PLAYLIST0.slice(); songIdx = 0;   // 歌单：新聊天有 AI 歌单就用（refreshView 读）；没有就先放垫场的——plRequested 不清零，换聊天不额外叫模型
+      // 视图：回首页（手机开着就当场重画；没开也把状态归位，下次打开就是新聊天的首页）
+      currentChatName = null; currentPage = null;
+      chatEl.style.display = 'none'; root.style.display = '';
+      refreshView();   // loadState 从新聊天的变量重读 state；没交表的聊天＝「等待游戏数据」
+      if (_vl.banned) vesperLock(_vl.banReason);   // 除名锁屏跟设备走，换聊天也还在
+      if (vesperCfg().on) { vesperTimers(true); vesperTick(); }   // 开关开着：用新聊天的存档标记重新报到（新聊天没写小卡＝vesperReady 不过，什么也不发）
+      updateBadge();
+    } catch (e) { console.warn('[SB phone] 换聊天收拾失败', e); }
+  }
+  try { eventOn(tavern_events.CHAT_CHANGED, onChatChanged); } catch (e) {}
   SBon('sb_playlist', function (songs) {
     if (Array.isArray(songs) && songs.length) {
       PLAYLIST = songs; songIdx = 0;
