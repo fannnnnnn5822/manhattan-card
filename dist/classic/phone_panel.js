@@ -6600,6 +6600,25 @@
         vesperHomeSync();   // 刀9：退了会，首页入口跟着没
       });
     });
+    // 11-07 火山：酒馆后台代理要的请求头（CSRF）和地址——同 vesperChatId 的找法：脚本全局 → 主页面 → parent
+    function tavernHeaders() {
+      var cands = [];
+      try { if (typeof SillyTavern !== 'undefined') cands.push(SillyTavern); } catch (e) {}
+      try { cands.push((DOC.defaultView || window).SillyTavern); } catch (e) {}
+      try { cands.push(window.parent.SillyTavern); } catch (e) {}
+      for (var i = 0; i < cands.length; i++) {
+        var c = cands[i];
+        try { if (c && typeof c.getRequestHeaders === 'function') return c.getRequestHeaders(); } catch (e) {}
+        try { if (c && typeof c.getContext === 'function') { var cx = c.getContext(); if (cx && typeof cx.getRequestHeaders === 'function') return cx.getRequestHeaders(); } } catch (e) {}
+      }
+      return { 'Content-Type': 'application/json' };
+    }
+    function tavernApiUrl(p) {   // 11-07 火山：srcdoc/blob iframe 里相对地址不靠谱 → 用主页面 origin
+      var o = '';
+      try { o = String((DOC.defaultView || window).location.origin || ''); } catch (e) {}
+      if (!/^https?:/.test(o)) { try { o = String(window.parent.location.origin || ''); } catch (e) { o = ''; } }
+      return (/^https?:/.test(o) ? o : '') + p;
+    }
     // 🔄 拉取模型：也是连通性测试——拉得到 = 地址/Key/CORS 都通，私信生成基本就能用
     var fbtn = chatEl.querySelector('#sbnyc-cfg-fetch');
     fbtn.addEventListener('click', async function () {
@@ -6607,12 +6626,29 @@
       var k = chatEl.querySelector('#sbnyc-cfg-key').value.trim();
       if (!u || !k) { toast('warning', '先填 API 地址和 Key'); return; }
       fbtn.textContent = '⏳ 拉取中…';
+      var tavTried = false, viaT = false;   // 11-07 火山
       try {
         var mu = u.replace(/\/+$/, '').replace(/\/chat\/completions$/, '');
         mu = /\/v\d+$/.test(mu) ? mu + '/models' : mu + '/v1/models';
-        var resp = await fetch(mu, { headers: { 'Authorization': 'Bearer ' + k } });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        var j = await resp.json();
+        var resp = null, j = null;   // 11-07 火山
+        try { resp = await fetch(mu, { headers: { 'Authorization': 'Bearer ' + k } }); }
+        catch (e0) { if (!e0 || e0.name !== 'TypeError') throw e0; }   // 11-07 火山：直连被拦（CORS）先不报错
+        if (resp) {
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          try { j = await resp.json(); } catch (e1) { j = null; }   // 11-07 火山：读不出 JSON 也转酒馆
+        }
+        if (!j) {   // 11-07 火山：直连不通 → 让酒馆后台替我们拉 /models
+          tavTried = true;
+          var base = mu.replace(/\/models$/, '');
+          var tr = await fetch(tavernApiUrl('/api/backends/chat-completions/status'), {
+            method: 'POST', headers: tavernHeaders(),
+            body: JSON.stringify({ chat_completion_source: 'openai', reverse_proxy: base, proxy_password: k }),
+          });
+          var tj = null; try { tj = await tr.json(); } catch (e2) {}
+          if (!tr.ok || !tj || tj.error) throw new Error(resp ? '返回读不出来' : '浏览器直连被拦');   // 酒馆失败回 {error:true}
+          j = tj; viaT = true;
+          try { VIEW.localStorage.setItem('sbnyc_api_via_tavern', base); } catch (e3) {}   // 11-07 火山：私信生成也直接走酒馆
+        }
         var ids = (j.data || j.models || []).map(function (m) { return (m && (m.id || m.name)) || m; }).filter(function (x) { return typeof x === 'string'; });
         if (!ids.length) throw new Error('返回里没有模型列表');
         chatEl.querySelector('#sbnyc-cfg-models').innerHTML = ids.map(function (id) { return '<option value="' + esc(id) + '">'; }).join('');
@@ -6623,10 +6659,11 @@
         sel.onchange = function () { if (sel.value) chatEl.querySelector('#sbnyc-cfg-model').value = sel.value; };
         var mi = chatEl.querySelector('#sbnyc-cfg-model');
         if (!mi.value.trim()) mi.value = ids[0];
-        toast('success', '📡 拉到 ' + ids.length + ' 个模型——连通性OK，选一个再保存');
+        if (viaT) toast('success', '📡 这家不让浏览器直连，已改走酒馆后台——拉到 ' + ids.length + ' 个模型');   // 11-07 火山
+        else toast('success', '📡 拉到 ' + ids.length + ' 个模型——连通性OK，选一个再保存');
         fbtn.innerHTML = sbIcon('refresh', 14) + ' 拉取模型 (' + ids.length + ')';
       } catch (e) {
-        toast('error', '拉取失败: ' + ((e && e.message) || e) + '。多半是地址不对 / Key 无效 / 该服务不允许浏览器直连(CORS)');
+        toast('error', '拉取失败: ' + ((e && e.message) || e) + '。多半是地址不对 / Key 无效 / 该服务不允许浏览器直连(CORS)' + (tavTried ? '（走酒馆后台也不行）' : ''));   // 11-07 火山
         fbtn.innerHTML = sbIcon('refresh', 14) + ' 拉取模型';
       }
     });
