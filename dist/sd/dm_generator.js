@@ -1513,6 +1513,57 @@ function chatUrlOf(u) {
   if (/\/v\d+$/.test(u)) return u + '/chat/completions';
   return u + '/v1/chat/completions';
 }
+// ── 11-07 火山：有的家（火山方舟 Ark 等）CORS 不放 Authorization，浏览器直连必挂 → 改走酒馆自己的后台代理 ──
+// 酒馆 /api/backends/chat-completions/generate：source=openai + reverse_proxy=地址 + proxy_password=Key，服务器替我们去打 /chat/completions
+var VIA_TAVERN_LS = 'sbnyc_api_via_tavern';   // 11-07 火山：存走酒馆的那个地址（规整后的 base）
+var VIA_TAVERN = {};   // 11-07 火山：本次页面里判过的
+function apiBaseOf(u) { return chatUrlOf(u).replace(/\/chat\/completions$/, ''); }   // 11-07 火山
+function viaTavernMarked(u) {   // 11-07 火山
+  var b = apiBaseOf(u);
+  return !!VIA_TAVERN[b] || lsGet(VIA_TAVERN_LS) === b;
+}
+function markViaTavern(u) {   // 11-07 火山
+  var b = apiBaseOf(u);
+  VIA_TAVERN[b] = true;
+  try {
+    var store = (typeof parent !== 'undefined' && parent.localStorage) ? parent.localStorage : localStorage;
+    store.setItem(VIA_TAVERN_LS, b);
+  } catch (e) {}
+}
+// 11-07 火山：拿酒馆请求头（CSRF）——脚本全局 SillyTavern → 主页面 window.SillyTavern → parent
+function tavernHeaders() {
+  var cands = [];
+  try { if (typeof SillyTavern !== 'undefined') cands.push(SillyTavern); } catch (e) {}
+  try { if (typeof parent !== 'undefined' && parent.SillyTavern) cands.push(parent.SillyTavern); } catch (e) {}
+  try { if (typeof window !== 'undefined' && window.parent && window.parent.SillyTavern) cands.push(window.parent.SillyTavern); } catch (e) {}
+  for (var i = 0; i < cands.length; i++) {
+    var c = cands[i];
+    try { if (c && typeof c.getRequestHeaders === 'function') return c.getRequestHeaders(); } catch (e) {}
+    try { if (c && typeof c.getContext === 'function') { var cx = c.getContext(); if (cx && typeof cx.getRequestHeaders === 'function') return cx.getRequestHeaders(); } } catch (e) {}
+  }
+  return { 'Content-Type': 'application/json' };
+}
+// 11-07 火山：酒馆接口地址——脚本在 srcdoc/blob iframe 里时用主页面的 origin 拼绝对地址
+function tavernApiUrl(p) {
+  var o = '';
+  try { if (typeof parent !== 'undefined' && parent.location && /^https?:/.test(String(parent.location.origin))) o = parent.location.origin; } catch (e) {}
+  if (!o) { try { if (typeof location !== 'undefined' && /^https?:/.test(String(location.origin))) o = location.origin; } catch (e) {} }
+  return o + p;
+}
+async function callViaTavern(cfg, body) {   // 11-07 火山
+  var pb = { chat_completion_source: 'openai', reverse_proxy: apiBaseOf(cfg.url), proxy_password: cfg.key,
+    model: body.model, messages: body.messages, temperature: body.temperature, stream: false };
+  if (body.max_tokens) pb.max_tokens = body.max_tokens;
+  var resp = await fetch(tavernApiUrl('/api/backends/chat-completions/generate'), {
+    method: 'POST', headers: tavernHeaders(), body: JSON.stringify(pb),
+  });
+  var json = null; try { json = await resp.json(); } catch (e) {}
+  if (!resp.ok || !json || json.error) {   // 酒馆把上游错误包成 {error:{message}}（常常还是 200）
+    var m = (json && json.error && json.error.message) || ('HTTP ' + resp.status);
+    throw new Error('酒馆后台转发失败: ' + String(m).slice(0, 100));
+  }
+  return (json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content) || '';
+}
 async function callIndependent(cfg, ordered, instr, maxTokens) {
   var messages = [];
   for (var i = 0; i < ordered.length; i++) messages.push({ role: ordered[i].role, content: ordered[i].content });
@@ -1520,11 +1571,20 @@ async function callIndependent(cfg, ordered, instr, maxTokens) {
   // 不设 max_tokens：大家多用 Gemini Flash 等免费额度，不用省 token；卡上限只会截断多人回复（老"只回两个人"的根）
   var body = { model: cfg.model || 'gpt-4o-mini', messages: messages, temperature: 1.0 };
   if (maxTokens && maxTokens > 0) body.max_tokens = maxTokens;   // 只有显式传了才带（默认不带 = 让模型自己收尾）
-  var resp = await fetch(chatUrlOf(cfg.url), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
-    body: JSON.stringify(body),
-  });
+  if (viaTavernMarked(cfg.url)) return await callViaTavern(cfg, body);   // 11-07 火山：标过的直接走酒馆后台
+  var resp;
+  try {
+    resp = await fetch(chatUrlOf(cfg.url), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.key },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    if (!e || e.name !== 'TypeError') throw e;   // 11-07 火山：只有网络/CORS 挂（TypeError）才转，HTTP 错照旧抛
+    var viaOut = await callViaTavern(cfg, body);   // 11-07 火山
+    markViaTavern(cfg.url);   // 11-07 火山：走通了才记，以后这个地址直接走酒馆
+    return viaOut;   // 11-07 火山
+  }
   if (!resp.ok) {
     var errText = ''; try { errText = (await resp.text()).slice(0, 100); } catch (e) {}
     throw new Error('HTTP ' + resp.status + ' ' + errText);
