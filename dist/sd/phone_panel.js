@@ -5699,6 +5699,11 @@
     '#sbnyc-panel .sb-pp-t{font-size:12px;color:var(--ink);margin-bottom:8px;line-height:1.6;}',
     '#sbnyc-panel .sb-pp textarea{width:100%;box-sizing:border-box;border:.5px solid var(--line);border-radius:10px;padding:8px 10px;font-size:13px;font-family:var(--font-cn);background:#fff;color:var(--ink);outline:none;resize:none;}',
     '#sbnyc-panel .sb-pp textarea:focus{border-color:var(--gold);}',
+    // 🌙 夜间输入框（玩家反馈：黑夜模式输入框白底、字却跟着夜间 --ink 变米白，自己打的字看不清）。
+    // 根因：上面 .sb-cbar/.sb-frow/.sb-pp 写死 background:#fff，color 走 var(--ink)。夜里改深底 + 浅字 + 看得见的占位字和光标；日间不动。
+    '#sbnyc-panel.night .sb-cbar input,#sbnyc-panel.night .sb-cbar textarea,#sbnyc-panel.night .sb-frow input,#sbnyc-panel.night .sb-frow textarea,#sbnyc-panel.night .sb-frow select,#sbnyc-panel.night .sb-pp textarea{background:#2a2c34;color:var(--ink);-webkit-text-fill-color:var(--ink);caret-color:var(--gold-soft);color-scheme:dark;}',
+    '#sbnyc-panel.night .sb-cbar input::placeholder,#sbnyc-panel.night .sb-cbar textarea::placeholder,#sbnyc-panel.night .sb-frow input::placeholder,#sbnyc-panel.night .sb-frow textarea::placeholder,#sbnyc-panel.night .sb-frow select::placeholder,#sbnyc-panel.night .sb-pp textarea::placeholder,#sbnyc-panel.night .vg-in::placeholder{color:var(--ink-sub);-webkit-text-fill-color:var(--ink-sub);opacity:1;}',
+    '#sbnyc-panel.night #sbnyc-cfg-modelsel{background:#2a2c34 !important;color:var(--ink) !important;color-scheme:dark;}',
     '#sbnyc-panel .sb-pp-b{display:flex;gap:8px;margin-top:8px;}',
     '#sbnyc-panel .sb-pp-b button{flex:1;border:none;border-radius:999px;padding:8px;font-size:12px;cursor:pointer;font-family:var(--font-cn);}',
     '#sbnyc-panel .sb-pp-b .ok{background:var(--gold);color:#fff;}',
