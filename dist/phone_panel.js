@@ -8837,6 +8837,11 @@
       '<button class="sb-abtn" id="sbnyc-cfg-save" style="flex:1;">💾 保存</button>' +
       '<button class="sb-abtn" id="sbnyc-cfg-clear" style="flex:1;">' + sbIcon('trash', 14) + ' 清除</button></div>';
     h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">填了独立 API 后，私信生成完全不占主 API 的每分钟限额，也不再限速排队。Key 只存这台浏览器本地，不进聊天文件。</div>';
+    // 🛡️ 防豆包软回避（2026-11-08）：开着时手机里所有 AI 生成的 system 最前面加一段破限（dm_generator 的 ANTI_SOFT_REFUSE），正文不动
+    var antiSoftOn = false;
+    try { antiSoftOn = VIEW.localStorage.getItem('sbnyc_anti_soft') === '1'; } catch (e) {}
+    h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-antisoft-toggle" style="flex:1;">🛡️ 防豆包软回避：' + (antiSoftOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">用豆包写涩涩时总被绕过去？打开它。</div>';
     // 显示偏好：盲盒模式（藏标签）
     var blindOn = panel.classList.contains('blindbox');
     h += '<div class="sb-sec" style="margin-top:16px;">显示 · Display</div>';
@@ -9074,6 +9079,15 @@
       toast('success', '📅 起始日期已更新为 ' + val + '（已锁定）');
     });
     // 税务开关（UWU）
+    // 🛡️ 防豆包软回避：就地改按钮字，不重画设置页（上面 API 地址/Key 没保存的输入不丢）
+    var antiSoftToggle = chatEl.querySelector('#sbnyc-antisoft-toggle');
+    if (antiSoftToggle) antiSoftToggle.addEventListener('click', function () {
+      var curA = false;
+      try { curA = VIEW.localStorage.getItem('sbnyc_anti_soft') === '1'; } catch (e) {}
+      try { VIEW.localStorage.setItem('sbnyc_anti_soft', curA ? '0' : '1'); } catch (e) {}
+      antiSoftToggle.textContent = '🛡️ 防豆包软回避：' + (curA ? '关（点我开）' : '开（点我关）');
+      toast('info', curA ? '🛡️ 防豆包软回避已关' : '🛡️ 防豆包软回避已开——手机里的 AI 生成都会带上');
+    });
     var taxToggle = chatEl.querySelector('#sbnyc-tax-toggle');
     if (taxToggle) taxToggle.addEventListener('click', function () {
       var curT = false;
