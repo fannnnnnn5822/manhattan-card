@@ -334,7 +334,7 @@
   // 原生 prompt 在安卓会弹键盘：视口缩水的 resize 事件被模态对话框阻塞排队，对话框一关才执行，
   // 读到的还是被键盘压扁的高度 → 手机定格成半截（独立API输入框同款老bug）。
   // 这个小窗长在面板里，输入时走 typingInPanel 冻结逻辑，键盘随便弹面板纹丝不动。
-  function panelPrompt(title, initVal, ph) {   // 刀17：ph＝框里的占位字
+  function panelPrompt(title, initVal, ph, check) {   // 刀17：ph＝框里的占位字；刀19：check(字)＝返回一句话就是不行（小窗不关、字留着，框上面出提示条）
     return new Promise(function (resolve) {
       var old = panel.querySelector('.sb-pp'); if (old && old.parentNode) old.parentNode.removeChild(old);
       var box = DOC.createElement('div');
@@ -348,7 +348,11 @@
       panel.appendChild(box);
       try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) {}
       var done = function (val) { try { box.parentNode.removeChild(box); } catch (e) {} resolve(val); };
-      box.querySelector('.ok').addEventListener('click', function () { done(ta.value); });
+      box.querySelector('.ok').addEventListener('click', function () {
+        var why = check ? check(String(ta.value || '').trim()) : '';
+        if (why) { vesperGateTip(why, ta); try { ta.focus(); } catch (e) {} return; }
+        done(ta.value);
+      });
       box.querySelector('.no').addEventListener('click', function () { done(null); });
     });
   }
@@ -1250,37 +1254,55 @@
     var n = vesperRankNum();
     return n ? '第 ' + n + ' 位' : '没上榜';
   }
-  // 词闸：微信号 / vx / QQ / 手机号 / 邮箱 / 网址 / 常见谐音。命中返回是哪一类，没命中返回空串
-  var VESPER_GATE_WORDS = [
-    ['微信', /(微信|威信|薇信|徽信|维信|危信|v信|卫星号|绿泡泡|vx|wx|weixin|wechat|vchat)/],
-    ['QQ', /(qq|扣扣|抠抠|企鹅号|q号)/],
-    ['别的联系方式', /(telegram|电报号|discord|dc号|小红书号|抖音号|微博号|ins号|ig号|line号|whatsapp|手机号|电话号|联系方式)/],
-  ];
+  // 词闸（刀19）：只认「真的在留联系方式」——手机号、八位以上连号、邮箱、网址、「平台词 + 号」。命中返回是哪一类，没命中返回空串
+  //   光提到软件名（「马化腾 QQ 初创」「只用微信语音」「我抖音刷多了」）放行；「加我」「私聊我」「联系方式给你」这种不带号的话也放行。
+  //   QQ / 微信两条和服务器 vesper__has_contact 一字不差（服务器拦什么这边先拦什么，别让玩家点了发送才被服务器退回）。
+  //   hard=true（推名片用）：规则一样，只是不拦「八位以上连号」——档案里写「身价 50000000」是人设，不是号码
   var VESPER_CN_DIGIT = { '零': '0', '〇': '0', '洞': '0', '一': '1', '壹': '1', '幺': '1', '二': '2', '贰': '2', '两': '2', '三': '3', '叁': '3', '四': '4', '肆': '4', '五': '5', '伍': '5', '六': '6', '陆': '6', '七': '7', '柒': '7', '八': '8', '捌': '8', '九': '9', '玖': '9' };
-  // hard=true（推名片用）：只认真号码、邮箱、网址，不认「微信」「QQ」这类词——角色档案里写「只用微信语音」是人设，不是留联系方式
+  var VESPER_CN_DIGIT_RE = /[零〇洞一壹幺二贰两三叁四肆五伍六陆七柒八捌九玖]/g;
+  // 平台词 + 「号 / id / 冒号」+ 4 位以上字母数字，或平台词 + @账号。英文缩写前面不能紧挨着字母（online、deadline、big 都不算）
+  var VESPER_GATE_PLAT = /(^|[^a-z])(telegram|tg|discord|dc|instagram|ins|ig|line|whatsapp)\s*(((号|账号|帐号|id)\s*:?|:)\s*(是|为|叫)?\s*@?\s*[a-z0-9_.\-]{4,}|@\s*[a-z0-9_.]{2,})|(电报|小红书|红书|抖音|微博)\s*(((号|账号|帐号|id)\s*:?|:)\s*(是|为|叫)?\s*@?\s*[a-z0-9_.\-]{4,}|@\s*[a-z0-9_.]{2,})/;
   function vesperGate(s, hard) {
     var raw = String(s == null ? '' : s);
     if (!raw.trim()) return '';
     var n = raw; try { n = raw.normalize('NFKC'); } catch (e) {}
-    n = n.toLowerCase().replace(/[­᠎​-‏‪-‮⁠-⁤﻿]/g, '');   // 刀5：和服务器 v3 一样先去掉看不见的字符
-    // 字和字之间塞空格/符号的写法（「v x」「微 信」「q-q」）先压实再认
-    var tight = n.replace(/[\s\-—_·•*,，、.。|\/\\~～'"‘’“”()（）\[\]【】<>《》]+/g, '');
-    if (!hard) for (var i = 0; i < VESPER_GATE_WORDS.length; i++) if (VESPER_GATE_WORDS[i][1].test(tight)) return VESPER_GATE_WORDS[i][0];
+    n = n.toLowerCase().replace(/[\u00ad\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]/g, '');   // 刀5：和服务器 v3 一样先去掉看不见的字符
     if (/[a-z0-9._%+\-]+\s*(@|艾特|\(at\)|\[at\])\s*[a-z0-9\-]+\s*(\.|点|。)\s*[a-z]{2,}/.test(n)) return '邮箱';
-    if (/(https?:\/\/|www\.|t\.me\/|[a-z0-9\-]{2,}\s*(\.|点|。)\s*(com|cn|net|org|io|me|xyz|top|cc|app|vip|link)(?![a-z]))/.test(n)) return '网址';
+    if (/(https?:\/\/|www\.|t\.me\/|[a-z0-9\-]{2,}\s*(\.|点|。)\s*(com|cn|net|org|io|me|xyz|top|cc|co|app|vip|link|site|info|tv|ly|gg)(?![a-z]))/.test(n)) return '网址';
     // 号码：中文数字（含「幺」「洞」）换成阿拉伯数字，空格和横杠去掉；逗号和小数点留着，免得「1,000,000」这种钱数被当号码
-    var digits = n.replace(/[零〇洞一壹幺二贰两三叁四肆五伍六陆七柒八捌九玖]/g, function (ch) { return VESPER_CN_DIGIT[ch]; }).replace(/[\s\-—_·]+/g, '');
-    if (/1[3-9]\d{9}/.test(digits)) return '手机号';
-    if (!hard && /\d{8,}/.test(digits)) return '号码';   // 名片档案里「身价 50000000」这种钱数不拦
-    if (hard) {
-      // 刀5：服务器 v3 连名片档案也查「微信 / QQ 后面紧跟着一串号」——这边照它的规则先查一遍，别让玩家点了推才被拦。
-      // 只认「词 + 号」，光写「只用微信语音」这种人设照旧放行
-      var dd = n.replace(/[\s_.·•,，。、\/|()（）【】+\-]+/g, '').replace(/[零〇洞一壹幺二贰两三叁四肆五伍六陆七柒八捌九玖]/g, function (ch) { return VESPER_CN_DIGIT[ch]; });
-      if (/(qq|扣扣|企鹅号|q号)[^0-9]{0,4}[0-9]{5,11}/.test(dd)) return 'QQ';
-      if (/(微信|威信|薇信|徽信|weixin|wechat|vx|wx|v信|加v|加微|vchat)[^a-z0-9]{0,4}[a-z0-9]{5,}/.test(dd)) return '微信';
-    }
+    var digits = n.replace(VESPER_CN_DIGIT_RE, function (ch) { return VESPER_CN_DIGIT[ch]; }).replace(/[\s\-—_·]+/g, '');
+    if (/(^|[^0-9])1[3-9][0-9]{9}([^0-9]|$)/.test(digits)) return '手机号';
+    // 「QQ / 微信 + 一串号」：照服务器先去掉空格和常见分隔符再看（「q q 1 2 3 4 5」「v x：wxid_abc123」也认）；放在「八位连号」前面，提示里才说得出是 QQ
+    var dd = n.replace(/[\s_.·•,，。、\/|()（）【】+\-]+/g, '').replace(VESPER_CN_DIGIT_RE, function (ch) { return VESPER_CN_DIGIT[ch]; });
+    if (/(qq|扣扣|企鹅号|q号)[^0-9]{0,4}[0-9]{5,11}/.test(dd)) return 'QQ';
+    if (/(微信|威信|薇信|徽信|weixin|wechat|vx|wx|v信|加v|加微|vchat)[^a-z0-9]{0,4}[a-z0-9]{5,}/.test(dd)) return '微信';
+    if (!hard && /\d{8,}/.test(digits)) return '号码';
+    // 别的平台：原样看一遍，再把字和字之间塞的空格 / 符号压实看一遍（「抖 音 号：luna2026」）
+    var tight = n.replace(/[\s\-—·•*,，、。|\/\\~～'"‘’“”()（）\[\]【】<>《》]+/g, '');
+    if (VESPER_GATE_PLAT.test(n) || VESPER_GATE_PLAT.test(tight)) return '别的联系方式';
     return '';
   }
+  // 刀19：被词闸拦下时出一条看得见的提示条——toast 在手机屏底部会被遮住。
+  //   anchor＝贴着哪个元素（默认：游戏输入条 → 对话输入条），below＝贴在它下面（资料卡编辑页用）。
+  //   红底金边、5 秒淡出、点一下就收；输入框里的字一个不动，方便改
+  var _vesTipT = 0;
+  function vesperGateTip(msg, anchor, below) {
+    try {
+      [].forEach.call(DOC.querySelectorAll('.vs-gtip'), function (x) { if (x.parentNode) x.parentNode.removeChild(x); });
+      if (!anchor && chatEl) anchor = chatEl.querySelector('.vg-bar2') || chatEl.querySelector('.vs-cbar');
+      if (!anchor || !anchor.parentNode) return null;
+      var tip = DOC.createElement('div');
+      tip.className = 'vs-gtip'; tip.setAttribute('role', 'alert'); tip.textContent = msg;
+      anchor.parentNode.insertBefore(tip, below ? anchor.nextSibling : anchor);
+      var kill = function () { if (tip.parentNode) tip.parentNode.removeChild(tip); };
+      tip.addEventListener('click', function (ev) { ev.stopPropagation(); kill(); });
+      clearTimeout(_vesTipT);
+      _vesTipT = setTimeout(function () { tip.classList.add('out'); setTimeout(kill, 400); }, 5000);
+      return tip;
+    } catch (e) { return null; }
+  }
+  // 拦下时说的那句（S. 的话 + 像是哪一类）；没拦返回空串——也给 panelPrompt 的 check 用
+  function vesperGateWhy(s) { var gw = vesperGate(s); return gw ? '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）' : ''; }
 
   var _ves = { editing: false, who: '', line: '', busy: false, nonce: 0, timer: 0 };
   // 俱乐部的运行时状态（不落盘）：大厅名单、入会签名（小卡没变就不重复 join）、各种忙锁、除名
@@ -1421,6 +1443,7 @@
       return;
     }
     if (VESPER_SYS_ERR[e]) { toast('warning', '✦ ' + VESPER_ERR[e]); return; }   // 讲酒馆、存档的：系统提示，不让 S. 说
+    if (e === 'blocked_word') vesperGateTip('✦ S.：' + VESPER_ERR.blocked_word);   // 刀19：服务器退回来的也在输入框上面说一声（不在对话页就只有 toast）
     toast(e === 'net' ? 'error' : 'warning', '✦ S.：' + (VESPER_ERR[e] || VESPER_ERR.net));
   }
   function vesperReady() {
@@ -2094,6 +2117,7 @@
     if (gw || gl) {
       if (gEl) gEl.textContent = VESPER_COPY.gate + '（' + (gw ? '「身份」里像是' + gw : '') + (gw && gl ? '；' : '') + (gl ? '「今晚这一句」里像是' + gl : '') + '）';
       toast('warning', VESPER_COPY.gate);
+      vesperGateTip('✦ S.：' + VESPER_ERR.blocked_word + '（像是' + (gw || gl) + '）', gw ? wEl : lEl, true);   // 刀19：贴在被拦的那个框下面
       return;
     }
     // 服务器的上限：演的是谁 600 字、今晚一句 60 字。超了不替玩家砍，退回去让她自己改
@@ -2255,7 +2279,7 @@
     if (!txt) { toast('info', '先写一句'); return; }
     if (txt.length > VESPER_ASK_MAX) { if (g) g.textContent = '写长了：' + txt.length + ' 字，第一句最多 ' + VESPER_ASK_MAX + ' 字。'; return; }
     var gw = vesperGate(txt);
-    if (gw) { if (ta) ta.classList.add('bad'); if (g) g.textContent = VESPER_ERR.blocked_word + '（像是' + gw + '）'; toast('warning', '✦ S.：' + VESPER_ERR.blocked_word); return; }
+    if (gw) { if (ta) ta.classList.add('bad'); if (g) g.textContent = VESPER_ERR.blocked_word + '（像是' + gw + '）'; toast('warning', '✦ S.：' + VESPER_ERR.blocked_word); if (ta) vesperGateTip(vesperGateWhy(txt), ta); return; }
     if (!vesperReady()) { vesperFail({ err: vesperNotReadyErr() }); return; }
     btn.disabled = true; btn.textContent = '递过去中…';
     var at = Date.now();
@@ -2475,7 +2499,7 @@
     if (vgLineBlocksText(id)) return;   // 刀15
     if (txt.length > VESPER_TEXT_MAX) { toast('warning', '✦ 这一句写长了：' + txt.length + ' 字，一条最多 ' + VESPER_TEXT_MAX + ' 字。拆成两句发'); return; }
     var gw = vesperGate(txt);
-    if (gw) { toast('warning', '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）'); return; }
+    if (gw) { toast('warning', '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）'); vesperGateTip(vesperGateWhy(txt), ta.parentNode); return; }   // 刀19：输入框正上方出提示条，框里的字不清
     if (vgLineGuessTyped(id, txt)) { ta.value = ''; return; }   // 刀17：猜词时打的字＝一问
     if (!vesperLineGuard(id)) return;
     var mySkin = skinsOf().active || '';
@@ -2668,7 +2692,7 @@
             return;
           }
           if (m === 'them') { onPick('guess', { them: 1 }); return; }
-          panelPrompt('自己出一个词', '', VG_GS.ownTip).then(function (d) { d = String(d == null ? '' : d).trim(); if (d) onPick('guess', d); });
+          panelPrompt('自己出一个词', '', VG_GS.ownTip, npcMode ? null : vesperGateWhy).then(function (d) { d = String(d == null ? '' : d).trim(); if (d) onPick('guess', d); });
         });
         return;
       }
@@ -3303,7 +3327,7 @@
   }
   function vgGateOk(s) {
     var gw = vesperGate(s);
-    if (gw) { toast('warning', '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）'); return false; }
+    if (gw) { toast('warning', '✦ S.：' + VESPER_ERR.blocked_word + '（像是' + gw + '）'); vesperGateTip(vesperGateWhy(s)); return false; }   // 刀19：游戏输入条上面出提示条
     return true;
   }
   function vgSigBack(mode, key) {
@@ -3602,7 +3626,7 @@
       return;
     }
     if (act === 'tdown') {
-      panelPrompt('自己出一题（' + vgTdKind(g.k) + '）', '', g.k === 'T' ? '问一个得老实回答的问题。' : '出一件私信里做得到的事。').then(function (d) {
+      panelPrompt('自己出一题（' + vgTdKind(g.k) + '）', '', g.k === 'T' ? '问一个得老实回答的问题。' : '出一件私信里做得到的事。', line ? vesperGateWhy : null).then(function (d) {
         var q = String(d == null ? '' : d).trim(); if (!q) return;
         if (q.length > VESPER_TEXT_MAX) { toast('warning', '✦ 这一题写长了'); return; }
         if (line && !vgGateOk(q)) return;
@@ -4235,7 +4259,7 @@
     var line = mode === 'line', v = el ? el.getAttribute('data-v') : '';
     if (act === 'gq') { var q = VG_GQ[parseInt(v, 10)]; if (q) { if (line) vgLineGuessAsk(key, q, false); else vgNpcGuessAsk(key, q, false); } return; }
     if (act === 'gfinal') {
-      panelPrompt('我猜是…', '').then(function (d) {
+      panelPrompt('我猜是…', '', '', line ? vesperGateWhy : null).then(function (d) {
         var w = vgClean(d, 999); if (!w) return;
         if (w.length > VG_GW_MAX) { toast('warning', '✦ 猜一个词就行，最多 ' + VG_GW_MAX + ' 字'); return; }
         if (line) vgLineGuessAsk(key, w, true); else vgNpcGuessAsk(key, w, true);
@@ -5083,7 +5107,7 @@
     // 只推档案字段，不带聊天记录（dm_history 一条也不拿）
     var card = { name: name, archetype: s('archetype'), bio: s('bio'), dossier: s('dossier'), voice: s('voice'), dm_style: s('dm_style') };
     var gw = vesperGate([card.name, card.archetype, card.bio, card.dossier, card.voice, card.dm_style].join('\n'), true);
-    if (gw) { toast('warning', '✦ S.：' + VESPER_COPY.cardGate.replace('{n}', name).replace('{w}', gw)); return; }
+    if (gw) { toast('warning', '✦ S.：' + VESPER_COPY.cardGate.replace('{n}', name).replace('{w}', gw)); vesperGateTip('✦ S.：' + VESPER_COPY.cardGate.replace('{n}', name).replace('{w}', gw), chatEl.querySelector('.vs-cbar')); return; }
     var body = { card: card }, bytes = vesperUtf8Len(JSON.stringify(body));
     if (bytes > VESPER_CARD_MAX) {   // 超了整张不发、明说，不替玩家删字
       toast('warning', '✦ S.：' + VESPER_COPY.cardBig.replace('{n}', name).replace('{k}', (bytes / 1024).toFixed(1)).replace('{m}', Math.floor(VESPER_CARD_MAX / 1024)));
@@ -6141,6 +6165,8 @@
     '#sbnyc-panel .vg-bl{border-top:1px dashed rgba(0,0,0,.3);border-bottom:1px dashed rgba(0,0,0,.3);padding:4px 0;}',
     '#sbnyc-panel .vg-bi,#sbnyc-panel .vg-bt{display:flex;justify-content:space-between;gap:8px;padding:2px 0;}#sbnyc-panel .vg-bi span{word-break:break-word;}#sbnyc-panel .vg-bi b{white-space:nowrap;font-weight:600;}#sbnyc-panel .vg-bt{font-weight:700;padding-top:4px;}',
     '#sbnyc-panel .vg-stamp{font-style:normal;color:#c0392b;border:1.5px solid #c0392b;border-radius:4px;padding:0 6px;transform:rotate(-6deg);display:inline-block;font-weight:700;}',
+    '#sbnyc-panel .vs-gtip{flex-shrink:0;position:relative;z-index:6;margin:6px 10px 4px;padding:7px 12px;border-radius:10px;background:var(--red);color:#fff;border:1px solid var(--gold);font-family:var(--font-cn);font-size:12px;line-height:1.5;text-align:left;box-shadow:0 4px 14px rgba(0,0,0,.22);cursor:pointer;transition:opacity .35s;word-break:break-word;}',
+    '#sbnyc-panel .vs-gtip.out{opacity:0;}',
     '#sbnyc-panel .vg-bar2{padding:4px 10px 2px;flex-shrink:0;font-size:11.5px;color:var(--ink-faint);}',
     '#sbnyc-panel .vg-tip{text-align:center;padding:2px 0;flex:1;}',
     '#sbnyc-panel .vg-row,#sbnyc-panel .vg-col{display:flex;gap:6px;align-items:center;margin-top:3px;}#sbnyc-panel .vg-col{flex-direction:column;align-items:stretch;}',
@@ -12260,10 +12286,12 @@ var SBLAB_CARD = "classic";
     // ➕ 把正在聊天的那个人加进名单（Fan 10-13）：读聊天页标题里的名字，已有就只把光标放过去
     ov.querySelector('#lt-addcur').onclick = function (ev) {
       ev.preventDefault(); ev.stopPropagation();
+      // 11-08 玩家反馈（柠檬茶）：设置页一开，聊天页就被盖住了，「先打开聊天」永远做不到 →
+      // 聊天页隐藏着也照读标题里的名字（就是刚才聊的那个人）；从没开过聊天才提示
       var chat = DOC.getElementById('sbnyc-chat');
-      var nameEl = chat && chat.style.display !== 'none' && chat.querySelector('.sb-ch-name b');
+      var nameEl = chat && chat.querySelector('.sb-ch-name b');
       var name = nameEl ? (nameEl.textContent || '').trim() : '';
-      if (!name) { toast('先打开和谁的聊天，再点这个', 'err'); return; }
+      if (!name) { toast('先去私信里点开那个人聊一句，再回来点这个', 'err'); return; }
       var ta = ov.querySelector('#lt-npcv');
       var lines = ta.value.split(/\n/), hit = -1;
       for (var i = 0; i < lines.length; i++) { if (lines[i].slice(0, lines[i].search(/[=＝]/) < 0 ? lines[i].length : lines[i].search(/[=＝]/)).trim() === name) { hit = i; break; } }
