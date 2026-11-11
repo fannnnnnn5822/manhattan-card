@@ -336,7 +336,7 @@ function splitGroupSpeaker(content, names) {
 
 // 启动时清一次重复联系人（历史bug：SugarElite™ 曾以不同写法建成两个人；Marco/Marco Rossi 同理）
 function mergeDupeNpcs() {
-  var merged = [], rosterFix = 0;
+  var merged = [], rosterFix = 0, adopted = [];
   var p = updateVariablesWith(function (v) {
     var npcs = v.sb && v.sb.npcs;
     if (!npcs) return v;
@@ -369,10 +369,16 @@ function mergeDupeNpcs() {
       delete npcs[k];
       merged.push(k + '→' + canon);
     }
+    try { adopted = adoptPlaceholderNpcs(v.sb); } catch (eA) { console.warn('[SB-NYC v4] adopt placeholder contacts failed', eA); }   // 🪧 「名字」分身善后
     return v;
   }, { type: 'chat' });
   Promise.resolve(p).then(function () {
-    if (rosterFix && !merged.length) { try { eventEmit('sb_updated'); } catch (e) {} }
+    if (rosterFix && !merged.length && !adopted.length) { try { eventEmit('sb_updated'); } catch (e) {} }
+    if (adopted.length) {
+      console.log('[SB-NYC v4] placeholder contacts adopted: ' + adopted.join(', '));
+      try { if (typeof toastr !== 'undefined') toastr.info('🧹 「名字」这类分身里的消息认回了原主：' + adopted.join('，'), 'SugarOS'); } catch (e) {}
+      if (!merged.length) { try { eventEmit('sb_updated'); } catch (e) {} }
+    }
     if (merged.length) {
       console.log('[SB-NYC v4] merged dupe contacts: ' + merged.join(', '));
       try { if (typeof toastr !== 'undefined') toastr.info('🧹 合并了重复联系人：' + merged.join('，'), 'SugarOS'); } catch (e) {}
@@ -381,6 +387,155 @@ function mergeDupeNpcs() {
   }).catch(function (e) { console.warn('[SB-NYC v4] merge dupe contacts failed', e); });   // 2026-10-12 体检：别留未捕获的 Promise
 }
 function isPersistent(name) { return PERSISTENT_CANONICAL.indexOf(normalizeName(name)) !== -1; }
+// ── 🪧 格式占位当名字（11-11 从一掷千金搬来；那边柠檬茶报的：「手机聊天会分身，NPC发图会重开一个分身」——通讯录里长出一个叫「名字」的人）──
+// 模型偶尔把格式里的占位照抄进行首（名字|image|…、TA|text|…，或者行首干脆空着），以前解析出来照单全收 → ensureNpc 建出一个新人。
+// 现在这类行一律不建人：一对一聊天归给正在聊的那位；多人轮里前后挨着的都是同一个人（或紧跟在某个新人的 tag 行后面）就归他，
+// 认不出是谁就丢这一行（说错人比少一条更糟）。你自己在通讯录里起的名字（madeBy:'user'）、导入的旧识、固定的、俱乐部来的人不算占位。
+var PLACEHOLDER_NAME_RE = /^(?:名字|名称|昵称|姓名|人名|网名|真名|真实昵称|成员名|角色|角色名|角色名字|联系人|联系人名字|对方|某人|发送者|发信人|说话人|npc|npc名字|char|name|nickname|sender|ta|她|他|它)(?:[0-9０-９]|[甲乙丙丁])?$/i;
+var USER_NAME_RE = /^(?:user|用户|玩家)$/i;   // 行首写成 User＝模型替 User 说话：既不建人，也不能归给对方（不然她的话就安到他嘴里了）
+function phBare(nm) {
+  var s = String(nm == null ? '' : nm).replace(/[\s　]+/g, '');
+  for (var i = 0; i < 3; i++) s = s.replace(/^[<＜《【\[［{｛「『(（]+|[>＞》】\]］}｝」』)）]+$/g, '');   // <名字> 【TA】 {{char}}
+  return s.replace(/^(?:ta|她|他|它|对方|npc|角色)的/i, '');                                            // TA的名字 / 他的昵称
+}
+function isPlaceholderName(nm) { var s = phBare(nm); return !s || PLACEHOLDER_NAME_RE.test(s); }
+function isUserName(nm) { return USER_NAME_RE.test(phBare(nm)); }
+// 通讯录里真有一个叫这个的人、而且不是模型长出来的
+function placeholderIsContact(sb, nm) {
+  var npcs = (sb && sb.npcs) || {};
+  var n = npcs.hasOwnProperty(nm) ? npcs[nm] : null;
+  return !!(n && !n.isGroup && (n.madeBy === 'user' || n.imported || n.persistent || n.vesper));
+}
+// rows＝parseDMs 的输出（群行不归这里管：群行的说话人有名单闸）。solo＝这一轮只有这一个人回话（一对一聊天）时他的名字
+function resolvePlaceholderRows(sb, rows, solo) {
+  var kind = [], out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    kind.push(r.group ? '' : isUserName(r.name) ? 'user'
+      : (isPlaceholderName(r.name) && !(solo && r.name === solo) && !placeholderIsContact(sb, r.name)) ? 'ph' : '');
+  }
+  function person(j) { var x = rows[j]; return (!kind[j] && !x.group && x.type !== 'song' && x.type !== 'sched') ? x.name : ''; }
+  for (var k = 0; k < rows.length; k++) {
+    var row = rows[k];
+    if (!kind[k]) { out.push(row); continue; }
+    if (kind[k] === 'user') { console.warn('[SB-NYC v4] 行首写成了 User（模型替 User 说话），丢弃：' + row.name + '|' + row.type); continue; }
+    var owner = '';
+    if (row.type === 'tag') owner = '';                                              // 标签是新陌生人报到用的，占位名的标签行没有主
+    else if (solo) owner = solo;                                                     // 一对一：只有他在说话
+    else if (k > 0 && rows[k - 1].type === 'tag' && person(k - 1)) owner = person(k - 1);   // 紧跟在某个新人的 tag 行后面＝他的第一条
+    else {
+      var prev = '', next = '';
+      for (var a = k - 1; a >= 0 && !prev; a--) prev = person(a);
+      for (var b = k + 1; b < rows.length && !next; b++) next = person(b);
+      if (prev && (!next || next === prev)) owner = prev;                            // 前后挨着的是同一个人（或后面没人了）
+    }
+    if (!owner) { console.warn('[SB-NYC v4] 行首是格式占位「' + row.name + '」、认不出是谁，丢弃：' + row.type + '|' + String(row.content || '').slice(0, 30)); continue; }
+    var o = {}; for (var f in row) { if (row.hasOwnProperty(f)) o[f] = row[f]; }
+    o.name = owner;
+    out.push(o);
+  }
+  return out;
+}
+// 这一轮是给谁的：to / focus / 提示里「只让 X 本人回应」点到的人（只认通讯录里真有的、不是群的）。只剩一个人＝一对一聊天
+function roundTargets(sb, req) {
+  if (!req || req.group) return [];
+  var names = [], npcs = (sb && sb.npcs) || {};
+  function add(nm) { nm = String(nm || '').trim(); if (nm && names.indexOf(nm) === -1) names.push(nm); }
+  (Array.isArray(req.to) ? req.to : []).forEach(add);
+  (Array.isArray(req.focus) ? req.focus : []).forEach(add);
+  var re = /只让 (.{1,40}?) (?:本人)?回应/g, m, rs = String(req.reason || '');
+  while ((m = re.exec(rs))) add(m[1]);
+  return names.filter(function (nm) { return npcs.hasOwnProperty(nm) && npcs[nm] && !npcs[nm].isGroup; });
+}
+// 读档善后：以前长出来的「名字」「TA」这类联系人（模型照抄占位建出来、你没碰过的）——按消息时间一条条找回真主：
+//   同一轮落账的消息时间戳只差几毫秒：那一刻（±3 秒）只有一个真人也收到了消息 / 被记了「已读」→ 就是他；
+//   那一刻没别人 → 看这条之前 User 最后一句话发给了谁（5 分钟内、他在这中间一条都还没回＝这就是那一轮的回复；最后一句在群里＝认不出）。
+// 认出来的按时间插回他的聊天；认不出的原地不动，留给你自己用垃圾桶删。全部认出来才把空壳收掉。
+// User 回过话 / 置顶 / 有来历（bio、匿名群）的一律不动——那是你自己在用的联系人；
+// 身上有标签（archetype）的也不动：那是「名字|tag|…」落上去的，是一个没起名的新陌生人，不是谁的分身。
+function phOwnerAt(sb, skip, ts) {
+  if (!(ts > 0)) return '';
+  var npcs = sb.npcs, near = [], last = null;
+  for (var k in npcs) {
+    if (!npcs.hasOwnProperty(k) || k === skip || !npcs[k]) continue;
+    var n = npcs[k], h = Array.isArray(n.dm_history) ? n.dm_history : [];
+    var real = !n.isGroup && !isPlaceholderName(k);
+    if (real) {
+      var hit = n.readTs > 0 && Math.abs(n.readTs - ts) <= 3000;
+      for (var i = 0; i < h.length && !hit; i++) { var x = h[i]; if (x && x.sender === 'THEM' && x.ts > 0 && Math.abs(x.ts - ts) <= 3000) hit = true; }
+      if (hit) near.push(k);
+    }
+    for (var u = 0; u < h.length; u++) {
+      var y = h[u];
+      if (y && y.sender === 'USER' && y.ts > 0 && y.ts <= ts && ts - y.ts <= 300000 && (!last || y.ts > last.ts)) last = { ts: y.ts, who: real ? k : '' };
+    }
+  }
+  if (near.length) return near.length === 1 ? near[0] : '';
+  if (!last || !last.who) return '';
+  var lh = npcs[last.who].dm_history || [];
+  for (var z = 0; z < lh.length; z++) { var w = lh[z]; if (w && w.sender === 'THEM' && w.ts > last.ts && w.ts < ts) return ''; }   // 他已经回过了＝这条不是那一轮的回复
+  return last.who;
+}
+// 女性向这边钱和礼物也记着名字：礼物进她衣橱（from「名字 送的」）、转账进钱包流水（counterparty「名字」）——消息认回原主时这几处跟着改
+function phRelabel(sb, from, to, m) {
+  if (!m) return;
+  if (m.gift && Array.isArray(sb.closet)) {
+    for (var i = sb.closet.length - 1; i >= 0; i--) { var c = sb.closet[i]; if (c && c.from === from + ' 送的' && c.name === m.gift.name) { c.from = to + ' 送的'; break; } }
+    var gl = Array.isArray(sb.giftLog) ? sb.giftLog : [];
+    for (var g = gl.length - 1; g >= 0; g--) { if (gl[g] && gl[g].who === from) { gl[g].who = to; break; } }
+  }
+  if (m.type === 'transfer' && sb.wallet) {
+    var amt = parseFloat(String(m.content).replace(/[^0-9.]/g, '')) || 0;
+    var all = Array.isArray(sb.wallet.allTransactions) ? sb.wallet.allTransactions : [];
+    for (var j = all.length - 1; j >= 0; j--) { var t = all[j]; if (t && t.counterparty === from && t.direction === '+' && (m.dk ? t.src === m.dk : t.amount === amt)) { t.counterparty = to; break; } }
+    var rec = Array.isArray(sb.wallet.transactions) ? sb.wallet.transactions : [];
+    for (var q = rec.length - 1; q >= 0; q--) { var t2 = rec[q]; if (t2 && t2.counterparty === from && t2.direction === '+' && t2.amount === amt) { t2.counterparty = to; break; } }
+  }
+}
+function adoptPlaceholderNpcs(sb) {
+  var npcs = sb && sb.npcs, done = [];
+  if (!npcs) return done;
+  var keys = Object.keys(npcs);
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i], b = npcs[k];
+    if (!b || b.isGroup || !isPlaceholderName(k) || placeholderIsContact(sb, k)) continue;
+    if (b.pinned || b.bio || b._fromAnon || b.archetype) continue;
+    var hist = Array.isArray(b.dm_history) ? b.dm_history : [];
+    if (!hist.length || hist.some(function (m) { return m && m.sender === 'USER'; })) continue;
+    var keep = [], to = {};
+    for (var j = 0; j < hist.length; j++) {
+      var m = hist[j], who = m ? phOwnerAt(sb, k, m.ts) : '';
+      if (who) { (to[who] = to[who] || []).push(m); } else keep.push(m);
+    }
+    var owners = Object.keys(to);
+    if (!owners.length) continue;
+    for (var w = 0; w < owners.length; w++) {
+      var a = npcs[owners[w]];
+      if (!Array.isArray(a.dm_history)) a.dm_history = [];
+      for (var q = 0; q < to[owners[w]].length; q++) {
+        var mm = to[owners[w]][q], at = a.dm_history.length;
+        while (at > 0 && a.dm_history[at - 1] && a.dm_history[at - 1].ts > mm.ts) at--;   // 按时间插回去（没有 ts 的老消息原地当分界）
+        a.dm_history.splice(at, 0, mm);
+        phRelabel(sb, k, owners[w], mm);
+        if ((mm.ts || 0) > (a.last_ts || 0)) {
+          a.last_ts = mm.ts; a.last_contact = mm.time || a.last_contact;
+          a.last_message = mm.type === 'recall' ? '撤回了一条消息' : ((mm.type && mm.type !== 'text' && mm.type !== 'system' ? '[' + mm.type + '] ' : '') + String(mm.content || '').substring(0, 50));
+        }
+      }
+      if (a.dm_history.length > 400) a.dm_history = a.dm_history.slice(-400);
+      done.push(k + '→' + owners[w] + '（' + to[owners[w]].length + ' 条）');
+    }
+    if (!keep.length) {
+      for (var w2 = 0; w2 < owners.length; w2++) { if (b.unread) { npcs[owners[w2]].unread = (npcs[owners[w2]].unread || 0) + b.unread; break; } }   // 未读跟着走一次
+      delete npcs[k];
+    } else {
+      b.dm_history = keep;
+      var lk = keep[keep.length - 1] || {};
+      b.last_message = (lk.type && lk.type !== 'text' && lk.type !== 'system' ? '[' + lk.type + '] ' : '') + String(lk.content || '').substring(0, 50);
+    }
+  }
+  return done;
+}
 // 匿名群定身份用：通讯录里自带的人（随机版只有 Akuma）
 function fixedCast(sb) { return (sb && sb.game && sb.game.random_only) ? ['Akuma'] : Object.keys(VOICES); }
 // 陌生人的昵称借了固定角色的号（「方总_化工二代」里的「方总」＝方屿）→ 返回被借的那位，没借返回空串
@@ -1213,14 +1368,15 @@ function giftCue(sb) {
     + '由头也得是他的——哄她、赔罪、庆祝、想表个态、她随口提过想要、路过看见想到她。有由头才送，没有就这轮不送\n';
 }
 
-function toyFormatLine(sb) {
+function toyFormatLine(sb, solo) {
   var out = '', can = [];
-  for (var n in TOY_GIVERS) if (toyCanOffer(sb, n) && (sb.npcs || {})[n]) can.push(n);
+  // 🪧 solo＝一对一聊天：这一轮只有他开口，别人的玩具行用不上，只留他自己的
+  for (var n in TOY_GIVERS) if (toyCanOffer(sb, n) && (sb.npcs || {})[n] && (!solo || n === solo)) can.push(n);
   if (can.length) out += '- 遥控玩具（只有 ' + can.join('、') + ' 可能动这个念头，各自为什么见他那一行）：有由头才送——见过面之后、关系走近了、她开口要了、或者他就是想换一种方式让她想着他；不是每轮都提，大部分时候根本不提。\n' +
-    '  怎么送（照做，少一步她就收不到）：①同一轮里先写一条 text 说句话；②紧接着单独写一行 名字|toy|送（送金的写 名字|toy|送金）。东西当场就到她手上——这个世界里不需要地址、快递、助理转交、签收，这些都不要写。\n' +
+    '  怎么送（照做，少一步她就收不到）：①同一轮里先写一条 text 说句话；②紧接着单独写一行送礼行，行首是送的那个人自己的名字（如 ' + can[0] + '|toy|送；送金的写 ' + can[0] + '|toy|送金）。东西当场就到她手上——这个世界里不需要地址、快递、助理转交、签收，这些都不要写。\n' +
     '  例：' + can[0] + '|text|东西放在你门口了。说明书在盒子里，先看。§\n  ' + can[0] + '|toy|送\n'
   var h = toyHolder(sb);
-  if (h) out += '- 遥控器在 ' + h + ' 手里（只有他能写）：想开、换档、关，单独写一行 ' + h + '|toy|开|模式|强度（模式只能是 脉冲/潮汐/心跳/渐强/乱流/撩拨/暴雨/临界/冲刺，强度 1-100）或 ' + h + '|toy|关；开不开、开多大按他的性格和此刻的心情定，不是每轮都动\n';
+  if (h && (!solo || h === solo)) out += '- 遥控器在 ' + h + ' 手里（只有他能写）：想开、换档、关，单独写一行 ' + h + '|toy|开|模式|强度（模式只能是 脉冲/潮汐/心跳/渐强/乱流/撩拨/暴雨/临界/冲刺，强度 1-100）或 ' + h + '|toy|关；开不开、开多大按他的性格和此刻的心情定，不是每轮都动\n';
   return out;
 }
 // 实时状态 + 写作要求：照 TOY·LINK 的 stateText()「TA 拿着遥控器」那一支
@@ -1356,7 +1512,8 @@ function parseDMs(raw, groupCtx) {
     var twoOk = parts.length === 2 && (t === 'block' || t === 'unblock');   // 「T.|block」不带尾巴的竖线也认（拉黑行内容本来可空）
     var gHit = matchGroup(name);                                            // 👥 行名对上某个群 → 这是群行
     var typeOk = VALID_TYPES.indexOf(t) !== -1 || (gHit && GROUP_ONLY_TYPES.indexOf(t) !== -1);
-    var isRow = !!name && (parts.length >= 3 || twoOk) && typeOk && !/[:=@~]/.test(name) && !HORAE_FIELD.test(name);
+    // 🪧 行首空着（「|image|…」）也是一行，名字留空交给 resolvePlaceholderRows 认主——以前它被当成续段拼进上一条，气泡里冒出「|image|」
+    var isRow = (!!name || parts.length >= 3) && (parts.length >= 3 || twoOk) && typeOk && !/[:=@~]/.test(name) && !HORAE_FIELD.test(name);
     if (isRow) {
       rows.push({ name: gHit || normalizeName(name), type: t, raw: parts.slice(2).join('|').trim(), delay: lineDelay, group: gHit || '' });
     } else if (rows.length && !HORAE_FIELD.test(line)) {
@@ -1767,10 +1924,16 @@ async function generateGroupOnce(sb, plot, n, reason, strict, groupName, plan) {
 }
 
 // ── 调一次生成（有独立 API 配置走独立 API，没有走 generateRaw + 限速闸） ──
-async function generateOnce(sb, plot, n, reason, strict, group, plan) {
+async function generateOnce(sb, plot, n, reason, strict, group, plan, targets) {
   if (group) return await generateGroupOnce(sb, plot, n, reason, strict, group, plan);   // 👥 群走自己那条管道，不上 sys1
   // 陌生人专场（开场白2）：固定NPC的声音卡整个不上车——一行禁令打不过九张人设卡，不上车才是真禁令
   var RANDOM_ONLY = !!(sb.game && sb.game.random_only);
+  // 🪧 targets＝这一轮点名回话的人（roundTargets）。只剩一个＝一对一聊天：格式示例和行首直接写他的真名（模型照抄也抄对）；
+  //    多人轮拿第一个被点名的人举例，都没有就拿下面示例里那个新陌生人——格式里不再出现「名字」这种能被原样抄进行首的占位
+  targets = Array.isArray(targets) ? targets : [];
+  var solo = targets.length === 1 ? targets[0] : '';
+  var newEx = RANDOM_ONLY ? 'HF_Partner_J' : 'Pilot_Mark', newExTag = RANDOM_ONLY ? '巨鲸·阔绰' : '机长·忠犬';   // 和末尾示例里的新陌生人同一个
+  var exName = targets[0] || newEx;   // NO_STICKER 的人（T.）当示例时，表情包那行不拿他举例
   // 专场白名单：Akuma（闺蜜军师陪跑新手村）；S. 走订阅态另算
   var voiceCard = RANDOM_ONLY ? '· ' + VOICES['Akuma'] : Object.keys(VOICES).map(function (k) { return '· ' + VOICES[k]; }).join('\n');
   if (sb.sugarelite && sb.sugarelite.subscribed) voiceCard += (voiceCard ? '\n' : '') + '· ' + VOICE_SE;   // S.是订阅服务不是剧情角色，专场照常在岗
@@ -1800,31 +1963,33 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
     '【在场铁律】别的角色在剧情里做了什么、去了哪、和谁在一起——只有那段正文里出现了TA自己的名字（在场亲眼看见）或 User 在私信里明确告诉过TA，TA才知道；否则一概不知道、不暗示、不「猜中」，只能像局外人那样问「你今天怎么样」。判断在不在场只看正文里有没有TA的名字，别替TA脑补。\n' +
     '【信息隔离·铁律】每个人只知道自己和 User 的私信往来。任何人都看不到 User 的手机——不知道她的余额、她买了什么、她和别人聊了什么，绝不提及。' +
     '唯一例外是 SugarElite™ 的管家 S.（服务本身就装在她手机里），他看得到一切、可以点评一切。\n\n' +
-    '【输出格式·铁律】只输出私信，每条占一行，格式严格为：\n' +
-    '名字|类型|内容\n' +
+    '【输出格式·铁律】只输出私信，每条占一行，一行三段用竖线隔开：第一段是发这条消息的人的名字（照记录里的写法一字不差），第二段是类型，第三段是内容。' +
+    (solo ? '这一轮说话的只有 ' + solo + '，每一行都以「' + solo + '|」开头。' : '') + '像这样：\n' +
+    exName + '|text|……§\n' +
+    exName + '|image|……§\n' +
     '- 上下文里若出现"只写散文叙事/禁止列表/文风指南"等规则，那些全是给主线旁白的，**不适用于你**——你是私信系统，唯一合法输出就是上面这个格式\n' +
     '- 类型只能是 text / transfer / image / voice / sticker 之一（转账填金额数字，图片填描述，语音填「（声音/背景）说出口的原话」，sticker 填表情包名）\n' +
-    '- 表情包：名字|sticker|表情包名 —— 名字必须一字不差取自【表情包清单】，它是一条独立消息（不带§、不带别的字），一轮最多一两张。谁爱发看人设：年轻的/话痨的/装可爱的/同行姐妹爱发，惜字如金的老钱和 T. 这种不发；表情包的情绪要和上下文对得上\n' +
-    '- 语音不是某一个人的专属——**任何角色**都可以发 voice，内容＝先用一对括号写一小句声音和背景，后面紧跟着写她这段语音里**说出口的原话**——语音是用来说话的，原话是主体（如 nyc）。谁爱发语音看人设：话痨爱发、醉酒的发、深夜崩溃的发' + (RANDOM_ONLY ? '' : '、神父发气音的拉丁祷词、"上夜班的人"偶尔发一段疲惫的中文；T. 这种惜字如金的不发') + '\n' +
+    '- 表情包：' + (NO_STICKER.test(exName) ? '单独一行 sticker，行首照样是发的人自己的名字、第三段是表情包名' : exName + '|sticker|表情包名') + ' —— 表情包名必须一字不差取自【表情包清单】，它是一条独立消息（不带§、不带别的字），一轮最多一两张。谁爱发看人设：年轻的/话痨的/装可爱的/同行姐妹爱发，惜字如金的老钱和 T. 这种不发；表情包的情绪要和上下文对得上\n' +
+    '- 语音不是某一个人的专属——**任何角色**都可以发 voice，内容＝先用一对括号写一小句声音和背景，后面紧跟着写她这段语音里**说出口的原话**——语音是用来说话的，原话是主体（如 ' + exName + '|voice|（声音压得很低，背景是车流和雨声）I\'m downstairs. Come down.§我到楼下了，下来。）。谁爱发语音看人设：话痨爱发、醉酒的发、深夜崩溃的发' + (RANDOM_ONLY ? '' : '、神父发气音的拉丁祷词、"上夜班的人"偶尔发一段疲惫的中文；T. 这种惜字如金的不发') + '\n' +
     '- 每条 text/image/voice 的内容末尾**必须以§收尾**：内容是英文（或其他外语）的，§后写这一条的中文翻译（忠实对应原文，人名/地名/品牌保留英文）；内容本来就是中文的，§后留空。transfer 不用。示例：英文§中文 / 中文§\n' +
     (RANDOM_ONLY
       ? '- 本局所有 NPC 都是新面孔或历史记录里出现过的随机NPC，昵称自取\n'
       : '- 固定联系人用上面的本名(如 T. / Marco Rossi / Father Dan)，新陌生人自取一个昵称\n' +
         '- 固定联系人只有在历史记录或剧情里已经和 User 有过接触才可以发消息；User 还不认识的固定NPC**绝不主动出现**（开场白或剧情声明"本局只玩随机/没认识固定NPC"时，这条按最严格执行——那一局的世界里只有陌生人和 User 自己撩的人）\n') +
-    '- 新陌生人**第一次出现**时，先单独输出一行中文属性标签：名字|tag|标签(2-6字，原型·性格，如 巨鲸·阔绰 / 假富·抠门 / 学生·纯情 / 已婚·高危)，紧接着再输出他的私信行\n' +
+    '- 新陌生人**第一次出现**时，先单独输出一行中文属性标签，行首就是他给自己起的昵称（如 ' + newEx + '|tag|' + newExTag + '；标签 2-6 字，原型·性格，如 巨鲸·阔绰 / 假富·抠门 / 学生·纯情 / 已婚·高危），紧接着再输出他的私信行，行首还是这个昵称\n' +
     '- 一条私信永远只占一行——长私信（比如谢书砚的长文本）也绝不换行，用句号和空格连着写\n' +
     '- 行程：私信或最近剧情里**新敲定**了约会/预约/安排时，额外补一行 📅|sched|内容，内容格式**严格统一**为：M/D / HH:MM / 地点 / 和谁·干嘛（斜杠隔断，日期必须带月/日，如 4/18 / 20:00 / Le Bernardin / 和T.晚餐）。日期是强制项，绝不省略——没有 M/D 的日程系统无法识别，会排错日子。User 在私信里**亲口让人帮记行程/提醒**（尤其是对管家 S.）→ 回话的人这一轮必须补上这行 sched，绝不能只嘴上答应"好的已记下"却不出这一行——没有这一行，行程表里就真的什么都没有。' +
     '时间一律24小时制**绝不写早/晚/下午**；对方只说了"晚上见"没给钟点，按场合补常识时间（晚餐20:00/午餐13:00/brunch 11:00/夜局23:00）；对方故意卖关子不给地点，地点位写"待TA通知"。【已排行程】里已有的绝不重复生成\n' +
-    '- 撤回（稀用，一个月两三次）：某人发出消息又立刻后悔时，可发 名字|recall|他没说出口的那句话——手机上只显示"撤回了一条消息"，User看不到内容（但他自己记得说了什么）。' + (RANDOM_ONLY ? '' : '最适合"上夜班的人"这种人') + '\n' +
-    '- 拉黑（极稀有，比撤回还稀有）：TA 被冒犯到底、受够了、或高危人设觉得暴露风险时，可以发 名字|block|一句话理由 —— 之后 User 的消息发不出去（拒收），TA 也不再回复，直到剧情里两人真的和好，TA 先发 名字|unblock| 再说话。冷淡不是拉黑，拉黑是关门\n' +
+    '- 撤回（稀用，一个月两三次）：某人发出消息又立刻后悔时，可发 ' + exName + '|recall|他没说出口的那句话——手机上只显示"撤回了一条消息"，User看不到内容（但他自己记得说了什么）。' + (RANDOM_ONLY ? '' : '最适合"上夜班的人"这种人') + '\n' +
+    '- 拉黑（极稀有，比撤回还稀有）：TA 被冒犯到底、受够了、或高危人设觉得暴露风险时，可以发 ' + exName + '|block|一句话理由 —— 之后 User 的消息发不出去（拒收），TA 也不再回复，直到剧情里两人真的和好，TA 先发 ' + exName + '|unblock| 再说话。冷淡不是拉黑，拉黑是关门\n' +
     '- 引用回复（低频）：针对User某一句具体的话回应时，内容可以写成 回"那句话截短30字内"：接你的回复 —— 手机会渲染成引用卡样式；别每条都引用\n' +
-    '- 送礼：名字|gift|商品名——价格数字——他写在礼物小卡上的一句话。系统把东西直接放进她衣橱，手机上显示成一张礼物卡\n' +
+    '- 送礼：' + exName + '|gift|商品名——价格数字——他写在礼物小卡上的一句话。系统把东西直接放进她衣橱，手机上显示成一张礼物卡\n' +
     '  ①她转发过的商品，他真买下了（真买才写，口头答应不算；商品名和价格照她链接里的原样）\n' +
     giftCue(sb) +
     '  小卡那句是他亲手写给她的：一句、20 字以内、他自己的口吻和他们之间的事；礼物之外通常再配一条 text\n' +
     (sb.sugarelite && sb.sugarelite.subscribed ? '- S. 专属（只有 SugarElite™ 能发，别人写了无效）：送 User 一套气泡皮肤 SugarElite™|skin|代号 —— 代号只能是 ' + SKIN_KEYS.map(function (k) { return k + '=' + SKIN_CN[k]; }).join('／') + '。只在有由头时送（会员礼遇、庆祝、赔罪、User 刚念叨过想换个样子），一次一套，配一条 text 说一句；User 已有：' + ((sb.skins && Array.isArray(sb.skins.owned) && sb.skins.owned.length) ? sb.skins.owned.map(function (k) { return SKIN_CN[k] || k; }).join('、') : '还没有') + '，已有的不再送\n' : '') +
-    toyFormatLine(sb) +
-    '- 真替她交账单（只在她转发过账单、且这个人真愿意时）：名字|paybill|账单名（照她转发的名字写），系统会把这张账单标成已付进入下期；只想给钱让她自己交的就发 transfer\n' +
+    toyFormatLine(sb, solo) +
+    '- 真替她交账单（只在她转发过账单、且这个人真愿意时）：' + exName + '|paybill|账单名（照她转发的名字写），系统会把这张账单标成已付进入下期；只想给钱让她自己交的就发 transfer\n' +
     '- 严禁输出任何叙事、旁白、环境描写、心理描写、解释、标题、空行以外的东西\n' +
     '- 严禁代替 User 说话或回复\n' +
     '- 严禁复读：历史记录里这个人自己说过的话、发过的邀约、用过的梗，绝不换个说法再发一遍；没有新话可说的人这一轮就沉默\n' +
@@ -1928,7 +2093,7 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
   var blockedList = [];
   for (var bk in npcsW) { if (npcsW.hasOwnProperty(bk) && npcsW[bk].blocked && !npcsW[bk].isGroup) blockedList.push(npcsW[bk].name); }   // 👥 拉黑对群没有意义
   var blockedHint = blockedList.length
-    ? '【已把 User 拉黑的人：' + blockedList.join('、') + '】他们不发消息、也看不到 User 发的任何东西；除非最近剧情里两人明确和好，才可以先输出一行 名字|unblock| 再说话，否则本轮别出现。'
+    ? '【已把 User 拉黑的人：' + blockedList.join('、') + '】他们不发消息、也看不到 User 发的任何东西；除非最近剧情里两人明确和好，才可以由他先输出一行他自己名字开头的 unblock（如 ' + blockedList[0] + '|unblock|）再说话，否则本轮别出现。'
     : '';
 
   // 管家解读（订阅后）：别人私信里的黑话/头衔/场所，S. 紧跟一条解码——寓教于乐的核心管道
@@ -1941,15 +2106,19 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
 
   var tail = soloLock
     // 10-29（亚伦：管家嘴上说「已同步至您的行程表」，日历里什么都没有）：一对一私信全走这条，「不要写别的」把 📅|sched 行也一起禁了
-    ? '严格只输出被点名的人的回复，绝不出现其他角色、绝不引入陌生人。每条一行 名字|类型|内容，不要写别的。' +
+    // 🪧 一对一：行首直接写死他的名字（「名字|…」被原样抄进行首＝通讯录里长出一个叫「名字」的分身，11-11 一掷千金那边先出的事）
+    ? '严格只输出被点名的人的回复，绝不出现其他角色、绝不引入陌生人。' +
+      (solo
+        ? '这一轮只有 ' + solo + ' 在回，每一行都以「' + solo + '|」开头（如 ' + solo + '|text|……§ / ' + solo + '|image|……§），不要写别的。'
+        : '每条一行，行首写回话那个人自己的名字（如 ' + exName + '|text|……§），不要写别的。') +
       '唯一例外是 📅|sched 行程行——它不是角色，是系统记账：这一轮敲定了约会/预约，或 User 让 TA 记行程/提醒，照样在最后补上那一行，否则行程表里什么都没有。'
     : strangerOnly
       // 10-29：原来写死「只生成 1 个」，自荐帖要 3~5 个金主也只来 1 个；照 SD 那边改成按条数来
-      ? '本轮只生成全新陌生金主的开场，人数按本条指令开头的条数来（没写就 1 个）：每个新人先输出他的 名字|tag|标签 行，紧接着 1-2 行他主动发来的私信（多人时换着花样来别撞原型，他们还不认识 User、只是被她某个侧面吸引搭讪，或在论坛看到她的帖子）。绝不让任何已有联系人出现、绝不续接任何已有对话、绝不替 User 说话。每条一行 名字|类型|内容，不要写别的。'
-      : '最好有1条来自全新的陌生金主（换着花样来，别撞原型），给 User 新的人可挑；其余可以是已认识且不在等待名单里的人。每条一行 名字|类型|内容，不要写别的。';
+      ? '本轮只生成全新陌生金主的开场，人数按本条指令开头的条数来（没写就 1 个）：每个新人先单独一行报上他的标签（行首就是他给自己起的昵称，和示例里 ' + newEx + '|tag|' + newExTag + ' 一个样子），紧接着 1-2 行他主动发来的私信、行首还是这个昵称（多人时换着花样来别撞原型，他们还不认识 User、只是被她某个侧面吸引搭讪，或在论坛看到她的帖子）。绝不让任何已有联系人出现、绝不续接任何已有对话、绝不替 User 说话。每条一行，格式照上面的示例，不要写别的。'
+      : '最好有1条来自全新的陌生金主（换着花样来，别撞原型），给 User 新的人可挑；其余可以是已认识且不在等待名单里的人。每条一行，行首是发消息那个人自己的名字，格式照上面的示例，不要写别的。';
   var instr = '现在生成 ' + (n || '2-4') + ' 条新私信' +
     (reason ? '（情境：' + reason + '）' : '') + '。' + stageHint + waitHint + mutedHint + blockedHint + seHint + refreshHint + toyAskHint(sb) + tail;
-  if (strict) instr = '【再次强调：只能输出 名字|类型|内容 的行，每条一行，不许有任何其他文字】\n' + instr;
+  if (strict) instr = '【再次强调：只输出上面那种三段式的行（如 ' + exName + '|text|……§），每条一行，不许有任何其他文字】\n' + instr;
 
   var raw = null;
   var cfg = getApiCfg();
@@ -1973,6 +2142,7 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
   }
   _lastRaw = typeof raw === 'string' ? raw : (raw && raw.content) || '';
   var parsed = parseDMs(_lastRaw, groupCtxOf(sb));
+  parsed = resolvePlaceholderRows(sb, parsed, solo);   // 🪧 「名字|image|…」「TA|text|…」「|text|…」：一对一归给他，多人轮认得出才归，认不出丢——不建新人
   if (RANDOM_ONLY) {
     // 代码级铁闸：提示词再怎么漏（素材库彩蛋名/论坛规格/模型记性），固定NPC的行也进不了通讯录
     parsed = parsed.filter(function (r) {
@@ -2121,6 +2291,7 @@ function landGroupRows(sb, gKey, rows) {
       var bits = String(r.content || '').split(/[；;]/);
       var bf = borrowsFixed(String(bits[0] || '').trim());
       if (bf) { console.warn('[SB v4] 匿名群 who 借了 ' + bf + ' 的号，这一轮不定，下一轮重来：' + bits[0]); continue; }
+      if (isPlaceholderName(bits[0]) || isUserName(bits[0])) { console.warn('[SB-NYC v4] 匿名群 who 写的是格式占位「' + bits[0] + '」，这一轮不定，下一轮重来'); continue; }   // 🪧 不然私下加人时长出一个叫「名字」的联系人
       g.roster[who] = {
         real: normalizeName(String(bits[0] || '').replace(/[|§]/g, '').trim().slice(0, 24)),
         secret: bits.slice(1).join('；').trim(),
@@ -2183,7 +2354,8 @@ async function runOnce(req) {
     var m = String(r.content || '').match(/\[发送了照片[：:][^\[\]]+\]/); if (!m) return null;
     var o2 = Object.assign({}, r); o2.content = m[0].replace(/^\[发送了照片:/, '[发送了照片：'); return o2;
   }
-  var all = await generateOnce(sb, plot, req.n, req.reason, false, req.group, gPlan);
+  var tgts = roundTargets(sb, req);   // 🪧 这一轮点名回话的人；只有一个＝一对一聊天（占位行归他、提示里行首写死他的名字）
+  var all = await generateOnce(sb, plot, req.n, req.reason, false, req.group, gPlan, tgts);
   var songs = [], dms = [], tags = [], scheds = [], blocks = [], grows = [], sideN = 0;
   function route(arr) {
     for (var i = 0; i < arr.length; i++) {
@@ -2208,7 +2380,7 @@ async function runOnce(req) {
   }
   route(all);
   if (!dms.length && !blocks.length && !grows.length) {
-    all = await generateOnce(sb, plot, req.n, req.reason, true, req.group, gPlan);   // 重试一次（玩家看不到）
+    all = await generateOnce(sb, plot, req.n, req.reason, true, req.group, gPlan, tgts);   // 重试一次（玩家看不到）
     route(all);
   }
   // 👥 人数闸：这一轮只让 gPlan.k 个人开口，第 k+1 个人的行整行丢（人数脚本定、挑谁模型定）
@@ -2221,7 +2393,7 @@ async function runOnce(req) {
     if (missing.length && missing.length < req.focus.length) {   // 全没回=生成本身出问题，不补；部分漏才补
       var mReason = '补漏：下面这几个人刚才漏了回复，现在必须每人各回 1-2 条，一个不能少：' + missing.join('、') +
         '。只让这几个人回应，别人不要出现、不要引入陌生人。';
-      var more = await generateOnce(sb, plot, missing.length + '-' + (missing.length * 2), mReason, false);
+      var more = await generateOnce(sb, plot, missing.length + '-' + (missing.length * 2), mReason, false, null, null, roundTargets(sb, { focus: missing }));
       for (var mi = 0; mi < more.length; mi++) {
         if (more[mi].type === 'song') songs.push(more[mi].content);
         else if (more[mi].type === 'tag' || more[mi].type === 'sched' || more[mi].type === 'block' || more[mi].type === 'unblock') { /* 补漏轮忽略标签/行程/拉黑 */ }

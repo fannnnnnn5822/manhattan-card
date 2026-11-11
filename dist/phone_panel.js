@@ -7775,6 +7775,7 @@
           name: name, archetype: '', persistent: false, engaged: false,
           total_transfers: 0, relationship: 0, unlocked: true,
           last_contact: nowT(), last_ts: Date.now(), unread: 0, last_message: '', dm_history: [],
+          madeBy: 'user',   // 🪧 建档来源：你亲手起的名字——就算叫「TA」「他」，生成器也认这是真人，不当格式占位（dm_generator 的 placeholderIsContact）
         };
         if (who) fresh.bio = who.slice(0, 200);
         SBupdate(function (v) {
