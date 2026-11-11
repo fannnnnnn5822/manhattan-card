@@ -101,6 +101,69 @@
   function npcOf(name) { return (state && state.npcs && state.npcs[name]) || null; }
   function isGroupChat(name) { var n = npcOf(name); return !!(n && n.isGroup); }
   function groupMembersOf(name) { var n = npcOf(name); return (n && n.members) || []; }
+  // ── 📝 备注名（11-11，Discord 玩家：手机里是网名「别浪费我时间」，正文里只能写「牵住了别浪费我时间的手」，太出戏）──
+  // 像真手机一样给联系人存个备注：数据＝sb.npcs[原名].remark，只加这一个字段，键一律不改不搬——
+  // 聊天记录、群成员、流水、衣橱、俱乐部注入、data-npc 全按原名认。空串 / 删掉字段＝恢复原名；没有这个字段＝和以前一模一样。
+  // 显示一律过 dn(原名)；存档里写的、发给生成器的、挂在 data-* 上的永远是原名。群没有备注；匿名群的代号、俱乐部里的马甲是对方自己起的，不吃备注。
+  // 生成器那边（dm_generator 的 remarkClean）同码：正文注入 / 私信提示讲清「备注 X 就是原名 Y」，模型把备注当名字写回来时认回原名。
+  var REMARK_MAX = 24;
+  function cleanRemark(s) { return String(s == null ? '' : s).replace(/[|§\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, REMARK_MAX); }
+  function remarkOf(name) { var n = npcOf(name); return (n && !n.isGroup && n.remark) ? cleanRemark(n.remark) : ''; }
+  function dn(name) { return remarkOf(name) || String(name == null ? '' : name); }
+  function remarkFold(s) { return String(s || '').replace(/\s+/g, '').toLowerCase(); }
+  // 系统灰条（「你邀请 A、B 加入了群聊」「⛔ A 把你拉黑了」）存档里写的是原名：画的时候把有备注的人换成备注（只换显示，存档不动）。
+  // 一次替换、长名字优先（「苏太太」不会被「苏」先吃掉）；两个字以下的名字不换，免得误伤普通字词
+  function remarkSys(text) {
+    var t = String(text == null ? '' : text), npcs = (state && state.npcs) || {}, ks = [];
+    for (var k in npcs) { if (npcs.hasOwnProperty(k) && k.length >= 2 && t.indexOf(k) !== -1 && remarkOf(k)) ks.push(k); }
+    if (!ks.length) return t;
+    ks.sort(function (a, b) { return b.length - a.length; });
+    var re = new RegExp(ks.map(function (k) { return k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|'), 'g');
+    return t.replace(re, function (m) { return remarkOf(m) || m; });
+  }
+  // 按备注找人（搜联系人 / 新建聊天时输的是备注）：找到返回原名，找不到返回空串
+  function remarkOwner(s) {
+    var f = remarkFold(s), npcs = (state && state.npcs) || {};
+    if (!f) return '';
+    for (var k in npcs) { if (npcs.hasOwnProperty(k) && npcs[k] && !npcs[k].isGroup && remarkFold(npcs[k].remark) === f) return k; }
+    return '';
+  }
+  // 撞名：备注不能是通讯录里别人的名字 / 别人的备注 / 固定联系人和群的名字——不然正文里写这个名字，AI 分不清说的是谁
+  function remarkClash(name, r) {
+    var f = remarkFold(r); if (!f) return '';
+    var npcs = (state && state.npcs) || {};
+    for (var k in npcs) {
+      if (!npcs.hasOwnProperty(k) || k === name || !npcs[k]) continue;
+      if (remarkFold(k) === f || (!npcs[k].isGroup && remarkFold(npcs[k].remark) === f)) return '「' + r + '」已经是通讯录里另一个人的名字了，换一个吧';
+    }
+    if (remarkFold(name) !== f && vesperFixedName(r)) return '「' + r + '」已经是通讯录里另一个人的名字了，换一个吧';
+    return '';
+  }
+  // 变量 + 本地镜像一起改；sb_updated 让列表 / 聊天页 / 好友主页重画、生成器刷新正文注入
+  function setRemark(name, raw) {
+    var r = cleanRemark(raw);
+    if (r === name) r = '';                                    // 备注就写原名＝没备注
+    var apply = function (n) { if (!n || n.isGroup) return; if (r) n.remark = r; else delete n.remark; };
+    apply(npcOf(name));
+    var p = SBupdate(function (v) { apply(v.sb && v.sb.npcs && v.sb.npcs[name]); return v; });
+    SBemit('sb_updated');
+    return p.then(function () { return r; });
+  }
+  // 📝 备注（聊天页右上「…」菜单）：面板内小窗（安卓不能用 window.prompt），默认值＝现在的备注，留空＝清除
+  function editRemark(name) {
+    var n = npcOf(name); if (!n || n.isGroup) return;
+    var cur = remarkOf(name);
+    panelPrompt('📝 备注 · @' + name, cur, '给 TA 存个备注（留空就用原名）', function (s) { return remarkClash(name, cleanRemark(s)); }).then(function (val) {
+      if (val == null) return;   // 取消
+      var r = cleanRemark(val);
+      if (r === cur || (!r && !cur)) return;
+      setRemark(name, r).then(function (saved) { toast('success', saved ? '📝 已存备注「' + saved + '」' : '📝 已清除备注'); });
+      if (currentChatName === name && currentPage == null) openChat(name, npcOf(name) || n);
+    });
+  }
+  function chatMoreMenu(name) {
+    vesperMenu('', [['remark', '📝 备注']], function (k) { if (k === 'remark') editRemark(name); });   // 和暮星对话页右上「…」同一个菜单样式
+  }
 
   // ── 单色线条图标（2026-09-19）──
   // 病根：emoji 当按钮用会被系统字体渲染成彩色方块（Windows/安卓上的 🔄 是一块雷霆蓝），
@@ -196,7 +259,7 @@
     if (currentChatName !== name) return;
     var box = chatEl.querySelector('.sb-msgs');
     if (!box || box.querySelector('.sb-typing')) return;
-    box.insertAdjacentHTML('beforeend', '<div class="sb-msg them sb-typing">' + esc(name) + ' 正在输入…</div>');
+    box.insertAdjacentHTML('beforeend', '<div class="sb-msg them sb-typing">' + esc(dn(name)) + ' 正在输入…</div>');
     box.scrollTop = box.scrollHeight;
   }
   // 📌 黑话科普帖（论坛永久置顶 + 聊天栏🔗一键转发）：对面问"PPM是什么"这种蠢问题时甩过去让TA自己读
@@ -264,7 +327,7 @@
       askGroupRound(name, 'User 在群聊「' + name + '」里说了：' + lines.map(function (s) { return '「' + s + '」'; }).join('、') + '。群里的人接着往下聊。');
       return;
     }
-    if (npcB && npcB.blocked) { delete ob[name]; saveOutbox(ob); toast('warning', name + ' 已经把你拉黑了，TA 收不到'); return; }   // ⛔ 拉黑：待发的清掉，不触发生成
+    if (npcB && npcB.blocked) { delete ob[name]; saveOutbox(ob); toast('warning', dn(name) + ' 已经把你拉黑了，TA 收不到'); return; }   // ⛔ 拉黑：待发的清掉，不触发生成
     if (!lines.length) { toast('info', '先说点什么再发送'); return; }
     var why = '玩家在私信里对 ' + name + ' 说了：' + lines.map(function (s) { return '「' + s + '」'; }).join('、') +
       '。只让 ' + name + ' 本人回应这些，别的角色不要出现、不要插话。';
@@ -276,7 +339,7 @@
     var fire = function () {
       var vgReq = { reason: why + vgCtx, n: '1-2', to: [name] }; if (vgMu) vgReq.mute = [name]; if (vgNpcPic(name)) vgReq.pic = [name];   // 刀16：假装发图
       SBemit('sb_request_dm', vgReq);
-      setStatus('⏳ ' + name + ' 回复中…');
+      setStatus('⏳ ' + dn(name) + ' 回复中…');
       showTyping(name);
     };
     if (landPendingNow(npcB, tNow, dNow)) {
@@ -321,7 +384,7 @@
     SBupdate(function (v2) { return v2; }).then(function () {
       if (isG) { askGroupRound(name, hint); return; }
       SBemit('sb_request_dm', { reason: hint, n: '1-2', to: [name] });
-      setStatus('⏳ ' + name + ' 重新回复中…');
+      setStatus('⏳ ' + dn(name) + ' 重新回复中…');
       showTyping(name);
     });
   }
@@ -681,7 +744,7 @@
       SBupdate(function (v) { var n1 = v.sb && v.sb.npcs && v.sb.npcs[who]; if (n1) n1.skin = k; return v; });
       callPushDm(who, [{ sender: 'USER', type: 'text', content: '🎁 [送礼物] 气泡皮肤「' + sk[1] + '」 —— ' + fmtCNY(sk[2]) + '（SugarElite 商城 · 已经替你换上了）' }]);
       SBemit('sb_request_dm', { reason: '🎁 送礼：User 刚买了一套「' + sk[1] + '」气泡皮肤（' + fmtCNY(sk[2]) + '）送给 ' + who + '，她的聊天气泡已经换成这款。只让 ' + who + ' 本人回应：按人设收礼——可以得意、可以嫌弃颜色、可以反问他是不是也给别人送了；一两句即可', n: '1-2', to: [who] });
-      toast('success', '✨ 「' + sk[1] + '」已送给 ' + who + '，她换上了');
+      toast('success', '✨ 「' + sk[1] + '」已送给 ' + dn(who) + '，她换上了');
       openElite();
     }, {
       title: '这套「' + sk[1] + '」送给谁？',
@@ -758,7 +821,7 @@
   }
   function toyStart(who) {
     var b = toysOf(), o = b.owned[who];
-    if (!o || !o.wearing) { toast('info', who + ' 还没戴上'); return; }
+    if (!o || !o.wearing) { toast('info', dn(who) + ' 还没戴上'); return; }
     if (TK.live && TK.live.on) toyStop('换人', true);
     var ls = b.last || {};
     TK.live = { who: who, on: true, mode: ls.mode || 'wave', pow: ls.pow || 55, freq: ls.freq || 40, aro: 0, stage: 1, peak: 0, here: toyHere(who, b.here) };
@@ -809,8 +872,8 @@
     if (kind === 'peak' && r.here !== 'with' && b.cut === 'peak') { toyWrite(function (t) { t.cutReq = { who: who, at: Date.now(), here: 'away' }; }); toyFillInput('（看看' + who + '那边。）', true); }
     if (r.here === 'with') {
       toyWrite(function (t) { if (t.run && t.run.who === who) { var s0 = toySnap(r); for (var k0 in s0) t.run[k0] = s0[k0]; } });
-      if (kind === 'start') toast('info', '🎛 ' + who + ' 就在你身边——在正文里写一句，看她的反应');
-      else if (kind === 'peak') toast('info', '🎛 ' + who + ' 到了');
+      if (kind === 'start') toast('info', '🎛 ' + dn(who) + ' 就在你身边——在正文里写一句，看她的反应');
+      else if (kind === 'peak') toast('info', '🎛 ' + dn(who) + ' 到了');
       return;
     }
     var now = Date.now(), gap = now - TK.reqAt;
@@ -877,7 +940,7 @@
     if (!it) return;
     pickContact(function (who) {
       var o = toysOf().owned[who];
-      if (o && (o.tier === tier || o.tier === 'gold')) { toast('info', who + ' 已经有一个了'); return; }
+      if (o && (o.tier === tier || o.tier === 'gold')) { toast('info', dn(who) + ' 已经有一个了'); return; }
       var okc = true;
       try { okc = (DOC.defaultView || window).confirm('花 ' + fmtCNY(it[2]) + ' 买下「' + it[1] + '」送给 ' + who + '？\n（礼物会放进你和她的聊天里，点「发送」她才收到；戴不戴她自己定）'); } catch (e) {}
       if (!okc) return;
@@ -910,7 +973,7 @@
     queueOutbox(who, '（送了TA一个遥控玩具：' + cn + '——遥控器在 User 手机里。戴不戴、什么时候戴，由她自己定）');
     TK.sel = who;
     SBemit('sb_updated');
-    toast('success', '🎁 礼物已经放进 ' + who + ' 的聊天里——去她的聊天页点「发送」');
+    toast('success', '🎁 礼物已经放进 ' + dn(who) + ' 的聊天里——去她的聊天页点「发送」');
   }
   // 正文里她已经戴上了（当面戴的那种）：玩家手动认账，私信里补一行灰字
   function toyMarkWorn(who) {
@@ -933,7 +996,7 @@
       h += '<div class="sb-sec">在她们身上</div><div class="sb-tk-who">';
       for (var i = 0; i < names.length; i++) {
         var nm = names[i], o = b.owned[nm], run = TK.live && TK.live.on && TK.live.who === nm;
-        h += '<button class="sb-tk-pill' + (nm === TK.sel ? ' on' : '') + '" data-tk="sel" data-v="' + esc(nm) + '">' + esc(nm) + '<small>' + (run ? '开着' : (o.wearing ? '戴着' : '没戴')) + (o.tier === 'gold' ? ' · 金' : '') + '</small></button>';
+        h += '<button class="sb-tk-pill' + (nm === TK.sel ? ' on' : '') + '" data-tk="sel" data-v="' + esc(nm) + '">' + esc(dn(nm)) + '<small>' + (run ? '开着' : (o.wearing ? '戴着' : '没戴')) + (o.tier === 'gold' ? ' · 金' : '') + '</small></button>';
       }
       h += '</div><div id="sbnyc-tk-ctl">' + toyCtlHtml() + '</div>';
     }
@@ -958,13 +1021,13 @@
     var P = mine ? L : { mode: b.last.mode || 'wave', pow: b.last.pow || 55, freq: b.last.freq || 40, aro: 0, stage: 1, peak: 0 };
     var h = '';
     if (!o.wearing) {
-      return '<div class="sb-empty" style="padding:6px 16px 4px;">' + esc(who) + ' 还没戴上。等她在私信里点头——或者正文里她已经当面戴上了：</div>' +
+      return '<div class="sb-empty" style="padding:6px 16px 4px;">' + esc(dn(who)) + ' 还没戴上。等她在私信里点头——或者正文里她已经当面戴上了：</div>' +
         '<div style="text-align:center;padding:2px 0 8px;"><button class="sb-tk-line" data-tk="wear" data-v="' + esc(who) + '">正文里她已经戴上了</button></div>';
     }
-    if (other) return '<div class="sb-empty" style="padding:6px 16px 8px;">遥控器正在给 ' + esc(L.who) + ' 用，先停下那边。</div>';
+    if (other) return '<div class="sb-empty" style="padding:6px 16px 8px;">遥控器正在给 ' + esc(dn(L.who)) + ' 用，先停下那边。</div>';
     var C = 2 * Math.PI * 52;
     h += '<div class="sb-tk-ring' + (mine ? ' live' : '') + '"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" class="tk-tr"/><circle cx="60" cy="60" r="52" class="tk-aro" id="sbnyc-tk-aro" stroke-dasharray="0 ' + C.toFixed(1) + '"/><circle cx="60" cy="60" r="44" class="tk-tr2"/><circle cx="60" cy="60" r="44" class="tk-env" id="sbnyc-tk-env" stroke-dasharray="0 ' + (2 * Math.PI * 44).toFixed(1) + '"/></svg>' +
-      '<div class="tk-mid"><b id="sbnyc-tk-st">' + (mine ? TOY_STAGE_CN[P.stage - 1] : '待机') + '</b><small id="sbnyc-tk-sub">' + (mine ? '第 ' + P.stage + ' 阶段' + (P.peak ? ' · 到过 ' + P.peak + ' 次' : '') : esc(who) + ' 戴着') + '</small></div></div>';
+      '<div class="tk-mid"><b id="sbnyc-tk-st">' + (mine ? TOY_STAGE_CN[P.stage - 1] : '待机') + '</b><small id="sbnyc-tk-sub">' + (mine ? '第 ' + P.stage + ' 阶段' + (P.peak ? ' · 到过 ' + P.peak + ' 次' : '') : esc(dn(who)) + ' 戴着') + '</small></div></div>';
     h += '<div class="sb-tk-modes">';
     for (var i = 0; i < TOY_MODES.length; i++) { var m = TOY_MODES[i]; h += '<button class="sb-tk-mode' + (P.mode === m.id ? ' on' : '') + '" data-tk="mode" data-v="' + m.id + '">' + toyIco(m.icon, 16) + '<span>' + m.name + '</span></button>'; }
     h += '</div>';
@@ -2988,7 +3051,7 @@
   function vgNpcRe(name) { if (currentChatName === name && currentPage == null && chatEl.style.display !== 'none') { var n = vgNpc(name); if (n) openChat(name, n); } }
   function vgNpcStart(name, kind, own) {
     var npc = vgNpc(name); if (!npc) return;
-    if (npc.blocked) { toast('warning', name + ' 已经把' + VG_YOU + '拉黑了'); return; }
+    if (npc.blocked) { toast('warning', dn(name) + ' 已经把' + VG_YOU + '拉黑了'); return; }
     if (vgLive(npc.game)) { toast('info', VESPER_COPY.gmBusy); return; }
     if (kind !== 'gomoku' && kind !== 'mute') { vgNpcStart2(name, kind, own, npc); return; }   // 刀16
     var gid = vgGid(), ts = Date.now();
@@ -3057,7 +3120,7 @@
   function vgNpcTalk(name, what) {
     SBupdate(function (v) { return v; }).then(function () {
       SBemit('sb_request_dm', { reason: what + vgNpcCtx(name) + '让 ' + name + ' 照自己的人设就这件事在私信里说句话（得意、嘴硬、调侃、认真都看人设），只让 ' + name + ' 本人回应，别的角色不要出现。', n: '1', to: [name] });
-      setStatus('⏳ ' + name + ' 回复中…');
+      setStatus('⏳ ' + dn(name) + ' 回复中…');
       showTyping(name);
     });
   }
@@ -3794,7 +3857,7 @@
   function vgNpcAsk(name, what, n) {
     SBupdate(function (v) { return v; }).then(function () {
       SBemit('sb_request_dm', { reason: what + '只让 ' + name + ' 本人回应，别的人不要出现、不要插话。', n: n || '1', to: [name] });
-      setStatus('⏳ ' + name + ' 回复中…');
+      setStatus('⏳ ' + dn(name) + ' 回复中…');
       showTyping(name);
     });
   }
@@ -5049,6 +5112,8 @@
     if (vesperFixedName(n)) return VESPER_COPY.injFixed.replace('{n}', n);
     var ex = state && state.npcs && state.npcs[n];
     if (ex && ex.vesper !== pid) return VESPER_COPY.injTaken.replace('{n}', n);
+    var exR = remarkOwner(n);   // 📝 撞了谁的备注也算撞名（不然手机里两个人都叫这个名字，正文里分不清）
+    if (exR && (state.npcs[exR] || {}).vesper !== pid) return VESPER_COPY.injTaken.replace('{n}', n);
     return '';
   }
   // 点「注入正文」：第一次先问名字（面板内小窗，默认马甲，撞名拦下）；再点＝补新话、刷新档案，不再问
@@ -6678,17 +6743,17 @@
     for (var i = 0; i < entries.length; i++) {
       var npc = entries[i]; var seRow = npc.name === 'SugarElite™';
       // 👥 群头像用线条小图标（匿名群是面具），标签行写人数（匿名群只写「匿名」——人数会变，别给玩家一个假的确定感）
-      var avaH = seRow ? '✦' : (npc.isGroup ? sbIcon(npc.anon ? 'mask' : 'group', 18) : esc((npc.name.replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase()));
+      var avaH = seRow ? '✦' : (npc.isGroup ? sbIcon(npc.anon ? 'mask' : 'group', 18) : esc((dn(npc.name).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase()));
       var ur = npc.unread > 0 ? ' unread' : '';
       var quiet = !!(npc.isGroup && npc.dnd);
-      h += '<div class="sb-dmrow' + ur + (quiet ? ' quiet' : '') + (seRow ? ' se' : '') + (npc.pinned ? ' pinned' : '') + '" data-name="' + esc(npc.name) + '" data-npc="' + esc(npc.name) + '" data-kind="' + npcKind(npc.name, npc) + '"><span class="sb-ava">' + avaH + '</span><div class="sb-dmbody"><div class="sb-dmtop"><b>' + esc(npc.name) + (npc.pinned ? ' <span class="sb-mk-pin">' + sbIcon('pin', 11) + '</span>' : '') + (quiet ? ' <span class="sb-dnd-ic">' + sbIcon('bellOff', 11) + '</span>' : '') + '</b><em>' + esc(npc.last_contact || '') + '</em></div>';
+      h += '<div class="sb-dmrow' + ur + (quiet ? ' quiet' : '') + (seRow ? ' se' : '') + (npc.pinned ? ' pinned' : '') + '" data-name="' + esc(npc.name) + '" data-npc="' + esc(npc.name) + '" data-kind="' + npcKind(npc.name, npc) + '"><span class="sb-ava">' + avaH + '</span><div class="sb-dmbody"><div class="sb-dmtop"><b>' + esc(dn(npc.name)) + (npc.pinned ? ' <span class="sb-mk-pin">' + sbIcon('pin', 11) + '</span>' : '') + (quiet ? ' <span class="sb-dnd-ic">' + sbIcon('bellOff', 11) + '</span>' : '') + '</b><em>' + esc(npc.last_contact || '') + '</em></div>';
       var tagsR = npc.isGroup
         ? (npc.anon ? '匿名' : ((npc.members || []).length + ' 人'))
         : (npc.archetype || '') + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已拉黑你' : '');
       // ✦ 暮星注入来的：一颗小星 +「真人开的头 · AI 接着演」，和真人那条线一眼分开
       if (npc.vesper && !npc.isGroup) h += '<div class="sb-dmtags sdv-npc-tag"><span class="sdv-npc-star">' + sbIcon('star', 11) + '</span>' + esc(VESPER_COPY.npcTag) + '</div>';
       else if (tagsR) h += '<div class="sb-dmtags">' + esc(tagsR) + '</div>';
-      h += '<div class="sb-dmlast">' + esc(npc.last_message || '') + (readMark(npc) ? '<span class="sb-rd"> · 已读</span>' : '') + '</div></div>';
+      h += '<div class="sb-dmlast">' + esc(npc.isGroup && !npc.anon ? remarkSys(npc.last_message) : (npc.last_message || '')) + (readMark(npc) ? '<span class="sb-rd"> · 已读</span>' : '') + '</div></div>';   // 📝 熟人群的预览「原名：…」跟着备注
       // 🔕 免打扰的群：红角标换成一个小灰点（占原来角标的位置，知道有动静就行）
       if (npc.unread > 0) h += quiet ? '<span class="sb-dnd-dot"></span>' : '<span class="sb-badge">' + npc.unread + '</span>';
       h += '</div>';
@@ -7352,7 +7417,7 @@
       var it = cl[idx]; if (!it || it.to) return;
       SBupdate(function (v) { var c0 = v.sb && v.sb.closet && v.sb.closet[idx]; if (c0 && c0.name === it.name && !c0.to) c0.to = who; return v; });
       it.to = who;
-      toast('success', '🎁 ' + it.name + ' → 送给 ' + who);
+      toast('success', '🎁 ' + it.name + ' → 送给 ' + dn(who));
       deliverGift(who, it.name, Number(it.price) || 0, !!it.fake);
       SBemit('sb_updated');
     }
@@ -7361,7 +7426,7 @@
     var menu = DOC.createElement('div');
     menu.className = 'sb-msgmenu';
     menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '18%';
-    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">送 ' + esc(who) + ' 哪一件？</div>';
+    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">送 ' + esc(dn(who)) + ' 哪一件？</div>';
     for (var k = idxs.length - 1; k >= 0; k--) {
       var c = cl[idxs[k]];
       mh += '<button data-gi="' + idxs[k] + '">' + esc(c.name) + (c.fake ? '（高仿）' : '') + (Number(c.price) > 0 ? ' <span style="opacity:.5;font-size:10px;">' + fmtCNY(Number(c.price)) + '</span>' : '') + '</button>';
@@ -7384,7 +7449,7 @@
     pickContact(function (who) {
       SBupdate(function (v) { var c0 = v.sb && v.sb.closet && v.sb.closet[idx]; if (c0 && c0.name === it.name && !c0.to) c0.to = who; return v; });
       it.to = who;
-      toast('success', '🎁 ' + it.name + ' → 送给 ' + who);
+      toast('success', '🎁 ' + it.name + ' → 送给 ' + dn(who));
       deliverGift(who, it.name, Number(it.price) || 0, !!it.fake);
       SBemit('sb_updated');
       if (currentPage === 'closet') openCloset();
@@ -7412,7 +7477,7 @@
   // 🔗 商品链接转发：圈内心照不宣的"买给我"——挑个联系人，链接进TA的待发队列，点发送看TA上不上道
   function sendProductLink(who, prodName, price) {
     var nB = state && state.npcs && state.npcs[who];
-    if (nB && nB.blocked) { toast('warning', who + ' 已经把你拉黑了，发不过去'); return; }   // ⛔
+    if (nB && nB.blocked) { toast('warning', dn(who) + ' 已经把你拉黑了，发不过去'); return; }   // ⛔
     var text = '🔗 [转发商品] ' + prodName + (price > 0 ? ' —— ' + fmtCNY(price) : '') + '（SugarElite 商城）';
     var t = nowT();
     SBupdate(function (v) {
@@ -7434,7 +7499,7 @@
     }
     queueOutbox(who, text);
     SBemit('sb_updated');
-    toast('success', '🔗 已转发给 ' + who + '——去TA的聊天页点「发送」，看TA上不上道');
+    toast('success', '🔗 已转发给 ' + dn(who) + '——去TA的聊天页点「发送」，看TA上不上道');
   }
 
   // ══ 穷光蛋三件套（Fan 10-14：好多人玩穷光蛋开局，给他们加点乐子）══
@@ -7672,7 +7737,7 @@
     var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">' + esc(opts.title || '发给谁？（圈内都懂这是什么意思）') + '</div>';
     for (var i = 0; i < keys.length; i++) {
       var np = npcs[keys[i]];
-      mh += '<button data-pick="' + esc(np.name) + '">' + esc(np.name) + (np.archetype ? ' <span style="opacity:.5;font-size:10px;">' + esc(np.archetype) + '</span>' : '') + '</button>';
+      mh += '<button data-pick="' + esc(np.name) + '">' + esc(dn(np.name)) + (np.archetype ? ' <span style="opacity:.5;font-size:10px;">' + esc(np.archetype) + '</span>' : '') + '</button>';
     }
     mh += '<button data-pick="">✕ 算了</button>';
     menu.innerHTML = mh;
@@ -8099,8 +8164,8 @@
     if (missing.length) {
       for (var j = 0; j < missing.length; j++) {
         var f = missing[j];
-        var ini = (f[0].replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
-        h += '<div class="sb-forow sb-contact" data-fixed="' + j + '" style="cursor:pointer;"><span class="fi">' + esc(ini) + '</span><div class="fb"><b>' + esc(f[0]) + '</b><small>' + esc(f[1] + ' · ' + f[2]) + '</small></div><span class="sb-soon">开聊 ›</span></div>';
+        var ini = (dn(f[0]).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
+        h += '<div class="sb-forow sb-contact" data-fixed="' + j + '" style="cursor:pointer;"><span class="fi">' + esc(ini) + '</span><div class="fb"><b>' + esc(dn(f[0])) + '</b><small>' + esc(f[1] + ' · ' + f[2]) + '</small></div><span class="sb-soon">开聊 ›</span></div>';
       }
     } else {
       h += '<div class="sb-empty">都已经在消息列表里了</div>';
@@ -8158,6 +8223,8 @@
       name = (name || '').trim().slice(0, 24);
       if (!name) return;
       if (state && state.npcs && state.npcs[name]) { openChat(name, state.npcs[name]); return; }   // 已存在=直接进
+      var byRemark = remarkOwner(name);   // 📝 输的是某人的备注（玩家记得的是「陈小姐」不是网名）→ 直接进 TA 的聊天，别另建一个同名新人
+      if (byRemark) { openChat(byRemark, state.npcs[byRemark]); return; }
       panelPrompt('TA是谁？一句话（比如"52岁老城区画廊主，说话夹法语"）。留空=让TA接到消息时自己长出来', '').then(function (who) {
         who = (who || '').trim();
         var fresh = {
@@ -8283,9 +8350,9 @@
       for (var i = 0; i < _grpCands.length; i++) {
         var c = _grpCands[i];
         var blocked = !!c.blocked;
-        var ini = (String(c.name).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
+        var ini = (dn(c.name).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
         h += '<div class="sb-forow sb-gpick' + (blocked ? ' off' : '') + '" data-gp="' + i + '" style="cursor:' + (blocked ? 'default' : 'pointer') + ';"><span class="fi">' + esc(ini) + '</span>' +
-          '<div class="fb"><b>' + esc(c.name) + '</b><small>' + esc(c.archetype || '陌生') + (blocked ? ' · ⛔ 已把你拉黑，拉不进来' : '') + '</small></div>' +
+          '<div class="fb"><b>' + esc(dn(c.name)) + '</b><small>' + esc(c.archetype || '陌生') + (blocked ? ' · ⛔ 已把你拉黑，拉不进来' : '') + '</small></div>' +
           '<span class="sb-soon gtick">' + (blocked ? '—' : '○') + '</span></div>';
       }
     }
@@ -8300,7 +8367,7 @@
           var gi = parseInt(row.getAttribute('data-gp'), 10);
           var cand = _grpCands[gi];
           if (!cand) return;
-          if (cand.blocked) { toast('info', cand.name + ' 已经把你拉黑了——拉不进来'); return; }
+          if (cand.blocked) { toast('info', dn(cand.name) + ' 已经把你拉黑了——拉不进来'); return; }
           if (_grpPick[gi]) delete _grpPick[gi];
           else {
             if (Object.keys(_grpPick).length >= GROUP_MAX_MEMBERS) { toast('info', '一个群最多 ' + GROUP_MAX_MEMBERS + ' 个人'); return; }
@@ -8312,7 +8379,7 @@
           // 群名留空时跟着勾选走：前三个人的名字顿号连起来
           var nmEl = chatEl.querySelector('#sbnyc-grp-name');
           if (nmEl && (!nmEl.value || nmEl.getAttribute('data-auto') === '1')) {
-            nmEl.value = defaultGroupName(pickedNames());
+            nmEl.value = defaultGroupName(pickedNames().map(dn));   // 📝 默认群名用玩家看到的名字（成员照旧按原名记）
             nmEl.setAttribute('data-auto', '1');
           }
         });
@@ -8403,7 +8470,7 @@
       for (var i = 0; i < ms.length; i++) {
         var hd = ms[i];
         var r = (npc.roster && npc.roster[hd]) || {};
-        var sub = r.real ? (r.revealed ? '你们私聊过 · ' + r.real : '露过底：' + r.real) : '还没露过底';
+        var sub = r.real ? (r.revealed ? '你们私聊过 · ' + dn(r.real) : '露过底：' + dn(r.real)) : '还没露过底';
         h += '<div class="sb-forow' + (r.real ? ' sb-gdm' : '') + '" data-hd="' + esc(hd) + '" style="cursor:' + (r.real ? 'pointer' : 'default') + ';"><span class="fi" style="color:' + speakerColor(hd) + ';">●</span>' +
           '<div class="fb"><b>' + esc(hd) + '</b><small>' + esc(sub) + '</small></div>' +
           // 还没露底的那些不给胶囊：一页八个空金胶囊里各写一个「—」，比什么都不写还吵
@@ -8416,9 +8483,9 @@
       for (var j = 0; j < ms.length; j++) {
         var mn = ms[j];
         var mnp = npcOf(mn) || {};
-        var mini = (String(mn).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
+        var mini = (dn(mn).replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
         h += '<div class="sb-forow"><span class="fi" style="color:' + speakerColor(mn) + ';">' + esc(mini) + '</span>' +
-          '<div class="fb"><b>' + esc(mn) + '</b><small>' + esc(mnp.archetype || '') + (mnp.blocked ? ' · ⛔ 已把你拉黑，群里不出声' : '') + '</small></div>' +
+          '<div class="fb"><b>' + esc(dn(mn)) + '</b><small>' + esc(mnp.archetype || '') + (mnp.blocked ? ' · ⛔ 已把你拉黑，群里不出声' : '') + '</small></div>' +
           '<span class="sb-soon sb-gkick" data-mn="' + esc(mn) + '">移出</span></div>';
       }
       h += '<div style="display:flex;margin:12px 14px;"><button class="sb-abtn" id="sbnyc-gm-add" style="flex:1;">➕ 加个人进来</button></div>';
@@ -8476,7 +8543,7 @@
     SBupdate(function (v) { apply(v.sb && v.sb.npcs && v.sb.npcs[gname]); if (add) unmuteMembers(v.sb, [who]); return v; });
     apply(npcOf(gname));
     if (add) unmuteMembers(state, [who]);   // 拉进来的人解冻（和 createGroup 同一条理由）
-    toast('info', add ? ('👥 ' + who + ' 进群了') : ('👥 ' + who + ' 被移出去了'));
+    toast('info', add ? ('👥 ' + dn(who) + ' 进群了') : ('👥 ' + dn(who) + ' 被移出去了'));
   }
 
   // ── 📥 旧识导入：搜玩家酒馆里的世界书 → 填两句话 → 发给生成器做AI背调（蒸馏成档案+声音卡）→ TA主动来打招呼 ──
@@ -8756,7 +8823,7 @@
         var paid0 = Number(c2.price) || 0;
         var offer0 = paid0 > 0 ? resellOffer(c2.name, paid0) : 0;
         var meta0 = paid0 > 0 ? (esc(c2.from || '') + ' · 入手 ' + fmtCNY(paid0) + ' · 回收价 ' + fmtCNY(offer0)) : (esc(c2.from || '') + ' · 入手价没记——点出二手补个市价');
-        var toLine = c2.to ? ('<small>🎁 已送给 ' + esc(c2.to) + '</small>') : '';
+        var toLine = c2.to ? ('<small>🎁 已送给 ' + esc(dn(c2.to)) + '</small>') : '';
         var giveBtn = (!c2.to && !isExperience(c2.name)) ? '<button class="sb-buy sb-give" data-g="' + i + '">送人</button>' : '';
         h += '<div class="sb-rank"><div class="rb"><b>' + esc(c2.name) + '</b><small>' + meta0 + '</small>' + toLine + '</div>' + giveBtn + '<button class="sb-buy" data-i="' + i + '" data-o="' + offer0 + '">出二手</button></div>';
       }
@@ -8952,7 +9019,7 @@
       // 表现就是"点了没反应"（血泪教训 #2，🔗 转发那个按钮早就踩过一次）
       ev.stopPropagation();
       pickContact(function (who) {
-        toast('info', '🕵️ S. 去查 ' + who + ' 了——查完她会把档案发到你和她的聊天里');
+        toast('info', '🕵️ S. 去查 ' + dn(who) + ' 了——查完她会把档案发到你和她的聊天里');
         setStatus('🕵️ S. 正在查 ' + who + '…');
         SBemit('sb_request_dossier', { name: who });
       }, {
@@ -9135,14 +9202,14 @@
     var h = '<div class="cal-dh">' + esc(fmtMDWeekdayCN(gd)) + ' · 第 ' + gd + ' 天</div>', any = false;
     function line(t) { h += '<div class="cal-dl">' + t + '</div>'; any = true; }
     if (dg.s || dg.i) line('💸 ' + (dg.s ? '花了 ' + fmtCNY(dg.s) : '') + (dg.s && dg.i ? ' · ' : '') + (dg.i ? '进账 ' + fmtCNY(dg.i) : ''));
-    (dg.g || []).forEach(function (g) { line('🎁 ' + (g[2] ? esc(g[2]) + ' 送你 ' + esc(g[0]) : esc(g[0]) + (g[1] ? ' → ' + esc(g[1]) : ''))); });
+    (dg.g || []).forEach(function (g) { line('🎁 ' + (g[2] ? esc(dn(g[2])) + ' 送你 ' + esc(g[0]) : esc(g[0]) + (g[1] ? ' → ' + esc(dn(g[1])) : ''))); });   // 📝 人名跟着备注（账本里记的是原名）
     if (dg.n) {
-      line('💬 私信 ' + dg.n + ' 条' + (dg.t ? '，聊得最多的是 ' + esc(dg.t) + '（' + dg.tn + ' 条）' : ''));
+      line('💬 私信 ' + dg.n + ' 条' + (dg.t ? '，聊得最多的是 ' + esc(dn(dg.t)) + '（' + dg.tn + ' 条）' : ''));
       if (dg.q) h += '<div class="cal-q">「' + esc(dg.q) + '」</div>';
     }
     var plans = events.length ? events.map(function (e) { return e.txt; }) : (dg.p || []);
     plans.forEach(function (t) { line('🗓️ ' + esc(t)); });
-    if (dg.b && dg.b.length) line('⛔ ' + esc(dg.b.join('、')) + ' 把你拉黑了');
+    if (dg.b && dg.b.length) line('⛔ ' + esc(dg.b.map(dn).join('、')) + ' 把你拉黑了');
     if (!any) h += '<div class="cal-dl" style="color:var(--ink-faint);">这天手机上没什么动静</div>';
     var btns = '';
     if (dg.f) btns += '<button class="sb-abtn" data-jump="' + dg.f[0] + '">📖 回去看这天</button>';
@@ -9908,10 +9975,11 @@
       : (npc.vesper ? '<span class="sdv-npc-star">' + sbIcon('star', 11) + '</span>' + esc(VESPER_COPY.npcTag) : esc(npc.archetype || '')) + (npc.blocked ? (npc.archetype ? ' · ' : '') + '⛔ 已把你拉黑' : '') + (isGrp ? '' : vgSigChip(npc));   // ✦ 暮星注入来的那位（刀16：玩家替 TA 写的招牌）
     var tkO = !isGrp && toysOf().owned[name];   // 🎛 她有遥控玩具 → 名字下面一眼看到戴没戴（Fan 10-11 真机：「我找不到对方戴了没有」）
     if (tkO) subLine += '<span class="sb-tk-chip' + (tkO.wearing ? ' on' : '') + '" data-tkchip="1">TOY·LINK · ' + ((TK.live && TK.live.on && TK.live.who === name) ? '开着' : (tkO.wearing ? '戴着' : '还没戴')) + ' ›</span>';
-    var h = '<div class="sb-ch" data-npc="' + esc(name) + '" data-kind="' + npcKind(name, npc) + '"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(name) + '</b><small class="sb-arche">' + subLine + '</small></div>' +
+    var h = '<div class="sb-ch" data-npc="' + esc(name) + '" data-kind="' + npcKind(name, npc) + '"><button class="sb-ch-back">‹</button><div class="sb-ch-name"><b' + (isSE ? ' class="se"' : '') + '>' + esc(dn(name)) + '</b><small class="sb-arche">' + subLine + '</small></div>' +
       (isGrp ? '<button class="sb-ch-dnd sb-ik' + (npc.dnd ? ' on' : '') + '" title="消息免打扰（照常收，只是不吵你）">' + sbIcon(npc.dnd ? 'bellOff' : 'bell') + '</button>' : '') +
       '<button class="sb-ch-pin sb-ik' + (npc.pinned ? ' on' : '') + '" title="置顶/取消置顶（置顶的联系人不会被自动清理）">' + sbIcon('pin') + '</button>' +
-      '<button class="sb-ch-del sb-ik" title="' + (isGrp ? '退出并删除这个群' : '删除聊天记录') + '">' + sbIcon('trash') + '</button></div>';
+      '<button class="sb-ch-del sb-ik" title="' + (isGrp ? '退出并删除这个群' : '删除聊天记录') + '">' + sbIcon('trash') + '</button>' +
+      (isGrp ? '' : '<button class="sb-ch-more sb-ik" title="更多">' + sbIcon('more') + '</button>') + '</div>';   // 📝 右上「…」：备注（群没有）
     h += '<div class="sb-msgs">';
     var vgAt = isGrp ? null : vgBoardAt(npc.game);   // 刀15：棋盘气泡
     if (!hist.length) h += '<div class="sb-empty">No messages yet</div>';
@@ -9923,7 +9991,7 @@
       var seenN = _seenThem[name], drawn = 0, newK = 0;   // ✨ 连发淡入：上次画到第几条
       for (var i = 0; i < hist.length; i++) {
         if (hist[i].pending) continue;
-        if (vgAt != null && (hist[i].ts || 0) > vgAt) { h += vgBoardHtml(npc.game, name); vgAt = null; }   // ⏳ 还在路上的不画（剧情钟到点 revealDue 才送达）
+        if (vgAt != null && (hist[i].ts || 0) > vgAt) { h += vgBoardHtml(npc.game, dn(name)); vgAt = null; }   // ⏳ 还在路上的不画（剧情钟到点 revealDue 才送达）
         var dv = dividerBetween(prevMsg, hist[i]);
         if (dv) { h += dividerHtml(dv); prevWho = ''; }   // 隔了时间条就重新报一次名字
         var autoTr = !!(_pendingTrs[name + '|' + i] && hist[i].zh);
@@ -9936,13 +10004,13 @@
       }
     }
     _seenThem[name] = hist.length ? (typeof drawn === 'number' ? drawn : 0) : 0;   // ✨ 记下这次画了几条
-    if (vgAt != null) h += vgBoardHtml(npc.game, name);
+    if (vgAt != null) h += vgBoardHtml(npc.game, dn(name));
     var rdM = readMark(npc);
     if (rdM) h += '<div class="sb-read' + (rdM.fresh ? ' fresh' : '') + '">已读' + (rdM.time ? ' ' + esc(rdM.time) : '') + '</div>';
     h += '</div>';
     // 所有动作收进输入栏左边的 ➕（User 定稿：按钮太散，收在一起）——快捷键/照片/语音/定位/转账/发链接全在里面
-    if (!isGrp) h += vgMuteBarHtml(npc.game, name, vgNpcMuteRound(npc));   // 刀15
-    h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(name) + ' 回复">发送</button></div>';
+    if (!isGrp) h += vgMuteBarHtml(npc.game, dn(name), vgNpcMuteRound(npc));   // 刀15
+    h += '<div class="sb-cbar"><button class="plus" title="更多动作：照片/语音/定位/转账/链接…">➕</button><textarea rows="1" autocomplete="off" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore data-form-type="other" placeholder="' + (npc.blocked ? '对方已把你拉黑，消息发不出去' : '回车攒消息，可连打几条…') + '"></textarea><button class="send" title="让 ' + esc(dn(name)) + ' 回复">发送</button></div>';
 
     chatEl.innerHTML = h; chatEl.style.display = 'flex'; root.style.display = 'none';
     runRenderHooks('chat', name);  // 🔌 同一拍通知
@@ -9969,13 +10037,15 @@
         askGroupRound(name, 'User 刚被拉进这个匿名大厅，还没说话——群里的人本来就在聊，写一轮此刻正在进行的对话');
       }
     }
+    var moreBtn = chatEl.querySelector('.sb-ch-more');   // 📝 右上「…」→ 备注（老规矩：开菜单的点击别冒泡，不然「点菜单外＝收菜单」当场关掉）
+    if (moreBtn) moreBtn.addEventListener('click', function (ev) { ev.stopPropagation(); chatMoreMenu(name); });
     var pinBtn = chatEl.querySelector('.sb-ch-pin');
     pinBtn.addEventListener('click', function () {
       var now = !npc.pinned;
       npc.pinned = now;
       SBupdate(function (v) { if (v.sb && v.sb.npcs && v.sb.npcs[name]) v.sb.npcs[name].pinned = now; return v; });
       pinBtn.classList.toggle('on', now);
-      toast('info', now ? '📌 已置顶 ' + name + '（不会被自动清理）' : '已取消置顶 ' + name);
+      toast('info', now ? '📌 已置顶 ' + dn(name) + '（不会被自动清理）' : '已取消置顶 ' + dn(name));
     });
     chatEl.querySelector('.sb-ch-del').addEventListener('click', function () {
       var ok = true;
@@ -10042,7 +10112,7 @@
         npc.dm_history.push(uB, sB);
         SBupdate(function (v) { var n = v.sb && v.sb.npcs && v.sb.npcs[name]; if (!n) return v; if (!n.dm_history) n.dm_history = []; n.dm_history.push(uB, sB); if (n.dm_history.length > 400) n.dm_history = n.dm_history.slice(-400); n.last_message = lastPreview(uB); return v; });
         if (onScreen) { input.value = ''; openChat(name, npc); }
-        toast('warning', name + ' 已经把你拉黑了');
+        toast('warning', dn(name) + ' 已经把你拉黑了');
         return;
       }
       var revealed = onScreen && chatEl.querySelector('.sb-read') ? 1 : 0;   // 👁 「已读」在场 → 整页重画（有话在路上就挪到你新这句下面，没有就消失）；在路上的话等你点「发送」才落地
@@ -10117,7 +10187,7 @@
       var menu = DOC.createElement('div');
       menu.className = 'sb-msgmenu';
       menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '10%';
-      var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">发什么链接给 ' + esc(name) + '？</div>';
+      var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">发什么链接给 ' + esc(dn(name)) + '？</div>';
       mh += '<button data-lk="slang">📌 黑话科普帖（TA问蠢问题时甩这个）</button>';
       // 🧾 我的账单：发给TA=明示求救；TA真愿意的话会直接替你交（账单进入下期）或转账让你自己交
       var bills0 = (state && state.wallet && state.wallet.bills) || [];
@@ -10230,7 +10300,7 @@
         else if (act === 'acall' || act === 'vcall') startCall(name, act === 'vcall' ? 'video' : 'audio');
         else if (act === 'broke') { queueMsg(pickFrom(QUICK_POOLS.broke), 'text'); replyOne(name); }
         else if (act === 'gift') {
-          if (npc.blocked) { toast('warning', name + ' 已经把你拉黑了，送不过去'); return; }
+          if (npc.blocked) { toast('warning', dn(name) + ' 已经把你拉黑了，送不过去'); return; }
           giftUnsentTo(name);
         }
         else if (act === 'selfie') { queueMsg(pickFrom(QUICK_POOLS.selfie), 'image'); replyOne(name); }
@@ -10258,8 +10328,8 @@
           });
         }
         else if (act === 'pay') {
-          if (npc.blocked) { toast('warning', name + ' 已经把你拉黑了，转不过去'); return; }   // ⛔ 钱在扣之前就拦，别扣了再拒收
-          panelPrompt('转多少给 ' + name + '？只填数字（从你钱包扣，余额 ' + fmtCNY((state && state.wallet && state.wallet.balance) || 0) + '）', '').then(function (d) {
+          if (npc.blocked) { toast('warning', dn(name) + ' 已经把你拉黑了，转不过去'); return; }   // ⛔ 钱在扣之前就拦，别扣了再拒收
+          panelPrompt('转多少给 ' + dn(name) + '？只填数字（从你钱包扣，余额 ' + fmtCNY((state && state.wallet && state.wallet.balance) || 0) + '）', '').then(function (d) {
             var amt = Math.round(parseFloat(String(d || '').replace(/[^0-9.]/g, ''))) || 0;
             if (amt <= 0) return;
             if (!debit(amt, '转给 ' + name, '转账')) return;   // 余额不够 debit 自己会拦
@@ -10459,8 +10529,8 @@
         '<div class="sb-callpbtn"><button data-ca="popno">取消</button><button class="yes" data-ca="popok">发送</button></div></div></div>'
       : '';
     el.innerHTML = '<div class="sb-callbody">' + roll + pip +
-      '<div class="sb-calltop"><div class="sb-callava">' + esc(callInitial(c.name)) + '</div>' +
-      '<div class="sb-callname">' + esc(c.name) + '</div>' +
+      '<div class="sb-calltop"><div class="sb-callava">' + esc(callInitial(dn(c.name))) + '</div>' +
+      '<div class="sb-callname">' + esc(dn(c.name)) + '</div>' +
       '<div class="sb-callstatus">' + esc(callStatusText(c)) + '</div></div>' +
       '<div class="sb-callsubs">' + subs + '</div>' +
       (c.phase === 'ringing' ? '<div class="sb-cwait">等待对方接听…</div>' : '') +
@@ -10487,10 +10557,10 @@
     else if (a === 'close') closeCallScreen();
   }
   function startCall(name, mode) {
-    if (_call) { toast('warning', '还在和 ' + _call.name + ' 通话'); drawCall(); return; }
+    if (_call) { toast('warning', '还在和 ' + dn(_call.name) + ' 通话'); drawCall(); return; }
     var n = npcOf(name);
     if (!n || n.isGroup) return;
-    if (n.blocked) { toast('warning', name + ' 已经把你拉黑了，打不通'); return; }
+    if (n.blocked) { toast('warning', dn(name) + ' 已经把你拉黑了，打不通'); return; }
     _call = { id: 'c' + Date.now().toString(36), name: name, mode: mode === 'video' ? 'video' : 'audio', phase: 'ringing', busy: true,
       startAt: Date.now(), time: nowT(), gameDay: (state && state.game && state.game.day) || 1, lines: [] };
     drawCall();
@@ -10570,7 +10640,7 @@
         _call = null;
         closeCallScreen(c);
         callPushDm(c.name, msgs);
-        toast('info', c.name + ' 没接');
+        toast('info', dn(c.name) + ' 没接');
         return;
       }
       c.phase = 'active';
@@ -10640,7 +10710,7 @@
     var el = callScreen();
     el.classList.remove('video');
     el.innerHTML = '<div class="sb-callbody"><span class="sb-callx" data-ca="close" title="关闭">✕</span>' +
-      '<div class="sb-calltop sm"><div class="sb-callname">' + esc(name) + '</div>' +
+      '<div class="sb-calltop sm"><div class="sb-callname">' + esc(dn(name)) + '</div>' +
       '<div class="sb-callstatus">' + esc(callCn(rec.mode) + (rec.dur ? ' · ' + rec.dur : '') + (rec.status === 'interrupted' ? ' · 中断' : '') + (rec.time ? ' · ' + rec.time : '')) + '</div></div>' +
       '<div class="sb-callsubs">' + callSubsHtml(rec.lines) + '</div></div>';
     var box = el.querySelector('.sb-callsubs'); if (box) box.scrollTop = box.scrollHeight;
@@ -10684,8 +10754,8 @@
         var gNpc = npcOf(trName) || {};
         var rst = (gNpc.roster && gNpc.roster[who]) || null;
         // 已经和 User 私下聊过的代号，名字后面给一个只有 User 看得见的小尾巴
-        var tail = (rst && rst.revealed && rst.real) ? ' · ' + rst.real : '';
-        gsp = '<span class="gsp" data-who="' + esc(who) + '" style="color:' + speakerColor(who) + ';">' + esc(who + tail) + '</span>';
+        var tail = (rst && rst.revealed && rst.real) ? ' · ' + dn(rst.real) : '';
+        gsp = '<span class="gsp" data-who="' + esc(who) + '" style="color:' + speakerColor(who) + ';">' + esc((gNpc.anon ? who : dn(who)) + tail) + '</span>';   // 📝 熟人群里显示备注
       }
     }
     // 长按菜单：定位属性(nm/mi)现在**每种气泡都挂**（多选删除要能选中转账/礼物/撤回存根），
@@ -10766,8 +10836,8 @@
       }
       return head + tH + '</div>';
     }    if (type === 'calllog') return '<div class="sb-msg ' + cls + ' sb-calllog"' + dataA + ' data-tp="calllog" data-cid="' + esc(m.callId || '') + '"><span class="cl">' + esc(c) + '<i' + (m.mode === 'video' ? ' class="vc"' : '') + '>' + CALL_ICO(m.mode === 'video' ? 'vcall' : 'call') + '</i></span>' + tH + '</div>';   // 📞
-    if (type === 'recall') return '<div class="sb-msg system"' + dataA + ' data-tp="recall">「' + (isU ? '你' : (gWho || '对方')) + '撤回了一条消息」' + tH + '</div>';   // 内容不显示——说了什么只有发的人自己记得
-    if (type === 'system') return '<div class="sb-msg system"' + dataA + ' data-tp="system">' + esc(c) + '</div>';
+    if (type === 'recall') return '<div class="sb-msg system"' + dataA + ' data-tp="recall">「' + (isU ? '你' : (gWho ? ((npcOf(trName) || {}).anon ? gWho : dn(gWho)) : '对方')) + '撤回了一条消息」' + tH + '</div>';   // 内容不显示——说了什么只有发的人自己记得
+    if (type === 'system') return '<div class="sb-msg system"' + dataA + ' data-tp="system">' + esc(remarkSys(c)) + '</div>';   // 📝 灰条里的人名跟着备注
     // 转发的账单/商品/帖子 → 小票收据卡（User 许愿的仪式感；内容还是同一行文字，只是穿了件衣服）
     if (isU && type === 'text') {
       var rcm = String(c).match(/^(🧾|🔗)\s*\[(转发账单|转发商品|转发帖子)\]\s*([\s\S]+)$/);
@@ -11075,7 +11145,7 @@
     for (var g = 0; g < groups.length; g++) {
       var grp = groups[g];
       if (grp.title) {
-        var dv = DOC.createElement('div'); dv.className = 'bd'; dv.textContent = grp.title; wrap.appendChild(dv);
+        var dv = DOC.createElement('div'); dv.className = 'bd'; dv.textContent = remarkSys(grp.title); wrap.appendChild(dv);   // 📝 段标题里的人名跟着备注
       }
       var lastWho = null;
       for (var r = 0; r < grp.rows.length; r++) {
@@ -11087,11 +11157,12 @@
         var isMe = row.who === 'User';
         var line = DOC.createElement('div');
         line.className = 'br' + (isMe ? ' me' : '');
-        var av = DOC.createElement('div'); av.className = 'av'; av.textContent = bubIni(row.who);
-        av.title = row.who;
+        var shown = isMe ? row.who : dn(row.who);   // 📝 楼层里记的是原名，画出来跟着备注（玩家在正文里看到的就是手机里那个名字）
+        var av = DOC.createElement('div'); av.className = 'av'; av.textContent = bubIni(shown);
+        av.title = shown;
         if (row.who === lastWho) av.style.visibility = 'hidden';   // 同一个人连发几条：只有第一条露头像，剩下的留空位对齐
         var bw = DOC.createElement('div'); bw.className = 'bw';
-        if (!isMe && row.who !== lastWho) { var nm = DOC.createElement('div'); nm.className = 'bn'; nm.textContent = row.who; bw.appendChild(nm); }
+        if (!isMe && row.who !== lastWho) { var nm = DOC.createElement('div'); nm.className = 'bn'; nm.textContent = shown; bw.appendChild(nm); }
         var bb = DOC.createElement('div'); bb.className = 'bb';
         var stkM = String(row.text || '').match(/^\(表情:(.+)\)$/);
         if (stkM && STICKERS[stkM[1]]) { bb.className = 'bb stk'; bb.innerHTML = stickerImg(stkM[1], 'sb-stk-img'); }   // 表情包行 → 出图（名字来自白名单，不是玩家可控 HTML）
@@ -11211,9 +11282,23 @@
       for (var k in npcs) {
         if (!npcs.hasOwnProperty(k) || !npcs[k]) continue;
         var n = npcs[k];
-        out.push({ name: k, kind: npcKind(k, n), pinned: !!n.pinned, unread: n.unread || 0, archetype: n.archetype || '', lastMessage: n.last_message || '', lastTs: n.last_ts || 0 });
+        out.push({ name: k, kind: npcKind(k, n), pinned: !!n.pinned, unread: n.unread || 0, archetype: n.archetype || '', lastMessage: n.last_message || '', lastTs: n.last_ts || 0, remark: (!n.isGroup && n.remark) ? cleanRemark(n.remark) : '' });
       }
       return out;
+    },
+    // 📝 备注名（11-11 新增，apiVersion 照旧 1，外挂用 typeof 判断）：name 永远是原名（存档的键），remark 是玩家存的备注，空串＝没有
+    remarkOf: function (name) { return remarkOf(String(name || '')); },
+    // 改备注（内置好友主页的「📝 备注」走这里）：撞名返回 { ok:false, why }；成功返回 { ok:true, remark }（空串＝清除）
+    setRemark: function (name, text) {
+      name = String(name || '');
+      var n = npcOf(name);   // 读镜像，不 loadState：写队列里还没落账的改动会被旧变量盖掉（SBemit 那条注释）
+      if (!n || n.isGroup) return Promise.resolve({ ok: false, why: '这个人已经不在手机里了' });
+      var r = cleanRemark(text), why = remarkClash(name, r);
+      if (why) return Promise.resolve({ ok: false, why: why });
+      return setRemark(name, r).then(function (saved) {
+        if (currentChatName === name && currentPage == null && chatEl.style.display !== 'none') openChat(name, npcOf(name) || n);
+        return { ok: true, remark: saved };
+      });
     },
     getContact: function (name) {
       var n = apiNpcs()[String(name || '')];
@@ -11406,7 +11491,7 @@
     var menu = DOC.createElement('div');
     menu.className = 'sb-msgmenu';
     menu.style.left = '24px'; menu.style.right = '24px'; menu.style.top = '22%';
-    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">' + esc(who) + '</div>';
+    var mh = '<div style="padding:8px 13px;font-size:11px;color:var(--ink-faint);letter-spacing:1px;">' + esc(g.anon ? who : dn(who)) + '</div>';
     if (g.anon) {
       var r = (g.roster && g.roster[who]) || {};
       mh += r.real
@@ -11566,7 +11651,7 @@
     refreshView();
     var rdN = currentChatName && state && state.npcs && state.npcs[currentChatName];
     var rdS = rdN && readMark(rdN);
-    setStatus(rdS && rdS.fresh ? currentChatName + ' 已读' : '✓ 新消息 ' + nowT());
+    setStatus(rdS && rdS.fresh ? dn(currentChatName) + ' 已读' : '✓ 新消息 ' + nowT());
     if (totalUnread() > prevUn) triggerVibration();
   });
   // 🧾 税务题目就绪（UWU）：流水页税务中心开着就地刷新
@@ -12965,6 +13050,9 @@ var SBLAB_CARD = "sd";
 // 11. 小修：sb_updated 只在这个人的数据真变了才重画（以前每次都整页重画：滚动跳回顶上、小穴评级转盘转到一半被打断），重画保留
 //     滚动位置；分支聊天会复制父聊天的变量，换图时只删本聊天建的那张（图片编号带聊天标记，老编号一律不删）；改原名失败时
 //     不盖掉具体原因；backdrop-filter 补 -webkit- 前缀，dvh 加 vh 回退；下拉框选项在深色页头下也看得清。
+// 12. 11-11 📝 备注名（Discord 玩家：手机里的网名写进正文太出戏）：名字行多一个「📝 备注」（就地小表单，写入走手机的 SugarOS.setRemark，
+//     撞名当场拦下），有备注时大名显示备注、下面一行小字「@原网名」；切人下拉、聊天页顶栏和列表的头像字母跟着备注。
+//     存档的键、contact.name、往来/档案/世界书的认人一律还是原名，只在认人候选里多加备注（正文按备注写的也认得是 TA）。VERSION 升 sd2。
 // Data contract (schema 1): sb.npcs[displayName].profile = {
 //   schema, headline, bio, city, birthday, tags[], likes[], boundaries[], pin, note,
 //   avatar, illustration, updatedAt
@@ -12972,7 +13060,7 @@ var SBLAB_CARD = "sd";
 (function sdfpMain() {   // SD 内置：起个名字，被独立版顶掉时要能重新起来
   'use strict';
 
-  var VERSION = '1.9.0-sd1';
+  var VERSION = '1.9.0-sd2';   // SD 内置 11-11：sd2＝加了 📝 备注名（样式表按版本号换新）
   var BUILTIN = true;   // SD 内置：打包进一掷千金手机的这份
   var DUP_WARN_KEY = '__SD_FRIEND_PROFILE_DUP_WARNED__';
   var SCHEMA = 1;
@@ -13078,6 +13166,18 @@ var SBLAB_CARD = "sd";
 
   function clampText(value, length) {
     return text(value).slice(0, length);
+  }
+
+  // SD 内置 11-11：📝 备注名——玩家在手机里给联系人存的备注（sb.npcs[原名].remark，手机 cleanRemark 同一个清法）。
+  // contact.name / 键永远是原名（存档、往来、档案、世界书都按它认），备注只管显示；没有备注＝和以前一模一样。
+  function remarkOfRaw(raw) {
+    return raw && typeof raw === 'object' && !raw.isGroup && raw.remark
+      ? String(raw.remark).replace(/[|§\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24)
+      : '';
+  }
+
+  function shownName(contact) {
+    return (contact && remarkOfRaw(contact.raw)) || (contact && contact.name) || '';
   }
 
   function asList(value, limit) {
@@ -13553,7 +13653,7 @@ var SBLAB_CARD = "sd";
 
   function bodyEvidenceFromPlot(source, contact) {
     var profile = contact ? profileFor(contact) : {};
-    var preferredNames = [contact && contact.name, profile.originalName, contact && contact.key, contact && contact.raw && contact.raw.name]
+    var preferredNames = [contact && contact.name, profile.originalName, contact && contact.key, contact && contact.raw && contact.raw.name, contact && remarkOfRaw(contact.raw)]   // SD 内置 11-11：正文按备注写的也认
       .map(function (item) { return text(item); })
       .filter(function (item, index, list) { return item && list.indexOf(item) === index; });
     return {
@@ -13617,7 +13717,7 @@ var SBLAB_CARD = "sd";
     var rows = await dossierChatMessages();
     if (!rows.length) return { text: '', hits: 0, bodyHits: 0, scanned: 0, used: 0, evidence: bodyEvidenceFromPlot('', contact) };
     var profile = profileFor(contact);
-    var names = [contact.name, profile.originalName, contact.key, contact.raw && contact.raw.name]
+    var names = [contact.name, profile.originalName, contact.key, contact.raw && contact.raw.name, remarkOfRaw(contact.raw)]   // SD 内置 11-11：正文按备注写的也认
       .map(function (item) { return text(item).toLowerCase(); })
       .filter(function (item, index, list) { return item && list.indexOf(item) === index; });
     var take = {};
@@ -13783,7 +13883,7 @@ var SBLAB_CARD = "sd";
 
   function pussyArchiveAliasesFor(contact) {
     var profile = profileFor(contact);
-    return [contact.name, profile.originalName, contact.key, contact.raw && contact.raw.name]
+    return [contact.name, profile.originalName, contact.key, contact.raw && contact.raw.name, remarkOfRaw(contact.raw)]   // SD 内置 11-11：识别名带上备注，正文写备注也触发
       .map(function (item) { return text(item); })
       .filter(function (item, index, list) { return item && list.indexOf(item) === index; });
   }
@@ -14376,7 +14476,7 @@ var SBLAB_CARD = "sd";
     var profile = contact.raw && contact.raw.profile && typeof contact.raw.profile === 'object'
       ? contact.raw.profile
       : {};
-    var candidates = [contact.name, contact.key, contact.raw && contact.raw.name, profile.originalName];
+    var candidates = [contact.name, contact.key, contact.raw && contact.raw.name, profile.originalName, remarkOfRaw(contact.raw)];   // SD 内置 11-11：流水 / 礼物按备注写的也认
     var names = [];
     candidates.forEach(function (candidate) {
       var normalized = normalizePersonName(candidate);
@@ -15239,12 +15339,14 @@ var SBLAB_CARD = "sd";
       '#sdfp-root .sdfp-hero-copy{min-width:0;align-self:center;}',
       '#sdfp-root .sdfp-name-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}',
       '#sdfp-root .sdfp-name{margin:0;font:600 clamp(24px,4vw,34px)/1.08 ui-serif,Georgia,"Noto Serif SC",serif;color:var(--sdfp-ink);overflow-wrap:anywhere;}',
-      '#sdfp-root .sdfp-original-name{min-height:28px;padding:0 9px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-field);color:var(--sdfp-gold-ink);font:600 10px/1 system-ui,sans-serif;cursor:pointer;}',
-      '#sdfp-root .sdfp-original-name:hover,#sdfp-root .sdfp-original-name:focus-visible{outline:2px solid var(--sdfp-edge);outline-offset:1px;}',
-      '#sdfp-root .sdfp-original-editor{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;}',
-      '#sdfp-root .sdfp-original-editor input{width:150px;min-width:0;height:30px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-field);color:var(--sdfp-ink);padding:0 8px;font:500 11px/1 system-ui,sans-serif;}',
-      '#sdfp-root .sdfp-original-editor button{height:30px;padding:0 9px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-paper-2);color:var(--sdfp-ink);font:700 10px/1 system-ui,sans-serif;cursor:pointer;}',
-      '#sdfp-root .sdfp-original-editor button.primary{background:var(--sdfp-primary);border-color:var(--sdfp-primary);color:var(--sdfp-primary-ink);}',
+      '#sdfp-root .sdfp-original-name,#sdfp-root .sdfp-remark-btn{min-height:28px;padding:0 9px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-field);color:var(--sdfp-gold-ink);font:600 10px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-original-name:hover,#sdfp-root .sdfp-original-name:focus-visible,#sdfp-root .sdfp-remark-btn:hover,#sdfp-root .sdfp-remark-btn:focus-visible{outline:2px solid var(--sdfp-edge);outline-offset:1px;}',
+      '#sdfp-root .sdfp-original-editor,#sdfp-root .sdfp-remark-editor{display:flex;align-items:center;gap:6px;min-width:0;flex-wrap:wrap;}',
+      '#sdfp-root .sdfp-original-editor input,#sdfp-root .sdfp-remark-editor input{width:150px;min-width:0;height:30px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-field);color:var(--sdfp-ink);padding:0 8px;font:500 11px/1 system-ui,sans-serif;}',
+      '#sdfp-root .sdfp-original-editor button,#sdfp-root .sdfp-remark-editor button{height:30px;padding:0 9px;border:1px solid var(--sdfp-edge);border-radius:5px;background:var(--sdfp-paper-2);color:var(--sdfp-ink);font:700 10px/1 system-ui,sans-serif;cursor:pointer;}',
+      '#sdfp-root .sdfp-original-editor button.primary,#sdfp-root .sdfp-remark-editor button.primary{background:var(--sdfp-primary);border-color:var(--sdfp-primary);color:var(--sdfp-primary-ink);}',
+      '#sdfp-root .sdfp-handle{margin:5px 0 0;color:var(--sdfp-ink-sub);font:500 12px/1.3 system-ui,sans-serif;letter-spacing:.2px;overflow-wrap:anywhere;}',   // SD 内置 11-11：备注下面那行「@原网名」
+      '#sdfp-root .sdfp-remark-editor input{width:170px;}',
       '#sdfp-root .sdfp-headline{margin:7px 0 0;color:var(--sdfp-ink-sub);font-size:13px;line-height:1.55;overflow-wrap:anywhere;}',
       '#sdfp-root .sdfp-tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}',
       '#sdfp-root .sdfp-tag{padding:4px 8px;border-radius:4px;background:var(--sdfp-paper-2);border:1px solid var(--sdfp-line);color:var(--sdfp-gold-ink);font-size:11px;}',
@@ -15935,6 +16037,66 @@ var SBLAB_CARD = "sd";
     }, 0);
   }
 
+  // SD 内置 11-11：📝 备注——和「原名」同一种就地小表单（浮层在手机面板外面，手机自己的面板内输入框会被压在浮层下面）。
+  // 写入走手机的 SugarOS.setRemark：变量和手机镜像一起改、撞名当场拦下，手机列表 / 聊天页 / 正文注入跟着刷新。留空＝清除。
+  function openRemarkEditor() {
+    var contact = findContact(activeName);
+    var row = root && root.querySelector('.sdfp-name-row');
+    if (!contact || !row) return;
+    var existing = row.querySelector('.sdfp-remark-editor');
+    if (existing) {
+      var oldInput = existing.querySelector('input');
+      if (oldInput) oldInput.focus();
+      return;
+    }
+    var trigger = row.querySelector('.sdfp-remark-btn');
+    if (trigger) trigger.hidden = true;
+    var editor = el('form', 'sdfp-remark-editor');
+    var input = DOC.createElement('input');
+    input.type = 'text';
+    input.maxLength = 24;
+    input.value = remarkOfRaw(contact.raw);
+    input.placeholder = '给 TA 存个备注（留空就用原名）';
+    input.setAttribute('aria-label', '备注');
+    var confirm = el('button', 'primary', '确定');
+    confirm.type = 'submit';
+    var cancel = el('button', '', '取消');
+    cancel.type = 'button';
+    append(editor, input, confirm, cancel);
+    row.appendChild(editor);
+    var name = contact.name;
+    cancel.addEventListener('click', function () {
+      editor.remove();
+      if (trigger) trigger.hidden = false;
+      try { trigger.focus(); } catch (_) {}
+    });
+    editor.addEventListener('submit', function (event) {
+      event.preventDefault();
+      confirm.disabled = true;
+      var api = null;
+      try { api = HOST.SugarOS; } catch (_) {}
+      var job = api && typeof api.setRemark === 'function'
+        ? Promise.resolve(api.setRemark(name, input.value))
+        : Promise.resolve({ ok: false, why: '手机还没准备好，稍等再试' });
+      job.then(function (res) {
+        if (res && res.ok) {
+          render();
+          setStatus(res.remark ? '备注已存：' + res.remark : '已清除备注，显示回原名', 'ok');
+        } else {
+          confirm.disabled = false;
+          setStatus((res && res.why) || '备注没存上', 'error');
+          try { input.focus(); } catch (_) {}
+        }
+      }, function (e) {
+        confirm.disabled = false;
+        setStatus('备注没存上：' + ((e && e.message) || e), 'error');
+      });
+    });
+    HOST.setTimeout(function () {
+      try { input.focus(); input.select(); } catch (_) {}
+    }, 0);
+  }
+
   function removeLegacyTopbar() {
     var legacy = DOC.getElementById('sdfp-topbar-entry');
     if (legacy) legacy.remove();
@@ -15947,7 +16109,8 @@ var SBLAB_CARD = "sd";
 
   // SD 内置：列表行里的字母照手机自己的写法（取第一个中文或英文字母），摘头像时换回去和手机一模一样
   function phoneInitialOf(name) {
-    return (String(name || '').replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
+    var shown = shownName(findContact(name)) || name;   // SD 内置 11-11：手机列表的字母跟着备注走
+    return (String(shown || '').replace(/[^A-Za-z一-鿿]/g, '')[0] || '\xB7').toUpperCase();
   }
 
   function decorateChatHeader() {
@@ -15969,7 +16132,7 @@ var SBLAB_CARD = "sd";
       var button = DOC.createElement('button');
       button.type = 'button';
       button.className = 'sdfp-phone-avatar';
-      button.textContent = initialOf(headName);
+      button.textContent = initialOf(shownName(findContact(headName)) || headName);   // SD 内置 11-11：字母跟着备注
       button.title = '打开 ' + headName + ' 的个人主页';
       button.setAttribute('aria-label', button.title);
       button.dataset.sdfpName = headName;
@@ -15979,7 +16142,7 @@ var SBLAB_CARD = "sd";
     var headerAvatar = chatName && chatName.querySelector('.sdfp-phone-avatar');
     if (headerAvatar && headerAvatar.dataset.sdfpName) {
       var headerContact = findContact(headerAvatar.dataset.sdfpName);
-      applyAvatar(headerAvatar, headerContact ? profileFor(headerContact).avatar : '', headerAvatar.dataset.sdfpName);
+      applyAvatar(headerAvatar, headerContact ? profileFor(headerContact).avatar : '', shownName(headerContact) || headerAvatar.dataset.sdfpName);
     }
   }
 
@@ -16197,6 +16360,7 @@ var SBLAB_CARD = "sd";
     var history = contact && Array.isArray(contact.dm_history) ? contact.dm_history : [];
     return JSON.stringify({
       contactCount: Object.keys(npcs).length,
+      remarks: Object.keys(npcs).map(function (key) { return remarkOfRaw(npcs[key]); }).join('|'),   // SD 内置 11-11
       active: activeName,
       contactLast: contact ? [
         text(contact.name),
@@ -16602,7 +16766,7 @@ var SBLAB_CARD = "sd";
       if (contacts.length) {
         switchEl.disabled = false;
         contacts.forEach(function (contact) {
-          var option = el('option', '', contact.name);
+          var option = el('option', '', shownName(contact));   // SD 内置 11-11：显示备注，值还是原名
           option.value = contact.name;
           option.selected = contact.name === activeName;
           switchEl.appendChild(option);
@@ -16630,7 +16794,7 @@ var SBLAB_CARD = "sd";
     avatarButton.type = 'button';
     avatarButton.setAttribute('aria-label', profile.avatar ? '更换头像' : '设置头像');
     var avatarMedia = el('span', 'sdfp-avatar-media');
-    applyAvatar(avatarMedia, profile.avatar, contact.name);
+    applyAvatar(avatarMedia, profile.avatar, shownName(contact));
     avatarButton.appendChild(avatarMedia);
     var avatarEdit = el('span', 'sdfp-media-edit-badge', '改');
     avatarEdit.setAttribute('aria-hidden', 'true');
@@ -16639,13 +16803,20 @@ var SBLAB_CARD = "sd";
     hero.appendChild(avatarButton);
     var copy = el('div', 'sdfp-hero-copy');
     var nameRow = el('div', 'sdfp-name-row');
-    nameRow.appendChild(el('h3', 'sdfp-name', contact.name));
+    var remark = remarkOfRaw(contact.raw);   // SD 内置 11-11：📝 备注名
+    nameRow.appendChild(el('h3', 'sdfp-name', remark || contact.name));
+    var remarkButton = el('button', 'sdfp-remark-btn', '📝 备注');
+    remarkButton.type = 'button';
+    remarkButton.title = '给 TA 存个备注（留空就用原名）';
+    remarkButton.addEventListener('click', openRemarkEditor);
+    nameRow.appendChild(remarkButton);
     var originalNameButton = el('button', 'sdfp-original-name', profile.originalName ? '原名：' + profile.originalName : '设置原名');
     originalNameButton.type = 'button';
     originalNameButton.title = '设置用于匹配礼物和往来流水的原名';
     originalNameButton.addEventListener('click', openOriginalNameEditor);
     nameRow.appendChild(originalNameButton);
     copy.appendChild(nameRow);
+    if (remark) copy.appendChild(el('p', 'sdfp-handle', '@' + contact.name));   // SD 内置 11-11：这人本来叫什么
     copy.appendChild(el('p', 'sdfp-headline', profile.headline || 'SugarSecret 联系人'));
     if (profile.tags.length) {
       var tags = el('div', 'sdfp-tags');
@@ -17619,6 +17790,8 @@ var SBLAB_CARD = "sd";
     var names = [];
     var npcs = vars && vars.sb && vars.sb.npcs;
     if (npcs && typeof npcs === 'object') names = names.concat(Object.keys(npcs));
+    // SD 内置 11-11：📝 玩家给联系人存的备注（sb.npcs[原名].remark）——正文按备注写的「送给陈小姐」也认得是送人
+    if (npcs && typeof npcs === 'object') Object.keys(npcs).forEach(function (key) { var n = npcs[key]; if (n && !n.isGroup && n.remark) names.push(String(n.remark)); });
     var closet = vars && vars.sb && Array.isArray(vars.sb.closet) ? vars.sb.closet : [];
     closet.forEach(function (item) {
       var target = text(item && item.to);

@@ -220,7 +220,8 @@ function groupUserSpoke(g) {
 }
 // User 刚才点了谁的名 → 这几个人本轮必到（点了名没人应，比谁都假）
 // 名字归一照 splitGroupSpeaker 那套：管家的各种写法、名姓分开写都认
-function mustSpeakers(order, text) {
+// alias＝{原名: 备注}（📝 玩家点的是备注名也算点了这个人；匿名群不传）
+function mustSpeakers(order, text, alias) {
   var out = [], t = String(text || '');
   if (!t) return out;
   function fold(x) { return String(x || '').replace(/[^0-9A-Za-z一-鿿ぁ-ヿ가-힣]/g, '').toLowerCase(); }
@@ -230,6 +231,7 @@ function mustSpeakers(order, text) {
     if (normalizeName(nm) === 'SugarElite™') cands = cands.concat(['管家', 'SugarElite', 'S.']);
     var parts = String(nm).split(/\s+/);                       // 名姓分开写的：玩家多半只写前半截
     if (parts.length > 1) cands = cands.concat(parts);
+    if (alias && alias[nm]) cands.push(alias[nm]);
     var hit = false;
     for (var c = 0; c < cands.length && !hit; c++) {
       var k = fold(cands[c]);
@@ -310,7 +312,7 @@ function capGroupSpeakers(rows, k, musts) {
 function planGroupRound(sb, g, reason) {
   var order = groupSpeakers(sb, g);
   var spoke = groupUserSpoke(g);
-  var musts = mustSpeakers(order, String(reason || '').split(g.name).join(' '));   // 群名里可能带着人名，先摘掉
+  var musts = mustSpeakers(order, String(reason || '').split(g.name).join(' '), g.anon ? null : remarkMap(sb, order));   // 群名里可能带着人名，先摘掉；📝 备注名也认
   var k = pickSpeakerCount(order.length, !!g.anon, spoke, Math.random());
   if (musts.length > k) k = Math.min(musts.length, order.length);
   return { order: order, k: k, musts: musts, userSpoke: spoke, side: sideDmHit(g, spoke, Math.random()) };
@@ -379,6 +381,7 @@ function mergeDupeNpcs() {
         if (a.dm_history.length > 400) a.dm_history = a.dm_history.slice(-400);
         a.unread = (a.unread || 0) + (b.unread || 0);
         a.engaged = a.engaged || b.engaged;
+        if (!a.remark && b.remark) a.remark = b.remark;   // 📝 备注跟着人走
         a.total_transfers = (a.total_transfers || 0) + (b.total_transfers || 0);
         if ((b.last_ts || 0) > (a.last_ts || 0)) { a.last_ts = b.last_ts; a.last_contact = b.last_contact; a.last_message = b.last_message; }
       }
@@ -397,6 +400,39 @@ function mergeDupeNpcs() {
   }).catch(function (e) { console.warn('[SD-S v4] merge dupe contacts failed', e); });   // 2026-10-12 体检：别留未捕获的 Promise
 }
 function isPersistent(name) { return PERSISTENT_CANONICAL.indexOf(normalizeName(name)) !== -1; }
+// ── 📝 备注名（11-11，Discord 玩家：手机里是网名「别浪费我时间」，正文里写「牵住了别浪费我时间的手」太出戏）──
+// 玩家在手机里给联系人存的备注＝sb.npcs[原名].remark。键永远是原名（聊天记录、群成员、流水、俱乐部注入都按原名认），
+// 备注只是 User 对 TA 的叫法：正文注入 / 私信 / 群聊提示里讲清「备注 X 就是原名 Y」；模型万一把备注当名字写回来，解析时认回原名，
+// 不长出第二个人。群没有备注；没有 remark 字段＝和以前一模一样。清法和 phone_panel 的 cleanRemark 同码。
+function remarkClean(s) { return String(s == null ? '' : s).replace(/[|§\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24); }
+function remarkOfNpc(n) { return (n && !n.isGroup && n.remark) ? remarkClean(n.remark) : ''; }
+// [[原名, 备注], …]；only＝只看这几个人（群成员）
+function remarkList(sb, only) {
+  var npcs = (sb && sb.npcs) || {}, keys = only || Object.keys(npcs), out = [];
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    if (!npcs.hasOwnProperty(k)) continue;
+    var r = remarkOfNpc(npcs[k]);
+    if (r && r !== k) out.push([k, r]);
+  }
+  return out;
+}
+function remarkMap(sb, only) { var o = {}; remarkList(sb, only).forEach(function (p) { o[p[0]] = p[1]; }); return o; }
+function remarkPairsText(pairs) { return pairs.map(function (p) { return '「' + p[0] + '」→「' + p[1] + '」'; }).join('、'); }
+// 模型 / 正文写的是某人的备注 → 返回 TA 的原名；本来就是联系人的名字、固定联系人或管家的写法、谁的备注都不是 → 返回空串
+function remarkKeyOf(sb, nm) {
+  nm = String(nm || '').trim();
+  var npcs = (sb && sb.npcs) || {};
+  if (!nm || npcs.hasOwnProperty(nm) || normalizeName(nm) !== nm || isPersistent(nm)) return '';
+  var k = nameKey(nm);
+  if (!k) return '';
+  for (var key in npcs) {
+    if (!npcs.hasOwnProperty(key)) continue;
+    var r = remarkOfNpc(npcs[key]);
+    if (r && (r === nm || nameKey(r) === k)) return key;
+  }
+  return '';
+}
 // 匿名群定身份用：通讯录里自带的人（随机版只有 Akuma）
 function fixedCast(sb) { return (sb && sb.game && sb.game.random_only) ? ['Akuma'] : Object.keys(VOICES); }
 // 陌生人的昵称借了固定角色的号（「方总_化工二代」里的「方总」＝方屿）→ 返回被借的那位，没借返回空串
@@ -808,7 +844,8 @@ function pruneContacts(sb) {
   var npcs = sb.npcs || {};
   var all = [];
   // 置顶=玩家亲手保护，清理免疫；👥 群也免疫——群是玩家自己拉的/管家拉进去的线程，被静悄悄清掉等于凭空解散
-  for (var k in npcs) { if (npcs.hasOwnProperty(k) && !npcs[k].pinned && !npcs[k].isGroup) all.push(k); }
+  // 📝 存了备注的人也不清：玩家亲手给 TA 起了名字＝这个人要留着（正文里还在叫 TA）
+  for (var k in npcs) { if (npcs.hasOwnProperty(k) && !npcs[k].pinned && !npcs[k].isGroup && !remarkOfNpc(npcs[k])) all.push(k); }
   if (all.length <= MAX_CONTACTS) return;
   all.sort(function (a, b) {
     var ea = npcs[a].engaged ? 1 : 0, eb = npcs[b].engaged ? 1 : 0;
@@ -832,11 +869,14 @@ function walletWho(sb, counterparty) {
   var s = String(counterparty || '').toLowerCase().replace(/[\s\d.,，。:：·\-—_~～¥￥$()（）【】\[\]"'“”‘’!！?？]+/g, '');
   s = s.replace(/^(正文|转账|收款|入账|支出|红包)$/, '');
   if (!s) return '';
-  var npcs = (sb && sb.npcs) || {}, best = '';
+  var npcs = (sb && sb.npcs) || {}, best = '', bestLen = 0;
   for (var k in npcs) {   // 认联系人：备注里含谁的名字就是谁（取最长的，"苏太太"不会被"苏"抢走）
     if (!npcs.hasOwnProperty(k)) continue;
     var nk = String(k).toLowerCase().replace(/\s+/g, '');
-    if (nk && s.indexOf(nk) !== -1 && nk.length > best.length) best = nk;
+    var hit = (nk && s.indexOf(nk) !== -1) ? nk.length : 0;
+    var rk = remarkOfNpc(npcs[k]).toLowerCase().replace(/\s+/g, '');   // 📝 正文按玩家存的备注写（陈小姐PPM）也认得是 TA，认成同一个人
+    if (rk && s.indexOf(rk) !== -1 && rk.length > hit) hit = rk.length;
+    if (hit && hit > bestLen) { best = nk; bestLen = hit; }
   }
   return best || s;
 }
@@ -1086,8 +1126,11 @@ function describeState(sb) {
       }
       continue;
     }
+    var rmD = remarkOfNpc(n);   // 📝 User 给 TA 存的备注（TA 本人照旧用自己的名字，消息行开头写原名）
+    if (rmD === n.name) rmD = '';
     if (ki < 12) {
       known.push('- ' + n.name + (n.persistent ? '(固定)' : '(' + (n.archetype || '陌生') + ')') + '，关系度' + (n.relationship || 0));
+      if (rmD) known.push('    （User 手机里给 TA 存的备注是「' + rmD + '」，他这么称呼 TA；消息行开头照旧写 TA 自己的名字「' + n.name + '」）');
       // 带简历的联系人（招聘帖原文/论坛来路/玩家新建时写的备注）：TA是谁以此为准，回话贴着演
       // 截断跟着"正在跟谁聊"分层，和下面的历史记录同一个哲学：
       //   前3人 900 = 谁的 bio 都砍不着（最长的一种是论坛来的人：你的帖子原文500 + TA那条评论 + 怎么演 ≈ 700）
@@ -1108,7 +1151,7 @@ function describeState(sb) {
         known.push('    ' + (m.sender === 'USER' ? 'User' : n.name) + (m.type === 'sticker' ? '[表情包]' : ((m.type && m.type !== 'text') ? '[' + m.type + ']' : '')) + ': ' + String(m.content || '').substring(0, clip));
       }
     } else {
-      known.push('- ' + n.name + '(' + (n.archetype || '陌生') + '，久未联系)');
+      known.push('- ' + n.name + '(' + (n.archetype || '陌生') + '，久未联系' + (rmD ? '；User 的备注：' + rmD : '') + ')');
     }
   }
   lines.push('【已认识的人 + 私信往来】' + (known.length ? '\n' + known.join('\n') : '（还没有人）'));
@@ -1219,6 +1262,12 @@ function inSceneNames(plot, sb) {
     if (!npcs.hasOwnProperty(k) || npcs[k].persistent || npcs[k].isGroup) continue;   // 👥 群名不是"在场的人"
     var nm = String(k).toLowerCase();
     if (nm.length >= 2 && hay.indexOf(nm) !== -1) hits[k] = true;
+  }
+  // 📝 正文按备注写的（「牵住了陈小姐的手」）：也算 TA 在场
+  for (var rk in npcs) {
+    if (!npcs.hasOwnProperty(rk) || hits[rk] || npcs[rk].isGroup) continue;
+    var rmS = remarkOfNpc(npcs[rk]).toLowerCase();
+    if (rmS.length >= 2 && hay.indexOf(rmS) !== -1) hits[rk] = true;
   }
   return Object.keys(hits);
 }
@@ -1432,8 +1481,12 @@ function parseDMs(raw, groupCtx) {
       }
       var gNames = (groupCtx[gName] && groupCtx[gName].names) || [];
       var sp = splitGroupSpeaker(content, gNames);
+      var gAl = groupCtx[gName] && groupCtx[gName].alias;   // 📝 {备注: 原名}：说话人写成了备注 → 认回原名（消息归属按原名）
+      var gAlN = gAl ? Object.keys(gAl) : [];
+      if (!sp.who && gAlN.length) { var spA = splitGroupSpeaker(content, gAlN); if (spA.who) sp = { who: gAl[spA.who], text: spA.text }; }
       if (rows[j].type === 'leave') {   // 退群行的内容本身就是那个人（可能还跟了句气话）
         var lw = sp.who || splitGroupSpeaker('【' + String(content).trim() + '】', gNames).who;
+        if (!lw && gAlN.length) { var lwA = splitGroupSpeaker('【' + String(content).trim() + '】', gAlN).who; if (lwA) lw = gAl[lwA]; }
         if (!lw) { console.warn('[SD-S v4] 群里冒出名单外的名字「' + content + '」，这一行丢了'); continue; }
         out.push({ name: gName, type: 'leave', content: '', zh: '', who: lw, group: gName, delay: 0 });
         continue;
@@ -1661,6 +1714,8 @@ async function groupMemberCard(sb, g, order, i) {
   for (var o = 0; o < order.length; o++) { if (order[o] !== name) others.push(order[o]); }
   var head = '【成员 ' + (i + 1) + '/' + order.length + '：' + name + '】\n' +
     '你现在在手机群聊「' + g.name + '」里，不是和 User 单聊。群里有：' + order.join('、') + '。你发的每一句，这些人全都看得到。\n';
+  var rmG = g.anon ? '' : remarkOfNpc(npc);   // 📝 匿名群里只有代号，不讲备注
+  if (rmG && rmG !== name) head += 'User 手机里给你存的备注是「' + rmG + '」，他这么称呼你；群里的说话人照旧写你自己的名字「' + name + '」。\n';
   var body = '';
   if (g.anon) {
     // 匿名群：代号背后是谁由模型定；定过一次（roster 里有 real）就一直是这个人
@@ -1779,6 +1834,8 @@ function groupUserBlock(sb, g) {
     : '【怎么称呼他】他的名字还没定。用**不需要名字的称呼**：年上的、姐姐型的叫宝宝 / 小猫咪 / 乖孩子；比他小的叫老板 / 大哥 / 哥哥 / 帅哥；或者直接"你"。'
       + '同样按各人的关系和人设挑，谨慎的那几个只用"你"最像她们。');
   lines.push('（这里是群里，有外人在场——私下怎么叫他，当着别人的面不一定还那么叫。）');
+  var rmU = remarkList(sb, g.members || []);   // 📝 User 在群里提到备注名，说的就是对应的那个人
+  if (rmU.length) lines.push('【User 的备注名】User 手机里给群里几个人存了备注：' + remarkPairsText(rmU) + '。User 在群里说到备注名，说的就是对应的那个人；说话人那一栏照旧写原名。');
   lines.push('【手机时钟】现在是 ' + nowTime() + '（群里的时间感以此为准：深夜像深夜，清晨像清晨）');
   return lines.join('\n');
 }
@@ -1875,7 +1932,18 @@ async function generateGroupOnce(sb, plot, n, reason, strict, groupName, plan) {
   _lastRaw = typeof raw === 'string' ? raw : (raw && raw.content) || '';
   var ctx = {};
   ctx[g.name] = { names: order, anon: anon };
+  if (!anon) {   // 📝 熟人群：说话人写成备注也认得回来
+    var gAlias = {};
+    remarkList(sb, order).forEach(function (p) { gAlias[p[1]] = p[0]; });
+    if (Object.keys(gAlias).length) ctx[g.name].alias = gAlias;
+  }
   var parsed = parseDMs(_lastRaw, ctx);
+  // 📝 群里转头私聊的那行，行首写成了备注（「陈小姐|text|…」）→ 认回原名（和私信轮同一条理由）
+  for (var rk = 0; rk < parsed.length; rk++) {
+    if (parsed[rk].group) continue;
+    var rkKey = remarkKeyOf(sb, parsed[rk].name);
+    if (rkKey) parsed[rk].name = rkKey;
+  }
   if (!wantDm) {   // 没摇中就模型擅自写的 dm 行 → 丢（骰子在代码里，不在提示词里）
     parsed = parsed.filter(function (r) { return r.type !== 'dm'; });
   }
@@ -2091,6 +2159,12 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan) {
   }
   _lastRaw = typeof raw === 'string' ? raw : (raw && raw.content) || '';
   var parsed = parseDMs(_lastRaw, groupCtxOf(sb));
+  // 📝 模型把备注当名字写回来（「陈小姐|text|…」）→ 认回原名，别长出一个叫「陈小姐」的新联系人
+  for (var rk = 0; rk < parsed.length; rk++) {
+    if (parsed[rk].group) continue;
+    var rkKey = remarkKeyOf(sb, parsed[rk].name);
+    if (rkKey) parsed[rk].name = rkKey;
+  }
   if (RANDOM_ONLY) {
     // 代码级铁闸：提示词再怎么漏（素材库彩蛋名/论坛规格/模型记性），固定NPC的行也进不了通讯录
     parsed = parsed.filter(function (r) {
@@ -2966,9 +3040,14 @@ function buildDigest(sb) {
   var toyD = toyDigest(sb);   // 🎛 遥控玩具（谁戴着 / 开着时按在不在身边分写法）
   var poorD2 = poorDigest(sb);   // 🎭🧂🧰 租借 / 白嫖榜 / 零活
   var rcP = recallText(sb, true);   // 💭 玩家在日历上点了「让 TA 提起这天」：下一层正文带一次
-  if (!blocks.length && !closet.length && !toyD && !poorD2 && !rcP) return '';
+  var rmk = remarkList(sb);         // 📝 User 给手机里的人存的备注（至少有一个才注入这段）
+  if (!blocks.length && !closet.length && !toyD && !poorD2 && !rcP && !rmk.length) return '';
   var out = '【User 手机上的时间：' + nowTime() + '（正文的时刻感尽量与之呼应）】\n';
   if (rcP) { out += rcP + '\n'; _recallSeenP = sb.recall.id; }
+  if (rmk.length) {
+    out += '【User 手机里的备注名】User 给手机里这几个人存了备注：' + remarkPairsText(rmk) + '。' +
+      '正文里 User 写备注名，说的就是对应的那个人（下面手机记录里用的是原名，是同一个人）；旁白提到 TA 时照 User 的叫法，用备注名。\n';
+  }
   if (blocks.length) {
     out += '【User 手机私信备忘（带入正文人物的记忆，他们只记得自己参与的那段）】\n' + blocks.join('\n') + '\n';
   }
@@ -3079,6 +3158,7 @@ function closetAdd(sb, name, price, to) {
     }
   }
   sb._closetDedup.push({ k: key, ts: now });
+  var toKey = remarkKeyOf(sb, to); if (toKey) to = toKey;   // 📝 [CLOSET:…|陈小姐] → 收礼人记原名（衣橱、往来、送礼账都按原名认）
   // to=收礼人（本卡是金主买给SB）。衣橱页装修中暂时不显示，但数据现在就存好，将来改成送礼账直接能用。
   sb.closet.push({ name: String(name).slice(0, 40), price: price || 0, to: String(to || '').slice(0, 24), from: '正文', img: '', time: nowTime(), gameDay: (sb.game && sb.game.day) || 1 });
   if (sb.closet.length > 60) sb.closet = sb.closet.slice(-60);
@@ -4509,7 +4589,7 @@ function serializeDmFor(name, npc) {
 // 拿它建档等于只读手机，会写出一个"只会打字的人"：她和 TA 线下发生的一切全在正文里。
 // 这里通读全部楼层，挑出提到 TA 的那些（连同紧跟的下一层——一场戏里名字往往只在开头出现一次，
 // 后面全是"他"），再加最近几层交代此刻处境。建档是玩家主动点的一次性重活，可以奢侈。
-async function deepPlotFor(name, budget) {
+async function deepPlotFor(name, budget, remark) {   // remark：📝 玩家存的备注，正文里按备注写的场次也收
   budget = budget || 26000;
   try {
     var arr = await getChatMessages('0-{{lastMessageId}}');
@@ -4517,6 +4597,8 @@ async function deepPlotFor(name, budget) {
     var keys = [String(name).toLowerCase()];
     var bare = String(name).replace(/[.．。·\s]+$/, '').toLowerCase();      // "S." → "s"：正文里常写成没那个点的样子
     if (bare && bare !== keys[0]) keys.push(bare);
+    var rmP = remarkClean(remark).toLowerCase();
+    if (rmP.length >= 2 && keys.indexOf(rmP) === -1) keys.push(rmP);
     var take = {};
     for (var t = Math.max(0, arr.length - 6); t < arr.length; t++) take[t] = 1;   // 最近6层无条件收（此刻的处境）
     var hits = 0;
@@ -4556,7 +4638,8 @@ async function handleDossier(p) {
   try {
     try { eventEmit('sb_status', '🕵️ S. 正在调 ' + name + ' 的档…'); } catch (eS) {}
     var src = serializeDmFor(name, npc);
-    var pl = await deepPlotFor(name);
+    var dsRemark = remarkOfNpc(npc);   // 📝
+    var pl = await deepPlotFor(name, 0, dsRemark);
     // 两路料合起来够不够写出一个人：私信和正文哪边厚都算。
     // 只在两边都薄的时候拦——与其让模型编一份八股档案，不如直说。
     if (src.used + pl.hits < 6 || (src.text.length + pl.text.length) < 1200) {
@@ -4586,6 +4669,7 @@ async function handleDossier(p) {
     ], DISTILL_OUTPUT).join('\n');
     var instr = [
       '【要建档的人】' + name + (npc.archetype ? '（手机里现在的标签：' + npc.archetype + '）' : ''),
+      dsRemark && dsRemark !== name ? '【User 手机里给 TA 存的备注】' + dsRemark + '——正文里写「' + dsRemark + '」的就是 TA；档案里 TA 的名字照旧写「' + name + '」' : '',
       npc.bio ? '【手机里现有的一句话简介】' + String(npc.bio).slice(0, 300) : '',
       '',
       '【本卡背景】2026年S市。User 是 sugar daddy（金主），手机是圈内邀请制私信App（上了平台的人都知道彼此是干嘛的，私信里敢说真话）。这份档案有两个用途：生成TA发给User的私信；主线正文提到TA时照这份档案演TA。所以密度要够——本卡原生NPC的档案都在两三千字以上，你写的这份是TA在这个世界里的全部依据。',
@@ -4816,6 +4900,7 @@ async function callProfile(sb, name, npc) {
   }
   if (!npc.persistent && npc.archetype) out.push('【身份标签】' + String(npc.archetype));
   if (npc.bio) out.push('【已知背景】' + String(npc.bio));
+  var rmC = remarkOfNpc(npc); if (rmC && rmC !== name) out.push('【User 手机里给 TA 存的备注】' + rmC + '（他这么称呼 TA）');   // 📝
   var anL = anonSelfLine(sb, name); if (anL) out.push(anL.trim());
   var toyL = toyNpcLine(sb, name); if (toyL) out.push(String(toyL).trim());
   return out.join('\n');
