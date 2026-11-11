@@ -443,7 +443,7 @@ function remarkKeyOf(sb, nm) {
 // 模型偶尔把格式里的占位照抄进行首（名字|image|…、TA|text|…，或者行首干脆空着），以前解析出来照单全收 → ensureNpc 建出一个新人。
 // 现在这类行一律不建人：一对一聊天归给正在聊的那位；多人轮里前后挨着的都是同一个人（或紧跟在某个新人的 tag 行后面）就归 TA，
 // 认不出是谁就丢这一行（说错人比少一条更糟）。玩家自己在通讯录里起的名字（madeBy:'user'）、导入的、固定的、俱乐部来的人不算占位。
-var PLACEHOLDER_NAME_RE = /^(?:名字|名称|昵称|姓名|人名|网名|角色|角色名|角色名字|联系人|联系人名字|对方|某人|发送者|发信人|说话人|npc|npc名字|char|name|nickname|sender|ta|她|他|它)(?:[0-9０-９]|[甲乙丙丁])?$/i;
+var PLACEHOLDER_NAME_RE = /^(?:名字|名称|昵称|姓名|人名|网名|真名|真实昵称|成员名|角色|角色名|角色名字|联系人|联系人名字|对方|某人|发送者|发信人|说话人|npc|npc名字|char|name|nickname|sender|ta|她|他|它)(?:[0-9０-９]|[甲乙丙丁])?$/i;
 var USER_NAME_RE = /^(?:user|用户|玩家)$/i;   // 行首写成 User＝模型替 User 说话：既不建人，也不能归给对方（不然 User 的话就安到 TA 嘴里了）
 function phBare(nm) {
   var s = String(nm == null ? '' : nm).replace(/[\s　]+/g, '');
