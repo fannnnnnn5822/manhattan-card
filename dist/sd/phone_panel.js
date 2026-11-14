@@ -236,6 +236,25 @@
   function loadOutbox() { try { var v = SBgetVars(); return (v && v.sb && v.sb._outbox) ? v.sb._outbox : {}; } catch (e) { return {}; } }
   function saveOutbox(ob) { SBupdate(function (v) { if (v.sb) v.sb._outbox = ob; return v; }); }
   function outboxCount() { var ob = loadOutbox(), n = 0; for (var k in ob) { if (ob.hasOwnProperty(k)) n += ob[k].length; } return n; }
+  // 一条 USER 消息在待发队列里长什么样（和 queueMsg 里 obLine 的写法一一对应；删消息时按这个去队列里撤）
+  function obLineOf(m) {
+    if (m.type === 'image') return '（发了一张照片，TA能看到：' + m.content + '）';
+    if (m.type === 'voice') return '（发了一段语音，TA能听到：' + m.content + '）';
+    if (m.type === 'transfer') return '（转账 ￥' + m.content + ' 给TA）';
+    return m.content;
+  }
+  // 💸 11-14 Nozey：删 NPC 转出去的钱全退＝白嫖（ASMR 玩完就删）。现在只有**还在待发队列里**（TA 还没看到）的转账删了才退；
+  // 已经发出去的就是花了。返回这批消息里能退的转账金额（content 字符串），每个队列条目只认一次
+  function unsentTransfers(name, msgs) {
+    var q = (loadOutbox()[name] || []).slice(), out = [];
+    for (var i = 0; i < msgs.length; i++) {
+      var m = msgs[i];
+      if (!m || m.sender !== 'USER' || m.type !== 'transfer') continue;
+      var k = q.indexOf(obLineOf(m));
+      if (k !== -1) { q.splice(k, 1); out.push(String(m.content)); }
+    }
+    return out;
+  }
   function queueOutbox(name, line) {
     var ob = loadOutbox();
     if (!ob[name]) ob[name] = [];
@@ -457,13 +476,14 @@
     var h0 = (npc0 && npc0.dm_history) || [];
     var m0 = h0[idx];
     if (!m0) { toast('warning', '这条消息对不上号了，重开聊天再试'); return; }
-    // 回退这一条消息的财务影响（本地镜像 + 变量持久化双写）
-    rollbackMsgEffects(name, [m0], (state && state.wallet) || {}, (state && state.closet) || []);
+    // 回退这一条消息的财务影响（本地镜像 + 变量持久化双写）；自己的转账只有还没发出去才退
+    var unsent = unsentTransfers(name, [m0]);
+    rollbackMsgEffects(name, [m0], (state && state.wallet) || {}, (state && state.closet) || [], false, unsent.slice());
     SBupdate(function (v) {
       var n = v.sb && v.sb.npcs && v.sb.npcs[name];
       if (!n || !n.dm_history || !n.dm_history[idx]) return v;
       // 变量持久化端回退（带流水记录）
-      rollbackMsgEffects(name, [n.dm_history[idx]], v.sb.wallet || {}, v.sb.closet || [], true);
+      rollbackMsgEffects(name, [n.dm_history[idx]], v.sb.wallet || {}, v.sb.closet || [], true, unsent.slice());
       n.dm_history.splice(idx, 1);
       var last = n.dm_history[n.dm_history.length - 1];
       n.last_message = lastPreview(last);
@@ -473,8 +493,7 @@
     if (m0.sender === 'USER') {
       var ob = loadOutbox(); var q = ob[name];
       if (q && q.length) {
-        var qv = m0.type === 'image' ? '（发了一张照片，TA能看到：' + m0.content + '）'
-          : (m0.type === 'voice' ? '（发了一段语音，TA能听到：' + m0.content + '）' : m0.content);
+        var qv = obLineOf(m0);   // 转账以前没映射＝删了的转账还会发给TA
         for (var qi = q.length - 1; qi >= 0; qi--) { if (q[qi] === qv) { q.splice(qi, 1); if (!q.length) delete ob[name]; saveOutbox(ob); break; } }
       }
     }
@@ -521,7 +540,8 @@
   // msgs: [{sender, type, content}] 从 dm_history 里取出的消息片段；npcName: 联系人名字
   // 只在本地 state 镜像上操作；SBupdate 回调里另调一次（变量持久化 + 本地同步双写）
   // silent=true 跳过 toast（SBupdate 内部调用时避免重复弹出）
-  function rollbackMsgEffects(npcName, msgs, walletObj, closetArr, silent) {
+  // refundable：USER 转账里允许退的金额（unsentTransfers 算的，调用方每次传新拷贝）；不传＝自己转出去的一分不退
+  function rollbackMsgEffects(npcName, msgs, walletObj, closetArr, silent, refundable) {
     if (!rollbackEnabled() || !walletObj) return;
     var reversedAmt = 0;   // 正数=从余额扣回（NPC转来的钱退回去），负数=退回余额（User转出的钱还回来）
     var giftRemoved = false;
@@ -561,6 +581,9 @@
       } else if (m.sender === 'USER' && m.type === 'toy') {
         if (!silent) { var tkG = npcName; if (TK.live && TK.live.who === tkG) toyStop('', true); toyWrite(function (t) { if (t.owned) delete t.owned[tkG]; }); }
       } else if (m.sender === 'USER' && m.type === 'transfer') {
+        var rk = refundable ? refundable.indexOf(String(m.content)) : -1;
+        if (rk === -1) continue;   // 已经发给TA了＝花掉了，删聊天/删消息都不退（11-14 删NPC白嫖）
+        refundable.splice(rk, 1);
         var amt2 = parseFloat(String(m.content).replace(/[^0-9.]/g, '')) || 0;
         if (amt2 > 0) { walletObj.balance = (walletObj.balance || 0) + amt2; reversedAmt -= amt2; }
       }
@@ -9494,7 +9517,7 @@
     // 消息回退开关（来自UWU：重roll/删除消息时转账和礼物自动回退）
     var rbOn = rollbackEnabled();
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-rollback-toggle" style="flex:1;">💰 消息回退（来自UWU）：' + (rbOn ? '开（点我关）' : '关（点我开）') + '</button></div>';
-    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重roll或删除消息时，消息里的转账自动退钱、礼物从衣橱回收。适合想要财务记录保持严谨的玩家。默认开启。</div>';
+    h += '<div class="sb-empty" style="font-style:normal;text-align:left;padding:4px 16px;">重roll或删除消息时，TA转来的钱退回去、TA送的礼物从衣橱回收；你转出去的钱只有还没点发送就删掉才退，发出去的就是花了。适合想要财务记录保持严谨的玩家。默认开启。</div>';
     // 感官反馈（UWU：震动发光 + 壁纸）
     h += '<div class="sb-sec" style="margin-top:16px;">感官 · Sensory</div>';
     h += '<div style="display:flex;margin:4px 14px 6px;"><button class="sb-abtn" id="sbnyc-vibrate-toggle" style="flex:1;">📳 消息震动+发光（来自UWU）：' + (vibrateEnabled ? '开（点我关）' : '关（点我开）') + '</button></div>';
@@ -10057,11 +10080,14 @@
       } catch (e) {}
       if (!ok) return;
       // 回退全部消息的财务影响（删整段聊天 = 这段关系在账面上归档）
-      rollbackMsgEffects(name, hist, (state && state.wallet) || {}, (state && state.closet) || []);
+      // 💸 11-14：你转给TA的钱已经花出去了，删人不退（Nozey：找TA玩完就删＝钱全回来）；只退还躺在待发队列里没发出去的
+      var unsentC = unsentTransfers(name, hist);
+      rollbackMsgEffects(name, hist, (state && state.wallet) || {}, (state && state.closet) || [], false, unsentC.slice());
       SBupdate(function (v) {
         if (!v.sb || !v.sb.npcs || !v.sb.npcs[name]) return v;
         // 变量持久化端回退（带流水记录）
-        rollbackMsgEffects(name, v.sb.npcs[name].dm_history || [], v.sb.wallet || {}, v.sb.closet || [], true);
+        rollbackMsgEffects(name, v.sb.npcs[name].dm_history || [], v.sb.wallet || {}, v.sb.closet || [], true, unsentC.slice());
+        if (v.sb._outbox && v.sb._outbox[name]) delete v.sb._outbox[name];   // 人都删了，攒着没发的话别再发给TA
         // 固定NPC删记录=冷处理：muted 后生成器和硬闸都禁止TA再发（L. 也不例外），User 主动发消息才解除
         // 👥 群＝直接解散（_anonInvited 不回退：匿名大厅的门一旦开过就一直开着，从 ➕ 页能再进去）
         if (npc.persistent && !npc.isGroup) { var n = v.sb.npcs[name]; n.dm_history = []; n.last_message = ''; n.unread = 0; n.engaged = false; n.muted = true; }
@@ -11587,15 +11613,15 @@
       var v0 = SBgetVars(); var h0 = (v0 && v0.sb && v0.sb.npcs && v0.sb.npcs[nm2] && v0.sb.npcs[nm2].dm_history) || [];
       var delBatch = [];
       for (var d2 = 0; d2 < idxs.length; d2++) { if (h0[idxs[d2]]) delBatch.push(h0[idxs[d2]]); }
-      rollbackMsgEffects(nm2, delBatch, (state && state.wallet) || {}, (state && state.closet) || []);
+      var unsentM = unsentTransfers(nm2, delBatch);   // 自己的转账只有还没发出去才退
+      rollbackMsgEffects(nm2, delBatch, (state && state.wallet) || {}, (state && state.closet) || [], false, unsentM.slice());
       // 删的是自己攒着没发的话时，待发队列同步撤（单删一直有这逻辑，多删曾漏 → 首页冒发送按钮、一发送删掉的话还魂）
       var ob = loadOutbox(); var q = ob[nm2]; var obChanged = false;
       if (q && q.length) {
         for (var d = 0; d < idxs.length; d++) {
           var md = h0[idxs[d]];
           if (!md || md.sender !== 'USER') continue;
-          var qv = md.type === 'image' ? '（发了一张照片，TA能看到：' + md.content + '）'
-            : (md.type === 'voice' ? '（发了一段语音，TA能听到：' + md.content + '）' : md.content);
+          var qv = obLineOf(md);
           for (var qi = q.length - 1; qi >= 0; qi--) { if (q[qi] === qv) { q.splice(qi, 1); obChanged = true; break; } }
         }
         if (obChanged) { if (!q.length) delete ob[nm2]; saveOutbox(ob); }
@@ -11606,7 +11632,7 @@
         // 变量持久化端回退（带流水记录）
         var vBatch = [];
         for (var vb = 0; vb < idxs.length; vb++) { if (n.dm_history[idxs[vb]]) vBatch.push(n.dm_history[idxs[vb]]); }
-        rollbackMsgEffects(nm2, vBatch, v.sb.wallet || {}, v.sb.closet || [], true);
+        rollbackMsgEffects(nm2, vBatch, v.sb.wallet || {}, v.sb.closet || [], true, unsentM.slice());
         for (var i = 0; i < idxs.length; i++) { if (idxs[i] >= 0 && idxs[i] < n.dm_history.length) n.dm_history.splice(idxs[i], 1); }
         n.last_message = lastPreview(n.dm_history[n.dm_history.length - 1]);
         return v;
