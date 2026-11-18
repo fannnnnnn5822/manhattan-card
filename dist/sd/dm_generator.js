@@ -2099,7 +2099,16 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan, targets) {
   // 🪧 targets＝这一轮点名回话的人（roundTargets）。只剩一个＝一对一聊天：格式示例和行首直接写 TA 的真名（模型照抄也抄对）；
   //    多人轮拿第一个被点名的人举例，都没有就拿下面示例里那个新人——格式里不再出现「名字」这种能被原样抄进行首的占位
   targets = Array.isArray(targets) ? targets : [];
-  var solo = targets.length === 1 ? targets[0] : '';
+  // 闭集锁：reason 明确"只回被点名的人/别人不出现"时（聊天页即时发、批量发、reroll），关掉在场感知+陌生人通道
+  // → 陌生人只在主页「🔄 刷新」（reason="看看有没有新消息"）时才冒出来，回消息永远不塞陌生人 = 防串号乱回
+  var soloLock = !!reason && /别人不要出现|别的角色不要出现|只让 .+ 本人回应|没被点名的人这一轮不出现|绝不替别人回/.test(reason);
+  // 刷新守则（玩家投诉：每点一次🔄，常驻NPC就硬发一条和上一条差不多的）：刷新只是"看看有没有新消息"，
+  // 不是群发点名——已认识的人没有新鲜事就沉默，主动发消息该跟着剧情需要走，不跟着刷新按钮走。
+  var isRefresh = !!reason && reason.indexOf('玩家刷新手机') !== -1;
+  // 🔄 刷新并发送（11-18 Nozey：发送和刷新各烧一次调用，公益站次数不够）：待发的人点名必回 + 陌生人通道照开，一次生成。
+  //    这一轮不是一对一——哪怕只点了一个人，行首也不能写死 TA（陌生人要能进来）
+  var openRefresh = isRefresh && !soloLock;
+  var solo = (targets.length === 1 && !openRefresh) ? targets[0] : '';
   var exName = targets[0] || '小鹿_大三';
   // 专场白名单：Akuma（闺蜜军师陪跑新手村）；S. 走订阅态另算
   var voiceCard = RANDOM_ONLY ? '· ' + VOICES['Akuma'] : Object.keys(VOICES).map(function (k) { return '· ' + VOICES[k]; }).join('\n');
@@ -2219,18 +2228,14 @@ async function generateOnce(sb, plot, n, reason, strict, group, plan, targets) {
     }
   }
 
-  // 闭集锁：reason 明确"只回被点名的人/别人不出现"时（聊天页即时发、批量发、reroll），关掉在场感知+陌生人通道
-  // → 陌生人只在主页「🔄 刷新」（reason="看看有没有新消息"）时才冒出来，回消息永远不塞陌生人 = 防串号乱回
-  var soloLock = !!reason && /别人不要出现|别的角色不要出现|只让 .+ 本人回应|没被点名的人这一轮不出现|绝不替别人回/.test(reason);
+  // （闭集锁 soloLock / 刷新 isRefresh 在函数开头算好了：一对一判定也要用）
   // 陌生人专场：主线每隔几拍自动塞的"新陌生SB开场"。空历史=零串号风险，但必须彻底关掉已有联系人通道
   var strangerOnly = !!reason && reason.indexOf('全新陌生SB的开场') !== -1;
 
-  // 刷新守则（玩家投诉：每点一次🔄，常驻NPC就硬发一条和上一条差不多的）：刷新只是"看看有没有新消息"，
-  // 不是群发点名——已认识的人没有新鲜事就沉默，主动发消息该跟着剧情需要走，不跟着刷新按钮走。
-  var isRefresh = !!reason && reason.indexOf('玩家刷新手机') !== -1;
-  var refreshHint = isRefresh
-    ? '【刷新守则】这只是玩家下拉刷新，不是让所有人表演：已认识的人（尤其固定联系人）只有剧情有新进展、或TA自己真有新鲜事时才发消息，没有就一个字不发——上一轮刚说过话又没得到回复的人基本不该再出现。本轮可以只有新陌生人，甚至总共只有1-2条。'
-    : '';
+  var refreshHint = !isRefresh ? ''
+    : (openRefresh && targets.length)
+      ? '【刷新守则】点名的 ' + targets.join('、') + ' 刚收到 User 的消息，每个人都必须回，一个都不能漏。除此之外这是一次顺手刷新：没被点名的已认识的人（尤其固定联系人）只有剧情有新进展、或TA自己真有新鲜事时才发消息，没有就一个字不发；新陌生人照常可以来。'
+      : '【刷新守则】这只是玩家下拉刷新，不是让所有人表演：已认识的人（尤其固定联系人）只有剧情有新进展、或TA自己真有新鲜事时才发消息，没有就一个字不发——上一轮刚说过话又没得到回复的人基本不该再出现。本轮可以只有新陌生人，甚至总共只有1-2条。';
 
   var onstage = (soloLock || strangerOnly) ? [] : inSceneNames(plot, sb);
   // 只点名在场的人"更可能呼应"，同时明确保住陌生人通道——别让这句把"新陌生SB来撩"挤掉。

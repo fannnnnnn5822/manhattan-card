@@ -611,10 +611,36 @@
     }
   }
 
-  function flushOutbox() {
+  // 📅 到点的行程（玩家 10-14 问：约好时间、到点刷新对方不主动发消息）：刷新时把「现在该发生的约」写进 reason，
+  // 不然生成器只看到一张行程表，不知道现在就是那个钟点
+  function dueSchedNote() {
+    var g = (state && state.game) || {};
+    var tm = String(g.time || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (!tm) return '';
+    var now = (+tm[1]) * 60 + (+tm[2]), day = g.day || 1, due = [];
+    ((state && state.schedule) || []).forEach(function (s) {
+      if (!s || s.done || (s.gameDay != null && s.gameDay !== day)) return;
+      var st = String(s.txt || '').match(/(\d{1,2}):(\d{2})/);
+      if (!st) return;
+      var d = now - ((+st[1]) * 60 + (+st[2]));
+      if (d >= -20 && d <= 120) due.push(s.txt);
+    });
+    if (!due.length) return '';
+    return '。现在是 ' + g.time + '，到了约好的时间：「' + due.slice(0, 3).join('」「') + '」——约的那个人这一轮要主动来消息'
+      + '（到了、在路上、问人在哪、临时有事改时间、干脆放鸽子，按他的人设和你们的关系来）';
+  }
+  var REFRESH_REASON = '玩家刷新手机，看看有没有新消息';   // 生成器认这几个字开刷新守则 + 陌生人通道，别改字
+
+  // opts.refresh：🔄 刷新并发送（11-18 Nozey：发送、刷新各烧一次调用，公益站次数不够）——
+  //   待发的人点名必回 + 照常刷新（陌生人能来、到点的约会来消息），合成一次生成。reason 里不能出现闭集锁的字眼（生成器 soloLock）
+  function flushOutbox(opts) {
+    var refresh = !!(opts && opts.refresh);
     var ob = loadOutbox();
     var names = Object.keys(ob);
-    if (!names.length) { toast('info', '没有待发送的消息'); return; }
+    if (!names.length) {
+      if (refresh) { SBemit('sb_request_dm', { reason: REFRESH_REASON + dueSchedNote() }); setStatus('⏳ 正在生成私信…'); return; }
+      toast('info', '没有待发送的消息'); return;
+    }
     // 👥 群从点名合批里摘出来，各自单发一条 group 请求（群和私信混在一次生成里＝串号）
     var groupsOut = [];
     for (var gi = names.length - 1; gi >= 0; gi--) {
@@ -627,19 +653,27 @@
       askGroupRound(groupsOut[gj].name, 'User 在群聊「' + groupsOut[gj].name + '」里说了：' +
         groupsOut[gj].lines.map(function (s) { return '「' + s + '」'; }).join('、') + '。群里的人接着往下聊。');
     }
-    if (!names.length) { saveOutbox({}); toast('success', '📨 已发送，等回复'); return; }
+    if (!names.length) {
+      saveOutbox({});
+      if (refresh) SBemit('sb_request_dm', { reason: REFRESH_REASON + dueSchedNote() });   // 只有群在排队：群各走各的，私信这边照常刷新
+      toast('success', refresh ? '📨 已发送，顺便刷新' : '📨 已发送，等回复'); return;
+    }
     var parts = [];
     for (var i = 0; i < names.length; i++) {
       parts.push('· ' + names[i] + ' 收到：' + ob[names[i]].map(function (s) { return '「' + s + '」'; }).join('、'));
     }
     // 强制点名：把每个人列清楚 + 明说"一个都不能漏"，防止一次生成只回前两个
-    var reason = '玩家在手机里刚给下面这 ' + names.length + ' 个人分别发了消息，需要他们【每一个人都回复，一个都不能漏】：' + names.join('、') + '。\n' +
-      parts.join('\n') + '\n' +
-      '【铁律】上面点名的每个人都必须各回 1-2 条，符合各自人设；每个人只回自己收到的话，绝不替别人回、绝不把甲的话安到乙头上；没被点名的人不出现。';
+    var reason = refresh
+      ? REFRESH_REASON + dueSchedNote() + '。刷新前，User 刚给下面这 ' + names.length + ' 个人分别发了消息，他们【每一个人都要回复，一个都不能漏】：' + names.join('、') + '。\n' +
+        parts.join('\n') + '\n' +
+        '【点名的人】每人各回 1-2 条，符合各自人设；每个人只回自己收到的那几句，甲收到的话不许安到乙头上。'
+      : '玩家在手机里刚给下面这 ' + names.length + ' 个人分别发了消息，需要他们【每一个人都回复，一个都不能漏】：' + names.join('、') + '。\n' +
+        parts.join('\n') + '\n' +
+        '【铁律】上面点名的每个人都必须各回 1-2 条，符合各自人设；每个人只回自己收到的话，绝不替别人回、绝不把甲的话安到乙头上；没被点名的人不出现。';
     saveOutbox({});
-    SBemit('sb_request_dm', { reason: reason, n: names.length + '-' + (names.length * 2), focus: names });
-    setStatus('⏳ 大家陆续回复中…');
-    toast('success', '📨 已发送，等回复');
+    SBemit('sb_request_dm', { reason: reason, n: names.length + '-' + (names.length * 2 + (refresh ? 2 : 0)), focus: names });
+    setStatus(refresh ? '⏳ 大家陆续回复中，顺便看看有没有新消息…' : '⏳ 大家陆续回复中…');
+    toast('success', refresh ? '📨 已发送，顺便刷新' : '📨 已发送，等回复');
     if (currentChatName && names.indexOf(currentChatName) !== -1) showTyping(currentChatName);
   }
 
@@ -5691,6 +5725,7 @@
     '#sbnyc-panel .sb-slot{padding:0 12px 8px;}#sbnyc-panel .sb-slot:empty{display:none;}',
     '#sbnyc-panel .sb-abtn{flex:1;background:var(--paper-2);border:.5px solid var(--line);color:var(--ink);font-family:var(--font-cn);font-size:12px;padding:7px 6px;border-radius:999px;cursor:pointer;text-align:center;letter-spacing:1px;}',
     '#sbnyc-panel .sb-abtn:hover{background:var(--ink);color:var(--paper-2);}',
+    '#sbnyc-panel .sb-abtn.sb-refbtn{white-space:nowrap;letter-spacing:.5px;}',   // 「刷新并发送」五个字，窄屏别折行
     '#sbnyc-panel .sb-sec{font-family:var(--font-en);font-size:9px;letter-spacing:4px;text-transform:uppercase;color:var(--gold);margin:10px 20px 6px;font-weight:600;display:flex;align-items:center;gap:10px;}',
     '#sbnyc-panel .sb-sec::before{content:"";width:16px;height:.5px;background:var(--gold);}',
     '#sbnyc-panel .sb-sec::after{content:"";flex:1;height:.5px;background:var(--line);}',
@@ -6743,8 +6778,11 @@
     if (txs.length) { h += '<div class="sb-wsec">Recent</div>'; var s = txs.slice(-5).reverse(); for (var j = 0; j < s.length; j++) { var t = s[j]; var c = t.direction === '+' ? 'plus' : 'minus'; h += '<div class="sb-tx"><span class="sb-tx-a ' + c + '">' + t.direction + fmtCNY(t.amount) + '</span><span class="sb-tx-w">' + esc(t.counterparty) + '</span><span class="sb-tx-n">' + esc(t.note || '') + '</span></div>'; } }
     h += '</div>'; return h;
   }
+  function refreshLabel() {   // 有攒着没发的 → 刷新键顺手一起发（一次调用）
+    return sbIcon('refresh', 14) + (outboxCount() > 0 ? ' 刷新并发送' : ' 刷新');
+  }
   function renderActions() {
-    return '<div class="sb-actions"><button class="sb-abtn" data-act="refresh">' + sbIcon('refresh', 14) + ' 刷新</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button></div>' +
+    return '<div class="sb-actions"><button class="sb-abtn sb-refbtn" data-act="refresh">' + refreshLabel() + '</button><button class="sb-abtn" data-act="forum">🌐 论坛</button><button class="sb-abtn" data-act="elite">✦ Elite</button></div>' +
       '<div class="sb-actions"><button class="sb-abtn" data-act="calendar">📅 日历</button><button class="sb-abtn" data-act="trans">💳 流水</button><button class="sb-abtn' + ((TK.live && TK.live.on) ? ' tk-on' : '') + '" data-act="remote">' + sbIcon('toy', 14) + ' 遥控</button>' +
       '<button class="sb-abtn' + (vesperOn() ? '' : ' vs-entry-off') + '" data-act="vesper" title="Club Vesper · 暮星俱乐部">' + sbIcon('star', 14) + ' 暮星' + (vesperOn() && vesperUnread() > 0 ? '<i class="sdv-dot"></i>' : '') + '</button>' + '</div>' +   // 第二行（UWU 的两个新页面）；✦ 暮星入口常驻（刀16：开关关着时灰着，点了只提示）
       '<div class="sb-slot" data-sb-slot="home"></div>';   // 🔌 主屏插槽（SugarOS.onHomeSlot），空着就不占地方
@@ -6872,31 +6910,15 @@
     }
     var rows = root.querySelectorAll('.sb-dmrow');
     for (var i = 0; i < rows.length; i++) { (function (r) { r.addEventListener('click', function () { var n = r.getAttribute('data-name'); if (n && npcs[n]) openChat(n, npcs[n]); }); })(rows[i]); }
-    // 📅 到点的行程（玩家 10-14 问：约好时间、到点刷新对方不主动发消息）：刷新时把「现在该发生的约」写进 reason，
-    // 不然生成器只看到一张行程表，不知道现在就是那个钟点
-    var dueSchedNote = function () {
-      var g = (state && state.game) || {};
-      var tm = String(g.time || '').match(/^(\d{1,2}):(\d{2})$/);
-      if (!tm) return '';
-      var now = (+tm[1]) * 60 + (+tm[2]), day = g.day || 1, due = [];
-      ((state && state.schedule) || []).forEach(function (s) {
-        if (!s || s.done || (s.gameDay != null && s.gameDay !== day)) return;
-        var st = String(s.txt || '').match(/(\d{1,2}):(\d{2})/);
-        if (!st) return;
-        var d = now - ((+st[1]) * 60 + (+st[2]));
-        if (d >= -20 && d <= 120) due.push(s.txt);
-      });
-      if (!due.length) return '';
-      return '。现在是 ' + g.time + '，到了约好的时间：「' + due.slice(0, 3).join('」「') + '」——约的那个人这一轮要主动来消息'
-        + '（到了、在路上、问人在哪、临时有事改时间、干脆放鸽子，按他的人设和你们的关系来）';
-    };
     var btns = root.querySelectorAll('.sb-abtn');
     for (var j = 0; j < btns.length; j++) { (function (b) { b.addEventListener('click', function () {
       var a = b.getAttribute('data-act');
       if (a === 'refresh') {
-        SBemit('sb_request_dm', { reason: '玩家刷新手机，看看有没有新消息' + dueSchedNote() });
-        b.innerHTML = '⏳ 生成中…'; setStatus('⏳ 正在生成私信…');
-        setTimeout(function () { b.innerHTML = sbIcon('refresh', 14) + ' 刷新'; }, 8000);
+        // 🔄 有攒着的 → 一起发（flushOutbox 带 refresh：一次调用里点名的人回 + 照常刷新）；没有 → 普通刷新
+        if (outboxCount() > 0) { flushOutbox({ refresh: true }); render(); b = root.querySelector('.sb-refbtn') || b; }
+        else { SBemit('sb_request_dm', { reason: REFRESH_REASON + dueSchedNote() }); setStatus('⏳ 正在生成私信…'); }
+        b.innerHTML = '⏳ 生成中…';
+        setTimeout(function () { b.innerHTML = refreshLabel(); }, 8000);
       }
       else if (a === 'forum') openForum();
       else if (a === 'elite') openElite();
