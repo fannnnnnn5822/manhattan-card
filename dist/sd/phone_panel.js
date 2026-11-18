@@ -5793,6 +5793,8 @@
     '#sbnyc-panel .sb-gear{cursor:pointer;opacity:.55;}#sbnyc-panel .sb-gear:hover{opacity:1;}',
     '#sbnyc-panel .sb-empty{text-align:center;font-size:11px;color:var(--ink-faint);padding:20px;font-style:italic;font-family:var(--font-en);}',
     '#sbnyc-panel .sb-wait{padding:30px 16px;font-size:12px;color:var(--ink-faint);text-align:center;line-height:1.9;}',
+    '#sbnyc-panel .sb-gate-link{margin-top:18px;font-size:11px;color:var(--ink-sub);cursor:pointer;}',   // 🚪 开场表单逃生口
+    '#sbnyc-panel .sb-gate-link u{color:var(--gold);text-underline-offset:3px;}',
     // 翻译（微信式：英文消息气泡里自带"翻译"按钮，点开显示随消息一起预生成的中文，零等待零API）
     // 🕵️ 档案卡（S. 查完一个人送来的东西，做成卷宗的样子）
     '#sbnyc-panel .sb-dsr{align-self:flex-start;max-width:88%;margin:6px 0;padding:12px 14px;background:var(--paper-2);',
@@ -6709,8 +6711,50 @@
     badgeEl.textContent = n > 9 ? '9+' : String(n);
     try { if (fab) fab.classList.toggle('vs-lit', vn > 0); } catch (e) {}   // 刀13：暮星有未读＝悬浮球一直慢慢亮着，读完才灭（vesperPaintUnread 也走这里）
   }
+  // 🚪 开场表单点了没反应的逃生口（11-18 马头：TT 客户端里第一楼的表单点了没反应——那一楼多半不是酒馆助手渲染的，
+  //    够不到写变量/发消息的接口，出错提示也弹不出来）。手机自己够得到：把第一楼那份表单原样拿出来，盖在手机外面重新显示，
+  //    同一个「进圈」在这里就能用。表单代码不复制一份，改开场白不用两边对。
+  //    只挂在等待屏（没交过表）；交完表 refreshView 读到 sb 就自己收起来。
+  var GATE_ID = 'sbnyc-gate';
+  function closeGate() { try { var g = DOC.getElementById(GATE_ID); if (g && g.parentNode) g.parentNode.removeChild(g); } catch (e) {} }
+  function greetingFormHtml() {
+    var mes = '';
+    try { var st = (DOC.defaultView || window).SillyTavern; var ch = st && st.getContext && st.getContext().chat; mes = (ch && ch[0] && ch[0].mes) || ''; } catch (e) {}
+    if (!mes) { try { var cm = getChatMessages(0); mes = (cm && cm[0] && cm[0].message) || ''; } catch (e) {} }   // 新版酒馆助手是同步的
+    mes = String(mes || '');
+    var m = mes.match(/```html\s*([\s\S]*?)```/) || mes.match(/(<!DOCTYPE html[\s\S]*<\/html>)/i);
+    return (m && /<button/i.test(m[1])) ? m[1] : '';
+  }
+  function openGate() {
+    var html = greetingFormHtml();
+    if (!html) { toast('warning', '第一楼里没找到开场表单——左右滑一下第一楼，换回带表单的开场白再试'); return; }
+    closeGate();
+    var wrap = DOC.createElement('div');
+    wrap.id = GATE_ID;
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483600;background:rgba(20,24,30,.55);display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;';
+    wrap.innerHTML = '<div style="position:relative;width:min(560px,100%);height:min(880px,100%);background:#f5f3ee;border-radius:14px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.35);">' +
+      '<button type="button" data-gate-x title="关掉" style="position:absolute;top:8px;right:10px;z-index:2;width:30px;height:30px;border-radius:15px;border:0;background:rgba(31,41,55,.75);color:#fff;font-size:15px;line-height:30px;cursor:pointer;padding:0;">✕</button>' +
+      '<iframe title="开场表单" style="width:100%;height:100%;border:0;display:block;background:#f5f3ee;"></iframe></div>';
+    DOC.body.appendChild(wrap);
+    wrap.querySelector('[data-gate-x]').addEventListener('click', closeGate);
+    var fr = wrap.querySelector('iframe');
+    fr.addEventListener('load', function () {
+      try {
+        // 表单先找自己窗口上的这两个函数（酒馆助手渲染的楼层里本来就有）——手机把自己手里的递进去；
+        // 发消息走 window.parent（＝酒馆主页面）上的 TavernHelper / SillyTavern，表单原样就能找到
+        var w = fr.contentWindow;
+        if (typeof insertOrAssignVariables === 'function') w.insertOrAssignVariables = insertOrAssignVariables;
+        if (typeof eventEmit === 'function') w.eventEmit = eventEmit;
+        var go = w.document.querySelector('.sd-go');
+        if (go) go.addEventListener('click', function () { setTimeout(closeGate, 1500); });   // 交了就收起来，让人看见正文开始写
+      } catch (e) { console.warn('[SB-S phone] 逃生口递函数失败', e); }
+    });
+    fr.srcdoc = html;
+  }
+
   function refreshView() {
     loadState();
+    if (state) closeGate();
     revealDue();   // ⏳ 到点的「在路上」消息先送达，再画界面（正文每推进一次剧情钟，生成器都会 emit sb_updated 走到这里）
     updateBadge();
     applyWallpaper();
@@ -6724,7 +6768,10 @@
     fetchPool();   // 橱窗池顺手保鲜（10分钟节流，关联机则直接返回）
     fetchBanned();   // 封禁名单顺手保鲜（5分钟节流；本机被封则当场落锁）
     if (!state) {
-      root.innerHTML = '<div class="sb-wait">⏳ 等待游戏数据<br>先在开场消息里填表并提交<br><span style="font-size:10px">（提交后，手机里第一批私信会自动进来）</span></div>';
+      root.innerHTML = '<div class="sb-wait">⏳ 等待游戏数据<br>先在开场消息里填表并提交<br><span style="font-size:10px">（提交后，手机里第一批私信会自动进来）</span>' +
+        '<div class="sb-gate-link">开场表单点了没反应？<u>在这里打开</u></div></div>';
+      var gl = root.querySelector('.sb-gate-link');
+      if (gl) gl.addEventListener('click', openGate);
       runRenderHooks('wait');
       phoneRendered('wait');   // 🔌 二创接口：等待屏也通知（外挂好知道主屏插槽没了）
       return;
